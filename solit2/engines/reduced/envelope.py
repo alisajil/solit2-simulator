@@ -56,6 +56,24 @@ def _case_id(trace: RunTrace) -> dict[str, Any]:
     return {"section": trace.section, "velocity_ms": trace.velocity_ms}
 
 
+def _severity(criterion: Criterion) -> tuple[float, float]:
+    """Sort key putting the worst case first, for `min`.
+
+    Margin ranks a criterion whose limit is set. An UNSET limit has margin 0.0
+    in every case (SOLIT2 Annex 7 section 7.1 leaves the number to the AHJ), so
+    the raw value breaks the tie -- otherwise an unset criterion would report
+    whichever case happened to be evaluated first rather than the worst one.
+    """
+    value = float(criterion.value)
+    worse_when_larger = criterion.op in ("<=", "is_false")
+    return (criterion.margin, -value if worse_when_larger else value)
+
+
+def _assessed_hard(criteria) -> list[Criterion]:
+    """Hard criteria that actually have a limit to be judged against."""
+    return [c for c in criteria if c.hard and c.status != "unset"]
+
+
 def _worst_per_criterion(cases: list[_Case]) -> tuple[dict[str, Criterion],
                                                       dict[str, dict[str, Any]]]:
     """Each criterion's worst value across the envelope, and the case it came from.
@@ -66,15 +84,24 @@ def _worst_per_criterion(cases: list[_Case]) -> tuple[dict[str, Criterion],
     merged: dict[str, Criterion] = {}
     provenance: dict[str, dict[str, Any]] = {}
     for cid in cases[0].criteria:
-        owner = min(cases, key=lambda case: case.criteria[cid].margin)
+        owner = min(cases, key=lambda case: _severity(case.criteria[cid]))
         merged[cid] = owner.criteria[cid]
         provenance[cid] = _case_id(owner.trace)
     return merged, provenance
 
 
 def _worst_case(cases: list[_Case]) -> _Case:
-    """The run that owns the thinnest hard margin; its trace is the one reported."""
-    return min(cases, key=lambda case: min(c.margin for c in case.criteria.values() if c.hard))
+    """The run that owns the thinnest hard margin; its trace is the one reported.
+
+    Unset criteria are skipped: their margin is 0.0 in every case, so counting
+    them would tie every case together and make the selection arbitrary. If the
+    AHJ has set nothing at all, the absolutely-mandated criteria still rank.
+    """
+    def thinnest(case: _Case) -> float:
+        assessed = _assessed_hard(case.criteria.values())
+        return min(c.margin for c in assessed) if assessed else 0.0
+
+    return min(cases, key=thinnest)
 
 
 def _critical_velocity_warnings(trace: RunTrace) -> list[str]:
@@ -98,7 +125,14 @@ def _peaks(trace: RunTrace, peak_lining_c: float) -> dict[str, float]:
             "lining_temp_c": peak_lining_c,
             "pipe_surface_temp_c": max(s.pipe_temp_c for s in trace.steps),
             "smoke_layer_temp_d15_c": max(s.stations["D15"].temp_c for s in trace.steps),
-            "smoke_layer_temp_d100_c": max(s.stations["D100"].temp_c for s in trace.steps)}
+            "smoke_layer_temp_d100_c": max(s.stations["D100"].temp_c for s in trace.steps),
+            # Non-gating context for `target_ignited`: how hot the target got and
+            # the longest unbroken run it spent above the piloted-ignition flux,
+            # so a reader can see how close the section 7.2.1 call was.
+            "target_peak_flux_kwm2": max(s.target_flux_kwm2 for s in trace.steps),
+            "target_max_exposure_s": max(s.target_exposure_s for s in trace.steps),
+            "structure_exposure_length_m": max(s.structure_exposure_length_m
+                                               for s in trace.steps)}
 
 
 def _timeseries(sampled: tuple[StepRecord, ...]) -> dict[str, list[float]]:
@@ -156,7 +190,8 @@ def run(design: Design, sections: tuple[str, ...] | None = None,
         cost=cost.__dict__,
         score={"total": scored.total, "gates_passed": scored.gates_passed,
                "gates_failed": scored.gates_failed, "components": scored.components,
-               "penalties": scored.penalties},
+               "penalties": scored.penalties,
+               "criteria_unset": scored.criteria_unset},
         timeseries=_timeseries(trace.steps[::TIMESERIES_STRIDE_S]),
         warnings=warnings,
     )

@@ -11,7 +11,8 @@ from dataclasses import dataclass
 from solit2.engines.reduced import fire as fire_mod
 from solit2.engines.reduced import mist as mist_mod
 from solit2.engines.reduced import tenability, thermal, ventilation
-from solit2.engines.reduced.criteria import BREATHING_HEIGHT_M, STATIONS
+from solit2.engines.reduced.criteria import (BREATHING_HEIGHT_M, FLAME_CONTACT_FLUX_KWM2,
+                                             STATIONS, WOOD_PILOTED_IGNITION_KWM2)
 from solit2.engines.reduced.geometry import (NozzlePosition, SectionGeometry,
                                              nozzle_positions, section_geometry)
 from solit2.engines.reduced.state import (FireState, MistEffect, RunTrace, StationSample,
@@ -23,8 +24,9 @@ from solit2.schema.design import Design, Zones
 DT_S = 1.0
 PIPE_WATER_FILLED_CAP_C = 100.0
 PIPE_TIME_CONSTANT_S = 300.0
-# A gauge the flame has reached is not reading a view factor any more.
-FLAME_CONTACT_FLUX_KWM2 = 50.0
+# The instrumented span the ceiling is walked over for Annex 7 section 7.2.4.
+STRUCTURE_SCAN_MIN_M = min(STATIONS.values())
+STRUCTURE_SCAN_MAX_M = max(STATIONS.values())
 # Upstream of the backlayering front the air is still tunnel air.
 AMBIENT_SPECIES = tenability.Species(0.0, 0.0, 0.0, tenability.AMBIENT_O2_PCT)
 
@@ -124,7 +126,7 @@ def _sample_stations(scene: _Scene, field: ThermalField, mist: MistEffect,
             temp_c=temp, flux_kwm2=flux,
             visibility_m=tenability.visibility_m(local.soot_gm3,
                                                  kappa_mist if in_zone else 0.0),
-            fed_tox=fed_tox[name], fed_heat=fed_heat[name])
+            fed_tox=fed_tox[name], fed_heat=fed_heat[name], co_ppm=local.co_ppm)
     return samples
 
 
@@ -134,6 +136,41 @@ def _target_flux_kwm2(scene: _Scene, field: ThermalField, mist: MistEffect) -> f
     if field.flame_tip_x_m >= distance:
         return max(flux, FLAME_CONTACT_FLUX_KWM2)
     return flux
+
+
+def target_exposure_s(previous_s: float, target_flux_kwm2: float, dt_s: float) -> float:
+    """Running time the target has spent CONTINUOUSLY above the ignition flux.
+
+    SOLIT2 Annex 7 section 7.2.1 is a sustained-exposure rule, so this resets to
+    zero the moment the flux falls back: a flux that crosses the threshold
+    briefly and repeatedly never accumulates towards ignition, however high its
+    peak. Accumulated the same way the fire model accumulates `wet_time_s`.
+    """
+    if target_flux_kwm2 > WOOD_PILOTED_IGNITION_KWM2:
+        return previous_s + dt_s
+    return 0.0
+
+
+def _require_detection(design: Design, events: dict) -> None:
+    """A run in which the detector never trips has not modelled the system at all."""
+    if events["t_detect_s"] is not None:
+        return
+    raise RuntimeError(
+        f"the fire never reached the {design.detection.threshold_c} C detection "
+        f"threshold within {design.zones.duration_min} minutes; check the fire preset"
+    )
+
+
+def _pipe_temp_c(previous_c: float, ceiling_c: float, flow_fraction: float) -> float:
+    """Pipe surface chases the ceiling, capped once water is flowing through it."""
+    target = min(ceiling_c, PIPE_WATER_FILLED_CAP_C) if flow_fraction > 0 else ceiling_c
+    return previous_c + (target - previous_c) * DT_S / PIPE_TIME_CONSTANT_S
+
+
+def _structure_exposure_length_m(scene: _Scene, field: ThermalField) -> float:
+    """Annex 7 section 7.2.4: how much ceiling this step held above the threshold."""
+    return thermal.exposure_length_m(field, scene.design.ahj.structure_temp_threshold_c,
+                                     STRUCTURE_SCAN_MIN_M, STRUCTURE_SCAN_MAX_M)
 
 
 def _note_events(scene: _Scene, events: dict, state: FireState, vent: VentilationState,
@@ -164,6 +201,7 @@ def run_once(design: Design, section: str, velocity_ms: float) -> RunTrace:
     pipe_temp = scene.ambient_c
     steps: list[StepRecord] = []
     peak_hrr = 0.0
+    exposure_s = 0.0
 
     total_steps = int(scene.design.zones.duration_min * 60 / DT_S)
     for _ in range(total_steps):
@@ -185,22 +223,21 @@ def run_once(design: Design, section: str, velocity_ms: float) -> RunTrace:
         samples = _sample_stations(scene, field, mist, vent, species, fed_tox, fed_heat)
 
         ceiling = field.ceiling_temp_c(0.0)
-        pipe_target = min(ceiling, PIPE_WATER_FILLED_CAP_C) if flow_fraction > 0 else ceiling
-        pipe_temp += (pipe_target - pipe_temp) * DT_S / PIPE_TIME_CONSTANT_S
-
+        pipe_temp = _pipe_temp_c(pipe_temp, ceiling, flow_fraction)
         peak_hrr = _note_events(scene, events, state, vent, peak_hrr)
+
+        target_flux = _target_flux_kwm2(scene, field, mist)
+        exposure_s = target_exposure_s(exposure_s, target_flux, DT_S)
 
         steps.append(StepRecord(
             t_s=state.t_s, hrr_mw=state.hrr_mw, hrr_free_mw=state.hrr_free_mw,
             ceiling_temp_c=ceiling, lining_temp_c=ceiling, pipe_temp_c=pipe_temp,
-            target_flux_kwm2=_target_flux_kwm2(scene, field, mist), u_eff_ms=vent.u_eff_ms,
+            target_flux_kwm2=target_flux, u_eff_ms=vent.u_eff_ms,
             u_critical_ms=vent.u_critical_ms, backlayer_m=vent.backlayer_m,
             water_lpm=scene.design.flow_lpm * flow_fraction,
-            pools_remaining=state.pools_remaining, mist=mist, stations=samples))
+            pools_remaining=state.pools_remaining, mist=mist, stations=samples,
+            target_exposure_s=exposure_s,
+            structure_exposure_length_m=_structure_exposure_length_m(scene, field)))
 
-    if events["t_detect_s"] is None:
-        raise RuntimeError(
-            f"the fire never reached the {design.detection.threshold_c} C detection "
-            f"threshold within {design.zones.duration_min} minutes; check the fire preset"
-        )
+    _require_detection(design, events)
     return RunTrace(tuple(steps), events, section, velocity_ms)

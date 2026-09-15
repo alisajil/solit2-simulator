@@ -50,7 +50,7 @@ def test_envelope_runs_the_velocity_range_and_keeps_the_worst_case():
     result = envelope.run(Design.load(BASELINE))
     assert len(result.envelope) >= 2
     assert result.worst_case["velocity_ms"] in (3.88, 5.08)
-    assert set(result.criteria) >= {"hrr_control_mw", "u35_temp_c", "fed_d35"}
+    assert set(result.criteria) >= {"target_ignited", "max_air_temp_c", "max_fed"}
     assert result.meta["engine"] == "reduced"
     assert len(result.timeseries["t_s"]) == len(result.timeseries["hrr_mw"])
 
@@ -89,10 +89,10 @@ def test_every_criterion_names_the_case_it_came_from():
 def test_a_criterion_is_attributed_to_the_case_that_actually_produced_it():
     design = Design.load(BASELINE)
     result = envelope.run(design)
-    owner = result.criteria_cases["hrr_control_mw"]
+    owner = result.criteria_cases["hrr_below_tvs_design_mw"]
     trace = sim.run_once(design, owner["section"], owner["velocity_ms"])
     peak = max(s.hrr_mw for s in trace.after(trace.events["t_full_pressure_s"]))
-    assert result.criteria["hrr_control_mw"].value == pytest.approx(peak)
+    assert result.criteria["hrr_below_tvs_design_mw"].value == pytest.approx(peak)
 
 
 def test_pinning_a_single_velocity_runs_one_case():
@@ -102,3 +102,30 @@ def test_pinning_a_single_velocity_runs_one_case():
     result = envelope.run(pinned)
     assert len(result.envelope) == 1
     assert result.worst_case["velocity_ms"] == pytest.approx(4.5)
+
+
+def test_each_step_carries_the_two_annex_7_running_quantities():
+    trace = sim.run_once(Design.load(BASELINE), "bored", 5.08)
+    assert all(s.target_exposure_s >= 0.0 for s in trace.steps)
+    assert all(s.structure_exposure_length_m >= 0.0 for s in trace.steps)
+    # the clock only ever advances by one step or resets to zero
+    for before, after in zip(trace.steps, trace.steps[1:]):
+        assert after.target_exposure_s in (0.0, pytest.approx(before.target_exposure_s + 1.0))
+
+
+def test_every_station_sample_carries_carbon_monoxide():
+    """Annex 7 7.2.2 calls CO out by name, so it has to reach the stations."""
+    trace = sim.run_once(Design.load(BASELINE), "bored", 5.08)
+    late = trace.steps[-1]
+    assert all(s.co_ppm >= 0.0 for s in late.stations.values())
+    assert max(s.co_ppm for s in late.stations.values()) > 0.0
+
+
+def test_the_result_reports_the_unset_criteria_and_the_target_context():
+    result = envelope.run(Design.load(BASELINE))
+    assert "criteria_unset" in result.score
+    assert set(result.score["criteria_unset"]) <= set(result.criteria)
+    assert all(result.criteria[cid].status == "unset"
+               for cid in result.score["criteria_unset"])
+    assert "target_peak_flux_kwm2" in result.peaks
+    assert "target_max_exposure_s" in result.peaks

@@ -1,7 +1,7 @@
 import json
 import pytest
 from pydantic import ValidationError
-from solit2.schema.design import Design, Nozzles
+from solit2.schema.design import AHJ, Design, Nozzles
 
 BASELINE = "designs/og-dbr-rev0.json"
 
@@ -133,3 +133,51 @@ def test_velocity_envelope_defaults_to_tender_range():
     d = Design.load(BASELINE)
     assert d.ventilation.velocity_ms is None
     assert d.ventilation.velocity_range_ms == (3.88, 5.08)
+
+
+def test_the_ahj_block_defaults_to_nothing_set():
+    """SOLIT2 Annex 7 7.1 defers every absolute value to the authority having
+    jurisdiction, so the tool must start with none of them assumed."""
+    d = Design.load(BASELINE)
+    deferred = ("tvs_design_fire_mw", "max_air_temp_c", "max_heat_flux_kwm2",
+                "min_visibility_m", "max_fed", "max_co_ppm",
+                "max_structure_exposure_length_m", "max_structure_exposure_duration_s")
+    assert all(getattr(d.ahj, name) is None for name in deferred)
+
+
+def test_the_structure_reporting_threshold_is_annex_7s_own_example_figure():
+    # 7.2.4 uses 500 C in its own wording; it is a reporting threshold, not a
+    # limit, so unlike every other AHJ field it has a value out of the box.
+    assert Design.load(BASELINE).ahj.structure_temp_threshold_c == 500.0
+
+
+def test_a_design_can_set_ahj_limits(tmp_path):
+    raw = json.loads(open(BASELINE).read())
+    raw["ahj"] = {"note": "Annex 7 7.1 limits set by the road authority",
+                  "tvs_design_fire_mw": 50.0, "max_air_temp_c": 60.0}
+    p = tmp_path / "with_ahj.json"
+    p.write_text(json.dumps(raw))
+    d = Design.load(p)
+    assert d.ahj.tvs_design_fire_mw == 50.0
+    assert d.ahj.max_air_temp_c == 60.0
+    assert d.ahj.max_fed is None
+    assert "road authority" in d.ahj.note
+
+
+def test_the_ahj_block_is_frozen_and_rejects_unknown_fields():
+    with pytest.raises(ValidationError):
+        AHJ(max_air_temp_c=60.0, max_smoke_temp_c=99.0)
+
+
+def test_the_solit2_test_tunnel_preset_loads(tmp_path):
+    """Annex 7 5.2.7 mandates BOTH 1.5 and 3.0 m/s; test conditions are not
+    the Orange Gate site conditions, which 3.3 governs transferring between."""
+    raw = json.loads(open(BASELINE).read())
+    raw["tunnel"] = {"preset": "solit2_test"}
+    raw["ventilation"] = {"mode": "longitudinal", "velocity_range_ms": [1.5, 3.0]}
+    p = tmp_path / "test_conditions.json"
+    p.write_text(json.dumps(raw))
+    d = Design.load(p)
+    assert d.tunnel.section == "test"
+    assert d.ventilation.velocity_range_ms == (1.5, 3.0)
+    assert "5.2.7" in d.tunnel.note

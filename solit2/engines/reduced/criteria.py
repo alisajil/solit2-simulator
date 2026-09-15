@@ -1,8 +1,18 @@
 """Criterion definitions and their evaluation against a completed run.
 
-Hard criteria come from the tender (`HPWM-TECHNICAL SPEC_R2` sections 5 and 6)
-and from the SOLIT2/APPLUS+TST performance criteria. Soft criteria are reported
-but do not reject a design.
+The governing source is SOLIT2 Engineering Guidance Annex 7 section 7, "Minimum
+acceptance criteria", whose own opening statement is that it "gives some guidance
+for selecting minimum acceptance requirements but do[es] not specify in detail
+absolute values", and that "the detailed acceptance criteria shall be defined by
+authorities having jurisdiction based on the risk analysis of every individual
+tunnel".
+
+So Annex 7 mandates exactly one absolute rule -- section 7.2.1, that the target
+must not ignite -- and four CATEGORIES of criteria whose numbers belong to the
+authority having jurisdiction. Every limit below is therefore either read off
+`design.ahj` (and reported as unset until an authority sets it), or is an
+engineering constraint of this particular system that is labelled as such and
+claims no Annex 7 basis.
 """
 from __future__ import annotations
 
@@ -15,70 +25,133 @@ from solit2.engines.reduced.state import RunTrace
 from solit2.schema.design import Design
 from solit2.schema.result import Criterion
 
-# Station chainage relative to the fire centre; negative is upstream.
+# Station chainage relative to the fire centre; negative is upstream. Annex 7
+# section 7.2.2 asks for life safety upstream AND downstream, so the life-safety
+# criteria below take their worst value across all of these, not upstream only.
 STATIONS = {"U35": -35.0, "U15": -15.0, "U5": -5.0,
             "D5": 5.0, "D15": 15.0, "D20": 20.0, "D35": 35.0, "D100": 100.0}
 BREATHING_HEIGHT_M = 1.8
-# Piloted ignition of wood; the downstream target must stay below this.
+# Piloted ignition of wood, Babrauskas; the flux the target must stay under.
 WOOD_PILOTED_IGNITION_KWM2 = 12.5
-NO_EXTINCTION_SENTINEL_S = 1e9
+# Sustained exposure needed before piloted ignition is predicted.
+IGNITION_EXPOSURE_S = 60.0
+# A gauge the flame has reached is not reading a view factor any more, so a
+# target at this flux is in flame contact and has ignited without waiting out
+# the exposure clock. `sim` clamps the target flux to this on flame contact.
+FLAME_CONTACT_FLUX_KWM2 = 50.0
+# Pump-power headroom of this system, not an Annex 7 figure. Mirrors
+# score.DENSITY_HEADROOM_MM_MIN, which applies the same threshold as a penalty.
+PUMP_POWER_DENSITY_HEADROOM_MM_MIN = 3.8
+DEFAULT_STEP_INTERVAL_S = 1.0
 
 
 @dataclass(frozen=True)
 class CriterionSpec:
+    """One acceptance criterion.
+
+    `limit` is a function of the design rather than a constant because Annex 7
+    section 7.1 defers the absolute values to the authority having jurisdiction:
+    most of them resolve to a `design.ahj` field that is `None` until set.
+    """
     id: str
-    limit: float | tuple[float, float]
+    limit: Callable[[Design], float | tuple[float, float] | None]
     op: str
     hard: bool
-    extract: Callable[[RunTrace, HydraulicsResult, CostResult, Design], float]
+    extract: Callable[[RunTrace, HydraulicsResult, CostResult, Design], float | bool]
 
 
 def _peak_after_activation(trace: RunTrace, attribute: str) -> float:
-    steps = trace.after(trace.events.get("t_full_pressure_s", 0.0))
+    """Peak once the system is at full pressure.
+
+    Annex 7 section 7.4 requires the system's response delay after triggering to
+    be accounted for when judging when target values are achieved; the pre-
+    activation fire is not what the system is being assessed on.
+    """
+    steps = trace.after(trace.events.get("t_full_pressure_s") or 0.0)
     if not steps:
         steps = trace.steps
     return max(getattr(s, attribute) for s in steps)
 
 
-def _station_peak(trace: RunTrace, station: str, field: str) -> float:
-    return max(getattr(s.stations[station], field) for s in trace.steps)
+def _worst_station_value(trace: RunTrace, field: str, worst) -> float:
+    """The worst value of `field` over every station and every step.
+
+    `worst` is `max` or `min`. Annex 7 section 7.2.2 asks for the life-safety
+    quantities upstream and downstream both, so every station counts.
+    """
+    return worst(worst(getattr(sample, field) for sample in step.stations.values())
+                 for step in trace.steps)
 
 
-def _station_min(trace: RunTrace, station: str, field: str) -> float:
-    return min(getattr(s.stations[station], field) for s in trace.steps)
+def _step_interval_s(trace: RunTrace) -> float:
+    if len(trace.steps) < 2:
+        return DEFAULT_STEP_INTERVAL_S
+    return trace.steps[1].t_s - trace.steps[0].t_s
 
 
-def _station_final(trace: RunTrace, station: str, field: str) -> float:
-    return getattr(trace.steps[-1].stations[station], field)
+def _target_ignited(trace: RunTrace) -> bool:
+    """Annex 7 section 7.2.1: did fire spread reach the target 5 m downstream.
+
+    A test observes this; a simulation predicts it. The target counts as ignited
+    on flame contact, or on sustained exposure above the piloted-ignition flux --
+    the second being a duration rule, not a peak rule, so a flux that crosses the
+    threshold briefly and repeatedly is not ignition.
+    """
+    return any(step.target_flux_kwm2 >= FLAME_CONTACT_FLUX_KWM2
+               or step.target_exposure_s >= IGNITION_EXPOSURE_S
+               for step in trace.steps)
+
+
+def _structure_exposure_duration_s(trace: RunTrace) -> float:
+    """Total time for which any length of ceiling was above the AHJ threshold."""
+    interval = _step_interval_s(trace)
+    return sum(interval for s in trace.steps if s.structure_exposure_length_m > 0.0)
 
 
 DEFAULT_CRITERIA: tuple[CriterionSpec, ...] = (
-    CriterionSpec("hrr_control_mw", 50.0, "<=", True,
-                  lambda t, h, c, d: _peak_after_activation(t, "hrr_mw")),
-    CriterionSpec("power_kw", 650.0, "<=", True, lambda t, h, c, d: h.power_kw),
-    CriterionSpec("target_hf_kwm2", WOOD_PILOTED_IGNITION_KWM2, "<=", True,
-                  lambda t, h, c, d: _peak_after_activation(t, "target_flux_kwm2")),
-    CriterionSpec("remote_nozzle_bar", (45.0, 60.0), "in", True,
-                  lambda t, h, c, d: d.nozzles.pressure_bar),
-    CriterionSpec("u35_temp_c", 60.0, "<=", True,
-                  lambda t, h, c, d: _station_peak(t, "U35", "temp_c")),
-    CriterionSpec("hf_u15_kwm2", 5.0, "<=", True,
-                  lambda t, h, c, d: _station_peak(t, "U15", "flux_kwm2")),
-    CriterionSpec("hf_u35_kwm2", 2.5, "<=", True,
-                  lambda t, h, c, d: _station_peak(t, "U35", "flux_kwm2")),
-    CriterionSpec("visibility_u35_m", 10.0, ">=", True,
-                  lambda t, h, c, d: _station_min(t, "U35", "visibility_m")),
-    CriterionSpec("fed_d35", 0.3, "<=", True,
-                  lambda t, h, c, d: _station_final(t, "D35", "fed_tox")),
-    CriterionSpec("ff_u5_hf_kwm2", 5.0, "<=", False,
-                  lambda t, h, c, d: _station_peak(t, "U5", "flux_kwm2")),
-    CriterionSpec("ff_d20_temp_c", 60.0, "<=", False,
-                  lambda t, h, c, d: _station_peak(t, "D20", "temp_c")),
-    CriterionSpec("density_mm_min", 3.8, "<=", False,
-                  lambda t, h, c, d: h.density_mm_min),
-    CriterionSpec("pools_extinguished_s", 600.0, "<=", False,
-                  lambda t, h, c, d: t.events.get("pools_extinguished_at_s")
-                  or (0.0 if d.fire.fire_class == "A" else NO_EXTINCTION_SENTINEL_S)),
+    # 7.2.1 -- the one absolute rule. "Prevention of fire spread is essential in
+    # every case and fire target shall not have ignited during the test. FFFS has
+    # failed if fire spread has spread to the target 5 m downstream behind the
+    # mock-up." Mandated outright, so it carries no limit and no AHJ dependency.
+    CriterionSpec("target_ignited", lambda d: None, "is_false", True,
+                  lambda t, h, c, d: _target_ignited(t)),
+    # 7.3.1 Class B -- "if the ventilation system is designed for certain
+    # unsuppressed fire size, FFFS shall be able to suppress increased design
+    # fire under this size". The suppression target is the tunnel's own
+    # ventilation design fire size, which only the AHJ can name.
+    CriterionSpec("hrr_below_tvs_design_mw", lambda d: d.ahj.tvs_design_fire_mw,
+                  "<=", True, lambda t, h, c, d: _peak_after_activation(t, "hrr_mw")),
+    # 7.2.2 life safety -- temperature, heat radiation, visibility and gas
+    # concentrations, upstream AND downstream, with CO called out specially.
+    # Every limit is the AHJ's to set.
+    CriterionSpec("max_air_temp_c", lambda d: d.ahj.max_air_temp_c, "<=", True,
+                  lambda t, h, c, d: _worst_station_value(t, "temp_c", max)),
+    CriterionSpec("max_heat_flux_kwm2", lambda d: d.ahj.max_heat_flux_kwm2, "<=", True,
+                  lambda t, h, c, d: _worst_station_value(t, "flux_kwm2", max)),
+    CriterionSpec("min_visibility_m", lambda d: d.ahj.min_visibility_m, ">=", True,
+                  lambda t, h, c, d: _worst_station_value(t, "visibility_m", min)),
+    CriterionSpec("max_fed", lambda d: d.ahj.max_fed, "<=", True,
+                  lambda t, h, c, d: _worst_station_value(t, "fed_tox", max)),
+    CriterionSpec("max_co_ppm", lambda d: d.ahj.max_co_ppm, "<=", True,
+                  lambda t, h, c, d: _worst_station_value(t, "co_ppm", max)),
+    # 7.2.4 tunnel structure -- "the minimum criterion is that high temperature
+    # exposure areas will be limited to a small area, directly above fire loads
+    # or slightly downstream", and ">500 C are allowed if exposure time is short
+    # and area is small". So: how long a run of tunnel, and for how long. Both
+    # absolute limits are the AHJ's.
+    CriterionSpec("structure_exposure_length_m",
+                  lambda d: d.ahj.max_structure_exposure_length_m, "<=", True,
+                  lambda t, h, c, d: max(s.structure_exposure_length_m for s in t.steps)),
+    CriterionSpec("structure_exposure_duration_s",
+                  lambda d: d.ahj.max_structure_exposure_duration_s, "<=", True,
+                  lambda t, h, c, d: _structure_exposure_duration_s(t)),
+    # Engineering constraints of this system. Not Annex 7 criteria, and labelled
+    # so: the pump power the design itself specifies, and the discharge density
+    # the pump-power headroom allows.
+    CriterionSpec("power_kw", lambda d: d.hydraulics.power_cap_kw, "<=", True,
+                  lambda t, h, c, d: h.power_kw),
+    CriterionSpec("density_mm_min", lambda d: PUMP_POWER_DENSITY_HEADROOM_MM_MIN,
+                  "<=", False, lambda t, h, c, d: h.density_mm_min),
 )
 
 
@@ -88,7 +161,9 @@ def evaluate(trace: RunTrace, hyd: HydraulicsResult, cost: CostResult,
     out: dict[str, Criterion] = {}
     for spec in DEFAULT_CRITERIA:
         override = design.criteria.get(spec.id, {})
-        limit = override.get("limit", spec.limit)
+        # `in` rather than `.get`, so a design can deliberately override a limit
+        # back to None ("the authority has not ruled on this after all").
+        limit = override["limit"] if "limit" in override else spec.limit(design)
         if isinstance(limit, list):
             limit = tuple(limit)
         out[spec.id] = Criterion.build(

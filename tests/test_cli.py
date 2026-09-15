@@ -13,7 +13,8 @@ def test_run_emits_a_valid_result_json(tmp_path):
     assert proc.returncode == 0, proc.stderr
     payload = json.loads(proc.stdout)
     assert payload["meta"]["engine"] == "reduced"
-    assert "hrr_control_mw" in payload["criteria"]
+    assert "target_ignited" in payload["criteria"]
+    assert "criteria_unset" in payload["score"]
     assert "total" in payload["score"]
 
 

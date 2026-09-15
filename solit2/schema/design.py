@@ -215,6 +215,34 @@ class Hydraulics(Frozen):
     safety_factor: float = 1.10
 
 
+class AHJ(Frozen):
+    """Limits the authority having jurisdiction sets.
+
+    SOLIT2 Annex 7 section 7.1 gives four categories of acceptance criteria but
+    "do[es] not specify in detail absolute values": "the detailed acceptance
+    criteria shall be defined by authorities having jurisdiction based on the
+    risk analysis of every individual tunnel". So every absolute value here is
+    `None` until someone sets it, and a criterion reading `None` is reported as
+    unset rather than silently borrowing a figure from another vendor's report.
+    """
+    note: str = ""
+    # 7.3.1 - the ventilation system's unsuppressed design fire size
+    tvs_design_fire_mw: float | None = None
+    # 7.2.2 life safety, upstream and downstream
+    max_air_temp_c: float | None = None
+    max_heat_flux_kwm2: float | None = None
+    min_visibility_m: float | None = None
+    max_fed: float | None = None
+    max_co_ppm: float | None = None
+    # 7.2.4 structure: how hot, over how long a run of tunnel, for how long.
+    # The threshold is Annex 7's own example figure (">500 C are allowed if
+    # exposure time is short and area is small"), so it is a reporting
+    # threshold rather than a limit and is the one field that is never None.
+    structure_temp_threshold_c: float = 500.0
+    max_structure_exposure_length_m: float | None = None
+    max_structure_exposure_duration_s: float | None = None
+
+
 class Design(Frozen):
     meta: Meta
     tunnel: Tunnel
@@ -224,6 +252,7 @@ class Design(Frozen):
     ventilation: Ventilation
     detection: Detection
     hydraulics: Hydraulics
+    ahj: AHJ = Field(default_factory=AHJ)
     criteria: dict = Field(default_factory=dict)
 
     @classmethod

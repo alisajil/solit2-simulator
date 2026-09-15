@@ -40,6 +40,10 @@ class StationSample:
     visibility_m: float
     fed_tox: float      # cumulative to this instant
     fed_heat: float     # cumulative to this instant
+    # SOLIT2 Annex 7 section 7.2.2 names CO and CO2 as life-safety quantities in
+    # their own right, so the concentration is carried per station rather than
+    # only reaching the run through the FED dose it contributes to.
+    co_ppm: float = 0.0
 
 
 @dataclass(frozen=True)
@@ -58,6 +62,13 @@ class StepRecord:
     pools_remaining: int
     mist: MistEffect
     stations: dict[str, StationSample]
+    # How long the target has been continuously above the piloted-ignition flux.
+    # Annex 7 section 7.2.1 is a sustained-exposure rule, so this resets to zero
+    # the moment the flux drops back below the threshold.
+    target_exposure_s: float = 0.0
+    # Annex 7 section 7.2.4 asks for the hot AREA, not the hottest point: the
+    # length of tunnel whose ceiling exceeds the AHJ reporting threshold.
+    structure_exposure_length_m: float = 0.0
 
 
 @dataclass(frozen=True)

@@ -39,6 +39,10 @@ STRATIFIED_FACTOR = 0.1
 BREATHING_HEIGHT_M = 1.8
 # Smoke extinction for the radiant path (mist attenuation is supplied separately)
 SMOKE_EXTINCTION_PER_M = 0.004
+# Resolution at which the ceiling is walked to measure how much of it is hot,
+# for SOLIT2 Annex 7 section 7.2.4. One metre resolves a "small area" finely
+# enough to judge it without costing a closed-form inversion of the two-term decay.
+STRUCTURE_SCAN_STEP_M = 1.0
 
 
 def equivalent_radius_m(length_m: float, width_m: float) -> float:
@@ -142,6 +146,29 @@ class ThermalField:
         tau_smoke = math.exp(-SMOKE_EXTINCTION_PER_M * dx)
         return point_source_flux_kwm2(self.hrr_kw, self.radiative_fraction,
                                       distance, tau_mist * tau_smoke)
+
+
+def exposure_length_m(thermal_field: ThermalField, threshold_c: float,
+                      x_min_m: float, x_max_m: float,
+                      step_m: float = STRUCTURE_SCAN_STEP_M) -> float:
+    """Length of tunnel whose ceiling temperature exceeds `threshold_c`.
+
+    SOLIT2 Annex 7 section 7.2.4 sets "the minimum criterion [...] that high
+    temperature exposure areas will be limited to a small area", so what matters
+    is how much tunnel got hot, not how hot the hottest point got. The ceiling
+    is walked between the outermost station positions at `step_m` resolution.
+    """
+    if step_m <= 0:
+        raise ValueError(f"the ceiling scan step must be positive, got {step_m}")
+    # The longitudinal decay falls monotonically with distance from the fire, so
+    # if the fire's own station is below the threshold nothing downstream of it
+    # can be above it. This short-circuit skips the scan for every cool step.
+    if thermal_field.ceiling_temp_c(0.0) <= threshold_c:
+        return 0.0
+    samples = int((x_max_m - x_min_m) / step_m) + 1
+    hot = sum(1 for i in range(samples)
+              if thermal_field.ceiling_temp_c(x_min_m + i * step_m) > threshold_c)
+    return hot * step_m
 
 
 def field(geom: SectionGeometry, fire_model: FireModel, fire_state: FireState,

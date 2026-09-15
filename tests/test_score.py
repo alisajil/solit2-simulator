@@ -18,21 +18,39 @@ class _Trace:
     steps = ()
 
 
+# An AHJ that has set every limit, so the classic "does a good design score well"
+# tests still have real margins to average. `_unset_criteria` is the opposite case.
 def _criteria(**overrides):
     base = {
-        "hrr_control_mw": Criterion.build(46.0, 50.0, "<=", True),
+        "target_ignited": Criterion.build(False, None, "is_false", True),
+        "hrr_below_tvs_design_mw": Criterion.build(46.0, 50.0, "<=", True),
+        "max_air_temp_c": Criterion.build(31.0, 60.0, "<=", True),
+        "max_heat_flux_kwm2": Criterion.build(1.1, 5.0, "<=", True),
+        "min_visibility_m": Criterion.build(60.0, 10.0, ">=", True),
+        "max_fed": Criterion.build(0.05, 0.3, "<=", True),
+        "max_co_ppm": Criterion.build(40.0, 500.0, "<=", True),
+        "structure_exposure_length_m": Criterion.build(7.0, 20.0, "<=", True),
+        "structure_exposure_duration_s": Criterion.build(120.0, 600.0, "<=", True),
         "power_kw": Criterion.build(375.0, 650.0, "<=", True),
-        "target_hf_kwm2": Criterion.build(9.8, 12.5, "<=", True),
-        "remote_nozzle_bar": Criterion.build(50.0, (45.0, 60.0), "in", True),
-        "u35_temp_c": Criterion.build(31.0, 60.0, "<=", True),
-        "hf_u15_kwm2": Criterion.build(1.1, 5.0, "<=", True),
-        "hf_u35_kwm2": Criterion.build(0.3, 2.5, "<=", True),
-        "visibility_u35_m": Criterion.build(60.0, 10.0, ">=", True),
-        "fed_d35": Criterion.build(0.05, 0.3, "<=", True),
         "density_mm_min": Criterion.build(2.4, 3.8, "<=", False),
     }
     base.update(overrides)
     return base
+
+
+# Every limit SOLIT2 Annex 7 7.1 defers to the AHJ, with no AHJ having spoken.
+AHJ_DEFERRED = ("hrr_below_tvs_design_mw", "max_air_temp_c", "max_heat_flux_kwm2",
+                "min_visibility_m", "max_fed", "max_co_ppm",
+                "structure_exposure_length_m", "structure_exposure_duration_s")
+
+
+def _unset_criteria():
+    ops = {"min_visibility_m": ">="}
+    out = {cid: Criterion.build(1.0, None, ops.get(cid, "<="), True) for cid in AHJ_DEFERRED}
+    out["target_ignited"] = Criterion.build(False, None, "is_false", True)
+    out["power_kw"] = Criterion.build(375.0, 650.0, "<=", True)
+    out["density_mm_min"] = Criterion.build(2.4, 3.8, "<=", False)
+    return out
 
 
 def test_passing_design_scores_between_zero_and_ten():
@@ -44,11 +62,11 @@ def test_passing_design_scores_between_zero_and_ten():
 
 def test_a_failed_hard_gate_zeroes_the_score_and_is_named():
     s = score_mod.compute(
-        _criteria(hrr_control_mw=Criterion.build(77.0, 50.0, "<=", True)),
+        _criteria(hrr_below_tvs_design_mw=Criterion.build(77.0, 50.0, "<=", True)),
         _Hyd(), _Cost(), _Trace(), peak_lining_c=690.0)
     assert not s.gates_passed
     assert s.total == 0.0
-    assert s.gates_failed == ["hrr_control_mw"]
+    assert s.gates_failed == ["hrr_below_tvs_design_mw"]
     assert s.components["water"] > 0  # still reported, so the optimiser can steer
 
 
@@ -86,3 +104,31 @@ def test_penalty_for_exceeding_the_density_headroom():
 
 def test_weights_sum_to_one():
     assert sum(score_mod.WEIGHTS.values()) == pytest.approx(1.0)
+
+
+# --- test 7: a design nobody has set limits for is unassessed, not passing ---
+
+def test_criteria_unset_lists_exactly_the_deferred_ids():
+    s = score_mod.compute(_unset_criteria(), _Hyd(), _Cost(), _Trace(), peak_lining_c=690.0)
+    assert set(s.criteria_unset) == set(AHJ_DEFERRED)
+
+
+def test_a_fully_unset_design_reports_gates_passed_beside_a_non_empty_unset_list():
+    s = score_mod.compute(_unset_criteria(), _Hyd(), _Cost(), _Trace(), peak_lining_c=690.0)
+    assert s.gates_passed, "nothing failed, because nothing was asked of it"
+    assert s.gates_failed == []
+    assert s.criteria_unset, "...and the output must say so rather than imply approval"
+
+
+def test_a_design_with_every_limit_set_has_nothing_unset():
+    s = score_mod.compute(_criteria(), _Hyd(), _Cost(), _Trace(), peak_lining_c=690.0)
+    assert s.criteria_unset == []
+
+
+def test_unset_criteria_do_not_dilute_the_margin_component():
+    """An unset limit has no margin; averaging its 0.0 in would understate the design."""
+    assessed = score_mod.compute(_criteria(), _Hyd(), _Cost(), _Trace(), peak_lining_c=690.0)
+    unassessed = score_mod.compute(_unset_criteria(), _Hyd(), _Cost(), _Trace(),
+                                   peak_lining_c=690.0)
+    assert unassessed.components["margin"] > 0.0
+    assert assessed.components["margin"] > 0.0

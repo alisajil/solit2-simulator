@@ -1,3 +1,4 @@
+import math
 import pytest
 from solit2.engines.reduced.geometry import SectionGeometry
 from solit2.engines.reduced import thermal
@@ -109,3 +110,86 @@ def test_stratification_blend_is_anchored_at_breathing_height():
     assert f.gas_temp_c(x, 1.8) == pytest.approx(f.ambient_c + f.strat_factor * excess)
     # Anchored at the crown: the full excess arrives, matching the ceiling value.
     assert f.gas_temp_c(x, f.height_m) == pytest.approx(f.ceiling_temp_c(x))
+
+
+def test_structure_exposure_length_is_zero_below_the_threshold_and_finite_above_it():
+    """Annex 7 7.2.4 asks how much tunnel got hot, not how hot the hottest point got."""
+    from solit2.engines.reduced.state import FireState, MistEffect
+    from solit2.engines.reduced.ventilation import evaluate
+    from solit2.engines.reduced import fire
+    from solit2.schema.design import Design
+
+    d = Design.load("designs/og-dbr-rev0.json")
+    model = fire.build_model(d)
+
+    def _field(hrr_mw):
+        st = fire.FireState(t_s=900.0, hrr_mw=hrr_mw, hrr_free_mw=hrr_mw,
+                            energy_released_mj=30_000.0, suppression=0.0,
+                            pools_remaining=0, wet_time_s=0.0)
+        vent = evaluate(BORE, 4.5, fire.convective_kw(model, hrr_mw))
+        return thermal.field(BORE, model, st, vent, MistEffect.none(), fire_top_m=4.0,
+                             fire_length_m=8.4, fire_width_m=2.4, ambient_c=30.0)
+
+    threshold = 500.0
+    span_m = 100.0 - -35.0 + thermal.STRUCTURE_SCAN_STEP_M
+    cool, hot = _field(2.0), _field(30.0)
+    assert cool.ceiling_temp_c(0.0) < threshold < hot.ceiling_temp_c(0.0)
+
+    assert thermal.exposure_length_m(cool, threshold, -35.0, 100.0) == 0.0
+    length = thermal.exposure_length_m(hot, threshold, -35.0, 100.0)
+    assert 0.0 < length < span_m
+    assert math.isfinite(length)
+
+
+def test_structure_exposure_length_grows_with_the_fire():
+    """A bigger fire holds more tunnel above the threshold, never less."""
+    from solit2.engines.reduced.state import MistEffect
+    from solit2.engines.reduced.ventilation import evaluate
+    from solit2.engines.reduced import fire
+    from solit2.schema.design import Design
+
+    d = Design.load("designs/og-dbr-rev0.json")
+    model = fire.build_model(d)
+    lengths = []
+    for hrr_mw in (30.0, 40.0, 50.0):
+        st = fire.FireState(t_s=900.0, hrr_mw=hrr_mw, hrr_free_mw=hrr_mw,
+                            energy_released_mj=30_000.0, suppression=0.0,
+                            pools_remaining=0, wet_time_s=0.0)
+        vent = evaluate(BORE, 4.5, fire.convective_kw(model, hrr_mw))
+        f = thermal.field(BORE, model, st, vent, MistEffect.none(), fire_top_m=4.0,
+                          fire_length_m=8.4, fire_width_m=2.4, ambient_c=30.0)
+        lengths.append(thermal.exposure_length_m(f, 500.0, -35.0, 100.0))
+    assert lengths == sorted(lengths)
+    assert lengths[0] < lengths[-1]
+
+
+def test_exposure_length_saturates_at_the_instrumented_span():
+    """A known limit of the measure: the scan only walks between the outermost
+    stations, so a big enough fire reads as the whole window rather than its
+    true physical extent. The reported figure is a measurement, not a horizon."""
+    from solit2.engines.reduced.state import MistEffect
+    from solit2.engines.reduced.ventilation import evaluate
+    from solit2.engines.reduced import fire
+    from solit2.schema.design import Design
+
+    d = Design.load("designs/og-dbr-rev0.json")
+    model = fire.build_model(d)
+    st = fire.FireState(t_s=900.0, hrr_mw=150.0, hrr_free_mw=150.0,
+                        energy_released_mj=30_000.0, suppression=0.0,
+                        pools_remaining=0, wet_time_s=0.0)
+    vent = evaluate(BORE, 4.5, fire.convective_kw(model, 150.0))
+    f = thermal.field(BORE, model, st, vent, MistEffect.none(), fire_top_m=4.0,
+                      fire_length_m=8.4, fire_width_m=2.4, ambient_c=30.0)
+    span_m = 100.0 - -35.0 + thermal.STRUCTURE_SCAN_STEP_M
+    assert thermal.exposure_length_m(f, 500.0, -35.0, 100.0) == pytest.approx(span_m)
+
+
+def test_exposure_length_rejects_a_non_positive_scan_step():
+    with pytest.raises(ValueError) as exc:
+        thermal.exposure_length_m(_ZERO_FIELD, 500.0, -35.0, 100.0, step_m=0.0)
+    assert "0.0" in str(exc.value)
+
+
+_ZERO_FIELD = thermal.ThermalField(
+    ceiling_excess_k=0.0, strat_factor=0.1, ambient_c=30.0, height_m=7.625,
+    hrr_kw=0.0, radiative_fraction=0.3, flame_centroid_z_m=4.0, flame_tip_x_m=0.0)

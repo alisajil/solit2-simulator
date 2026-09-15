@@ -1,6 +1,6 @@
 {
   "id": "c4",
-  "weight": 0.5,
+  "weight": 1.0,
   "source": "SOLIT2 Engineering Guidance Annex 2 section 6.1 (Class A with cover)",
   "design": {
     "meta": {"name": "c4-solit2-class-a-cover", "notes": "150 MW potential, tarpaulin, 2.25 m/s"},

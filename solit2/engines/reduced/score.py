@@ -27,6 +27,11 @@ class Score:
     gates_failed: list[str]
     components: dict[str, float]
     penalties: list[str] = field(default_factory=list)
+    # Criteria whose limit the authority having jurisdiction has not set
+    # (SOLIT2 Annex 7 section 7.1). A design that passes only because nobody has
+    # set a limit is not a passing design, it is an unassessed one, and this
+    # list is what keeps `gates_passed` from being read as approval.
+    criteria_unset: list[str] = field(default_factory=list)
 
 
 def _clipped_ratio(reference: float, actual: float) -> float:
@@ -38,7 +43,12 @@ def _clipped_ratio(reference: float, actual: float) -> float:
 def compute(criteria: dict[str, Criterion], hyd, cost, trace,
             peak_lining_c: float) -> Score:
     failed = [cid for cid, c in criteria.items() if c.hard and not c.passed]
-    hard_margins = [c.margin for c in criteria.values() if c.hard]
+    unset = [cid for cid, c in criteria.items() if c.status == "unset"]
+    # An unset limit has no margin to average -- its 0.0 is an absence, not a
+    # thin pass -- so it is excluded rather than allowed to drag the component
+    # down and make an unassessed design look like a marginal one.
+    hard_margins = [c.margin for c in criteria.values()
+                    if c.hard and c.status != "unset"]
 
     components = {
         "water": _clipped_ratio(BASELINE_FLOW_LPM, hyd.flow_lpm),
@@ -68,7 +78,7 @@ def compute(criteria: dict[str, Criterion], hyd, cost, trace,
             deductions += BACKLAYERING_PENALTY
 
     if failed:
-        return Score(0.0, False, failed, components, penalties)
+        return Score(0.0, False, failed, components, penalties, unset)
 
     total = 10.0 * sum(WEIGHTS[k] * components[k] for k in WEIGHTS) - deductions
-    return Score(max(total, 0.0), True, [], components, penalties)
+    return Score(max(total, 0.0), True, [], components, penalties, unset)

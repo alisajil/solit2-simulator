@@ -1,6 +1,6 @@
 {
   "id": "c6",
-  "weight": 0.5,
+  "weight": 1.0,
   "source": "SOLIT2 Engineering Guidance Annex 2 section 6.3 (Class B, longitudinal)",
   "design": {
     "meta": {"name": "c6-solit2-class-b", "notes": "60 MW diesel pools, longitudinal"},

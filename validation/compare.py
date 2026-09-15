@@ -84,28 +84,31 @@ def within(measured, modelled, tolerance: dict) -> bool:
     raise ValueError(f"unknown tolerance kind {kind!r}")
 
 
+# How each comparable quantity is pulled out of a result. Every entry reads the
+# trace or the peaks, never a criterion: the acceptance criteria are what an
+# authority sets, not what a fire test measured, so an anchor must not depend on
+# one existing (see solit2/engines/reduced/criteria.py).
+EXTRACTORS = {
+    "flow_lpm": lambda r: r.hydraulics["flow_lpm"],
+    "peak_hrr_mw": lambda r: r.peaks["hrr_mw"],
+    "peak_ceiling_temp_c": lambda r: r.peaks["ceiling_temp_c"],
+    "u15_temp_c": lambda r: max(r.timeseries["u35_temp_c"]),
+    "d15_temp_c": lambda r: max(r.timeseries["d15_temp_c"]),
+    "d100_temp_c": lambda r: r.peaks["smoke_layer_temp_d100_c"],
+    "hf_d15_kwm2": lambda r: max(r.timeseries["hf_u15_kwm2"]),
+    "backlayering": lambda r: bool(r.events["backlayering"]["occurred"]),
+    "pools_extinguished": lambda r: r.events["pools_extinguished_at_s"] is not None,
+}
+
+
 def _modelled(result, quantity: str):
     """Pull one comparable quantity out of a result."""
-    extractors = {
-        "flow_lpm": lambda r: r.hydraulics["flow_lpm"],
-        "peak_hrr_mw": lambda r: r.peaks["hrr_mw"],
-        "peak_ceiling_temp_c": lambda r: r.peaks["ceiling_temp_c"],
-        "u35_temp_c": lambda r: r.criteria["u35_temp_c"].value,
-        "u15_temp_c": lambda r: max(r.timeseries["u35_temp_c"]),
-        "d15_temp_c": lambda r: max(r.timeseries["d15_temp_c"]),
-        "d100_temp_c": lambda r: r.peaks["smoke_layer_temp_d100_c"],
-        "hf_u15_kwm2": lambda r: r.criteria["hf_u15_kwm2"].value,
-        "hf_d15_kwm2": lambda r: max(r.timeseries["hf_u15_kwm2"]),
-        "fed_d35": lambda r: r.criteria["fed_d35"].value,
-        "backlayering": lambda r: bool(r.events["backlayering"]["occurred"]),
-        "pools_extinguished": lambda r: r.events["pools_extinguished_at_s"] is not None,
-    }
-    if quantity not in extractors:
+    if quantity not in EXTRACTORS:
         raise KeyError(
             f"anchor quantity {quantity!r} has no extractor; known quantities are "
-            f"{sorted(extractors)}"
+            f"{sorted(EXTRACTORS)}"
         )
-    return extractors[quantity](result)
+    return EXTRACTORS[quantity](result)
 
 
 def check(anchor: Anchor, engine: str = "reduced") -> AnchorReport:

@@ -1,20 +1,17 @@
 from validation import compare
 
 
-def test_every_anchor_file_loads_and_declares_a_source():
+def test_the_anchor_set_is_exactly_the_solit2_guidance_tests():
+    """The APPLUS+TST cases (c1-c3) are a different vendor's campaign on a
+    different nozzle; the validation basis is the SOLIT2 guidance tests only."""
     anchors = compare.load_anchors()
-    assert len(anchors) >= 4
-    ids = {a.id for a in anchors}
-    assert {"c3", "c4", "c5", "c6"} <= ids
+    assert {a.id for a in anchors} == {"c4", "c5", "c6"}
     assert all(a.source for a in anchors)
-    assert all(0.0 < a.weight <= 1.0 for a in anchors)
 
 
-def test_solit2_anchors_are_down_weighted():
+def test_every_solit2_anchor_carries_full_weight():
     by_id = {a.id: a for a in compare.load_anchors()}
-    assert by_id["c3"].weight == 1.0
-    assert by_id["c4"].weight == 0.5
-    assert by_id["c6"].weight == 0.5
+    assert [by_id[i].weight for i in ("c4", "c5", "c6")] == [1.0, 1.0, 1.0]
 
 
 def test_anchor_designs_all_build_and_run():
@@ -24,14 +21,22 @@ def test_anchor_designs_all_build_and_run():
 
 
 def test_report_rows_carry_modelled_and_measured_values():
-    report = compare.check(next(a for a in compare.load_anchors() if a.id == "c3"))
+    report = compare.check(next(a for a in compare.load_anchors() if a.id == "c4"))
     quantities = {r[0] for r in report.rows}
     assert "peak_ceiling_temp_c" in quantities
-    assert "u35_temp_c" in quantities
+    assert "peak_hrr_mw" in quantities
     for _, modelled, measured, _, ok in report.rows:
         assert isinstance(modelled, (int, float, bool))
         assert isinstance(measured, (int, float, bool))
         assert isinstance(ok, bool)
+
+
+def test_every_anchor_quantity_has_a_live_extractor():
+    """A quantity whose extractor was pinned to a deleted criterion would only
+    blow up at `check` time, so assert the wiring directly."""
+    for anchor in compare.load_anchors():
+        for quantity in anchor.measured:
+            assert quantity in compare.EXTRACTORS, f"{anchor.id} wants {quantity!r}"
 
 
 def test_residuals_are_finite_and_weighted():
