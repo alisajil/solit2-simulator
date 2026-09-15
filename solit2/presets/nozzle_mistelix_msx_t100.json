@@ -1,0 +1,18 @@
+{
+  "preset": "mistelix_msx_t100",
+  "k_factor_lpm_bar05": 4.1,
+  "pressure_bar": 50.0,
+  "smd_table": {"34.5": 118.0, "45": 107.0, "50": 102.0, "60": 95.0},
+  "modes": [
+    {"id": "fine", "fraction": 0.60, "cone_half_angle_deg": 45.0, "launch_velocity_ms": 15.0},
+    {"id": "coarse", "fraction": 0.40, "smd_um": 450.0, "cone_half_angle_deg": 8.0, "launch_velocity_ms": 100.0}
+  ],
+  "mounting": {
+    "type": "ceiling_rows",
+    "rows": 2,
+    "row_lateral_offsets_m": [-2.5, 2.5],
+    "height_above_carriageway_m": 5.75,
+    "pitch_m": 2.4,
+    "tilt_deg": 0.0
+  }
+}

@@ -1,0 +1,17 @@
+{
+  "preset": "ultrafog_202_260t",
+  "k_factor_lpm_bar05": 4.2,
+  "pressure_bar": 56.0,
+  "smd_table": {"56": 120.0},
+  "modes": [
+    {"id": "fine", "fraction": 1.0, "cone_half_angle_deg": 50.0, "launch_velocity_ms": 20.0}
+  ],
+  "mounting": {
+    "type": "ceiling_rows",
+    "rows": 1,
+    "row_lateral_offsets_m": [4.55],
+    "height_above_carriageway_m": 4.97,
+    "pitch_m": 3.8,
+    "tilt_deg": 35.0
+  }
+}

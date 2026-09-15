@@ -1,0 +1,26 @@
+[project]
+name = "solit2"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.5.3",
+    "pydantic>=2.13.5",
+    "scipy>=1.18.1",
+]
+
+[dependency-groups]
+dev = [
+    "hypothesis>=6.168.0",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+pythonpath = ["."]
+
+[tool.coverage.run]
+source = ["solit2"]

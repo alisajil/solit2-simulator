@@ -1,0 +1,15 @@
+{
+  "preset": "orange_gate",
+  "main_dn_mm": 150.0,
+  "zone_header_dn_mm": 65.0,
+  "row_pipe_dn_mm": 40.0,
+  "roughness_mm": 0.045,
+  "pump_unit_m3h": 72.0,
+  "pump_efficiency": 0.68,
+  "motor_efficiency": 0.93,
+  "loop_factor": 0.25,
+  "static_head_bar": 2.0,
+  "fittings_loss_bar": 1.9,
+  "power_cap_kw": 650.0,
+  "safety_factor": 1.10
+}

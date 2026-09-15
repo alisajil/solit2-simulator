@@ -1,0 +1,14 @@
+{
+  "preset": "san_pedro_de_anes",
+  "tube": "LHS",
+  "section": "test",
+  "shape": "box",
+  "width_m": 9.5,
+  "height_m": 5.17,
+  "area_m2": 48.0,
+  "clearance_m": 4.5,
+  "length_m": 600.0,
+  "gradient_pct": 1.0,
+  "ambient_temp_c": 20.0,
+  "ambient_rh_pct": 60.0
+}

@@ -1,0 +1,13 @@
+{
+  "preset": "hgv_150mw",
+  "class": "A",
+  "design_hrr_mw": 150.0,
+  "growth": "ultrafast",
+  "incubation_s": 60.0,
+  "pallets": 408,
+  "energy_mj_per_pallet": 343.0,
+  "covered": false,
+  "footprint": {"length_m": 8.4, "width_m": 2.4, "top_height_m": 4.0},
+  "lane_centre_offset_from_wall_m": 3.4,
+  "target_distance_m": 5.0
+}
