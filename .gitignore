@@ -1,0 +1,29 @@
+# source tender / vendor documents — confidential, never committed
+*.pdf
+*.docx
+*.pptx
+*.xlsx
+*.dwg
+*.dxf
+*.step
+*.stl
+*.blend*
+*.FCStd
+
+# run outputs
+runs/
+*.fds
+*_devc.csv
+*_hrr.csv
+
+# python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# os
+.DS_Store
