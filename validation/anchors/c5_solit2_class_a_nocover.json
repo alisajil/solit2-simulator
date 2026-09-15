@@ -1,0 +1,37 @@
+{
+  "id": "c5",
+  "weight": 0.5,
+  "source": "SOLIT2 Engineering Guidance Annex 2 section 6.2 (Class A without cover)",
+  "design": {
+    "meta": {"name": "c5-solit2-class-a-nocover", "notes": "150 MW potential, no tarpaulin, 1.25 m/s"},
+    "tunnel": {"preset": "san_pedro_de_anes", "section": "test", "ambient_temp_c": 20.0,
+               "width_m": 7.5, "height_m": 5.2, "area_m2": 39.0},
+    "fire": {"preset": "hgv_150mw", "covered": false},
+    "nozzles": {"preset": "solit2_fogtec"},
+    "zones": {"section_length_m": 60.0, "sections_simultaneous": 1,
+              "manual_activation_s": 240.0, "activation_delay_s": 0.0,
+              "pump_ramp_s": 30.0, "duration_min": 42.0},
+    "ventilation": {"mode": "longitudinal", "velocity_ms": 1.25, "velocity_range_ms": [1.25, 1.25]},
+    "detection": {"type": "linear_heat", "threshold_c": 60.0, "sensor_spacing_m": 12.0},
+    "hydraulics": {"preset": "orange_gate"},
+    "criteria": {}
+  },
+  "measured": {
+    "peak_hrr_mw": 20.0,
+    "peak_ceiling_temp_c": 580.0,
+    "u15_temp_c": 22.0,
+    "d15_temp_c": 55.0,
+    "d100_temp_c": 50.0,
+    "hf_d15_kwm2": 0.45,
+    "backlayering": false
+  },
+  "tolerances": {
+    "peak_hrr_mw": {"kind": "relative", "value": 0.25},
+    "peak_ceiling_temp_c": {"kind": "relative", "value": 0.20},
+    "u15_temp_c": {"kind": "absolute", "value": 15.0},
+    "d15_temp_c": {"kind": "relative", "value": 0.40},
+    "d100_temp_c": {"kind": "relative", "value": 0.40},
+    "hf_d15_kwm2": {"kind": "factor", "value": 2.0},
+    "backlayering": {"kind": "exact"}
+  }
+}

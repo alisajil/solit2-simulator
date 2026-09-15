@@ -73,6 +73,23 @@ def _cmd_history(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_validate(args: argparse.Namespace) -> int:
+    from validation import compare
+
+    ids = tuple(args.anchor) if args.anchor else None
+    all_passed = True
+    for anchor in compare.load_anchors(ids):
+        report = compare.check(anchor, args.engine)
+        print(f"\n{anchor.id}  ({anchor.source})")
+        print(f"  {'quantity':<24} {'modelled':>12} {'measured':>12}  {'tolerance':<16} ok")
+        for quantity, modelled, measured, tol, ok in report.rows:
+            mark = "yes" if ok else "NO"
+            print(f"  {quantity:<24} {modelled:>12.3g} {measured:>12.3g}  {tol:<16} {mark}")
+            all_passed &= ok
+    print("\nall anchors within tolerance" if all_passed else "\nsome anchors out of tolerance")
+    return EXIT_OK if all_passed else EXIT_VALIDATION_MISS
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="solit2", description="SOLIT2 tunnel water-mist simulator")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -90,6 +107,11 @@ def build_parser() -> argparse.ArgumentParser:
     hist.add_argument("--top", type=int, default=10)
     hist.add_argument("--passing", action="store_true")
     hist.set_defaults(func=_cmd_history)
+
+    val = sub.add_parser("validate", help="check the engine against the anchor fire tests")
+    val.add_argument("--engine", default="reduced", choices=["reduced"])
+    val.add_argument("--anchor", action="append")
+    val.set_defaults(func=_cmd_validate)
     return parser
 
 

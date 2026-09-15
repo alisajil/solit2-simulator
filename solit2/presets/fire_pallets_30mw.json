@@ -1,0 +1,13 @@
+{
+  "preset": "pallets_30mw",
+  "class": "A",
+  "design_hrr_mw": 30.0,
+  "growth": "ultrafast",
+  "incubation_s": 60.0,
+  "pallets": 78,
+  "energy_mj_per_pallet": 343.0,
+  "covered": false,
+  "footprint": {"length_m": 2.40, "width_m": 2.40, "top_height_m": 3.27},
+  "lane_centre_offset_from_wall_m": 3.7,
+  "target_distance_m": 5.0
+}

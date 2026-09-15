@@ -89,7 +89,9 @@ def _detect(scene: _Scene, events: dict, hrr_mw: float, t_s: float) -> None:
     if excess < design.detection.threshold_c - scene.ambient_c:
         return
     events["t_detect_s"] = t_s
-    events["t_activate_s"] = t_s + design.zones.activation_delay_s
+    manual = design.zones.manual_activation_s
+    events["t_activate_s"] = (manual if manual is not None
+                              else t_s + design.zones.activation_delay_s)
     events["t_full_pressure_s"] = events["t_activate_s"] + design.zones.pump_ramp_s
 
 

@@ -179,6 +179,11 @@ class Zones(Frozen):
     activation_delay_s: float = Field(ge=0, le=600)
     pump_ramp_s: float = Field(ge=0)
     duration_min: float = Field(ge=10, le=120)
+    # Absolute clock time (seconds from ignition) at which the system was
+    # manually activated, overriding the detection+delay timetable. Used by
+    # validation anchors transcribed from tests where the FFFS was started by
+    # the test operator rather than by the modelled linear-heat detector.
+    manual_activation_s: float | None = None
 
 
 class Ventilation(Frozen):

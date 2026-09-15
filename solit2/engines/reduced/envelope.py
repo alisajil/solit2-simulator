@@ -97,7 +97,8 @@ def _peaks(trace: RunTrace, peak_lining_c: float) -> dict[str, float]:
             "ceiling_temp_c": max(s.ceiling_temp_c for s in trace.steps),
             "lining_temp_c": peak_lining_c,
             "pipe_surface_temp_c": max(s.pipe_temp_c for s in trace.steps),
-            "smoke_layer_temp_d15_c": max(s.stations["D15"].temp_c for s in trace.steps)}
+            "smoke_layer_temp_d15_c": max(s.stations["D15"].temp_c for s in trace.steps),
+            "smoke_layer_temp_d100_c": max(s.stations["D100"].temp_c for s in trace.steps)}
 
 
 def _timeseries(sampled: tuple[StepRecord, ...]) -> dict[str, list[float]]:

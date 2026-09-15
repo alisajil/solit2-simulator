@@ -1,0 +1,29 @@
+{
+  "id": "c6",
+  "weight": 0.5,
+  "source": "SOLIT2 Engineering Guidance Annex 2 section 6.3 (Class B, longitudinal)",
+  "design": {
+    "meta": {"name": "c6-solit2-class-b", "notes": "60 MW diesel pools, longitudinal"},
+    "tunnel": {"preset": "san_pedro_de_anes", "section": "test", "ambient_temp_c": 20.0,
+               "width_m": 7.5, "height_m": 5.2, "area_m2": 39.0},
+    "fire": {"preset": "pool_60mw"},
+    "nozzles": {"preset": "solit2_fogtec"},
+    "zones": {"section_length_m": 60.0, "sections_simultaneous": 1,
+              "manual_activation_s": 300.0, "activation_delay_s": 0.0,
+              "pump_ramp_s": 30.0, "duration_min": 30.0},
+    "ventilation": {"mode": "longitudinal", "velocity_ms": 1.5, "velocity_range_ms": [1.5, 1.5]},
+    "detection": {"type": "linear_heat", "threshold_c": 60.0, "sensor_spacing_m": 12.0},
+    "hydraulics": {"preset": "orange_gate"},
+    "criteria": {}
+  },
+  "measured": {
+    "peak_hrr_mw": 60.0,
+    "backlayering": true,
+    "pools_extinguished": true
+  },
+  "tolerances": {
+    "peak_hrr_mw": {"kind": "relative", "value": 0.25},
+    "backlayering": {"kind": "exact"},
+    "pools_extinguished": {"kind": "exact"}
+  }
+}
