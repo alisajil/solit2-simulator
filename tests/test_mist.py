@@ -25,6 +25,11 @@ OLD_TOP_PLANE_W_FUEL_MM_MIN = 1.639
 REFERENCE_FLANK_REACH_FACTOR = 0.5
 REFERENCE_FLANK_EFFICIENCY = 0.4
 
+# The geometry cache's hit rate over one full three-anchor `compare.residuals`
+# call, measured in Task 16 before spray-core shielding was added. Ruling R4's
+# 177x speed-up rests on this staying where it is.
+TASK_16_CACHE_HIT_RATE_PCT = 98.54
+
 
 def _pin_mist_calibration(monkeypatch, **overrides):
     """Fix named `mist` constants for one test, leaving the real file alone."""
@@ -231,3 +236,38 @@ def test_cooling_fraction_is_capped():
     cap = load_calibration()["mist"]["chi_cool_max"]["value"]
     _, _, _, _, effect = _setup(gas_excess_k=900.0)
     assert effect.chi_cool <= cap + 1e-9
+
+
+def test_shielding_does_not_widen_the_geometry_cache_key():
+    """Task 17 test 5. Everything `spray_shielding_factor` reads -- mode flow,
+    cone angle, launch velocity, droplet size, drop height -- is already fixed by
+    the design, and the gas temperature it scales is already bucketed, so
+    shielding composes with the existing cache without adding a dimension to the
+    key. Measured over one full three-anchor `compare.residuals` call and judged
+    against the 98.54% Task 16 measured on the same call.
+    """
+    from validation import compare
+
+    mist._GEOMETRY_CACHE.clear()
+    counts = {"lookups": 0, "misses": 0}
+    real_geometry, real_compute = mist._geometry, mist._compute_geometry
+
+    def counting_geometry(*args, **kwargs):
+        counts["lookups"] += 1
+        return real_geometry(*args, **kwargs)
+
+    def counting_compute(*args, **kwargs):
+        counts["misses"] += 1
+        return real_compute(*args, **kwargs)
+
+    mist._geometry, mist._compute_geometry = counting_geometry, counting_compute
+    try:
+        compare.residuals(compare.load_anchors())
+    finally:
+        mist._geometry, mist._compute_geometry = real_geometry, real_compute
+
+    hit_rate = 100.0 * (counts["lookups"] - counts["misses"]) / counts["lookups"]
+    assert counts["lookups"] > 1000, "the call must exercise the cache properly"
+    assert abs(hit_rate - TASK_16_CACHE_HIT_RATE_PCT) <= 1.0, (
+        f"hit rate {hit_rate:.2f}% against Task 16's "
+        f"{TASK_16_CACHE_HIT_RATE_PCT}%: shielding widened the cache key")

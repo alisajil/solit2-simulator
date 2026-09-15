@@ -27,6 +27,14 @@ WATER_DENSITY_KGM3 = 1000.0
 STOKES_REYNOLDS_LIMIT = 1000.0
 NEWTON_DRAG_COEFFICIENT = 0.44
 FULLY_EVAPORATED_UM = 10.0
+LPM_PER_M3S = 60_000.0
+
+# Where down the fall the spray's water loading is sampled: the midpoint.
+# ponytail: one sample point for the whole flight. The cone widens and the
+# droplet slows as it descends, so the true shield varies along the path;
+# integrating the loading step by step inside `integrate` is the upgrade path if
+# a single midpoint sample proves too coarse.
+SHIELDING_SAMPLE_FRACTION = 0.5
 
 
 def drag_coefficient(reynolds: float) -> float:
@@ -51,6 +59,54 @@ def terminal_velocity_ms(diameter_um: float) -> float:
             return v_new
         v = 0.5 * (v + v_new)
     return v
+
+
+def spray_shielding_factor(mode_flow_lpm: float, cone_half_angle_deg: float,
+                           launch_velocity_ms: float, diameter_um: float,
+                           drop_height_m: float) -> float:
+    """How much of the ambient gas temperature rise one droplet actually feels.
+
+    A droplet does not fall alone. It falls inside a cloud of other droplets
+    from the same spray, and that cloud locally cools the gas -- heat goes into
+    evaporating the droplets around it, not only the one being tracked -- and
+    locally humidifies it, cutting the vapour-concentration gradient that drives
+    further evaporation. A dense spray core is partly self-shielding, and the
+    single-droplet-in-fully-hot-gas treatment has no way to represent that.
+
+    The physical quantity behind the correction is the local water mass loading:
+    the mass of water packed into each cubic metre of spray volume as it
+    descends, from the mode's mass flow spread over the cone's cross-section at
+    the sample point and carried through it at a representative transit speed.
+    A wide cone or a slow droplet spreads the same flow over more volume and
+    gives a lower loading; a tight, fast jet concentrates it.
+
+    The shield factor saturates between `shielding_floor` and 1. It is exactly
+    1 at zero loading -- a lone droplet sees the full local gas temperature rise,
+    which is the model's previous behaviour recovered as a limiting case -- and
+    tends to the floor as loading grows, because the spray also entrains hot
+    ambient gas and full insulation from it is not physical.
+    """
+    if mode_flow_lpm < 0:
+        raise ValueError(f"a mode cannot flow backwards: {mode_flow_lpm} lpm")
+    if cone_half_angle_deg <= 0 or drop_height_m <= 0 or diameter_um <= 0:
+        raise ValueError(
+            f"non-physical spray input: cone half-angle={cone_half_angle_deg} deg, "
+            f"drop height={drop_height_m} m, diameter={diameter_um} um; the spray "
+            f"has to occupy a volume for its water loading to be defined"
+        )
+
+    cal = load_calibration()["mist"]
+    reference_loading = cal["shielding_reference_loading_kgm3"]["value"]
+    floor = cal["shielding_floor"]["value"]
+
+    sample_distance_m = SHIELDING_SAMPLE_FRACTION * drop_height_m
+    cone_area_m2 = math.pi * (sample_distance_m
+                              * math.tan(math.radians(cone_half_angle_deg))) ** 2
+    transit_velocity_ms = (launch_velocity_ms + terminal_velocity_ms(diameter_um)) / 2.0
+    mdot_kgs = mode_flow_lpm * WATER_DENSITY_KGM3 / LPM_PER_M3S
+    loading_kgm3 = mdot_kgs / (cone_area_m2 * transit_velocity_ms)
+
+    return floor + (1.0 - floor) / (1.0 + loading_kgm3 / reference_loading)
 
 
 @dataclass(frozen=True)

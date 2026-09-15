@@ -29,6 +29,8 @@
     "evaporation_k_ref_m2s": {"value": 9.999999999955409e-08, "anchor": "none", "note": "basis removed with c3; refit required. d-squared law constant at the reference gas temperature rise; a 100 um drop evaporates in ~0.1 s at that rise and essentially not at all in cool air. The magnitude is physically reasonable but the specific value was set against c3, which no longer exists."},
     "evaporation_reference_delta_t_k": {"value": 600.0, "anchor": "none", "note": "basis removed with c3; refit required. Paired with evaporation_k_ref_m2s and set against the same deleted reference case."},
     "flank_reach_factor": {"value": 0.6531745274483106, "anchor": "c4,c5", "note": "lateral band, as a multiple of fuel height, in which descending spray strikes the fuel's sides"},
-    "flank_efficiency": {"value": 0.5751506325629849, "anchor": "c4,c5", "note": "effectiveness of water striking a vertical face relative to water landing on the top face"}
+    "flank_efficiency": {"value": 0.5751506325629849, "anchor": "c4,c5", "note": "effectiveness of water striking a vertical face relative to water landing on the top face"},
+    "shielding_reference_loading_kgm3": {"value": 0.05, "anchor": "c4,c5", "note": "water mass loading at which the droplet's local environment departs materially from the ambient plume; below it a droplet is effectively alone, above it the spray core is partly self-shielded. The starting value and the fitted bounds are an order-of-magnitude engineering guess, NOT a literature figure."},
+    "shielding_floor": {"value": 0.05, "anchor": "none", "note": "minimum shield factor at very high loading; the spray still entrains hot ambient gas so full insulation from it is not physical. Deliberately NOT fitted: it is a fixed modelling assumption, and adding it to the search space would grow it past what a twenty-minute budget can usefully explore for a constant this unlikely to be identifiable on its own."}
   }
 }

@@ -32,6 +32,14 @@ over, so the split is what makes the run tractable at all.
 `mounting.tilt_deg` and `droplet.integrate`'s `launch_angle_deg` are both
 measured from vertical, 0 being straight down, so the tilt passes straight
 through with no conversion.
+
+Each mode's droplets are not treated as falling alone. `_compute_geometry` asks
+`droplet.spray_shielding_factor` how dense that mode's spray core is and scales
+the gas temperature rise handed to `integrate` by the answer, because a droplet
+inside a dense cloud of others feels a locally cooled, locally humidified
+environment rather than the full plume. Everything the shield depends on is
+fixed by the design, and the gas temperature it scales is already bucketed, so
+it composes with the R4 cache without adding a dimension to the key.
 """
 from __future__ import annotations
 
@@ -40,7 +48,7 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from solit2.engines.reduced.droplet import integrate
+from solit2.engines.reduced.droplet import integrate, spray_shielding_factor
 from solit2.engines.reduced.geometry import NozzlePosition, SectionGeometry
 from solit2.engines.reduced.state import MistEffect
 from solit2.schema.design import Design
@@ -236,13 +244,33 @@ def _compute_geometry(design: Design, positions: tuple[NozzlePosition, ...],
     top_mask = _top_face_mask(envelope.top, gx, gy)
     out = []
     for mode in design.nozzles.modes:
+        # A droplet falls inside a cloud of others from the same spray, which
+        # locally cools and humidifies its gas, so it feels only part of the
+        # plume's temperature rise. This changes what thermal environment the
+        # droplet experiences, not its ballistics: `integrate` is unchanged and
+        # only its `gas_excess_k` argument is scaled. The coupling that follows
+        # is real -- less evaporation keeps the droplet larger, which changes its
+        # drag and so its drift -- and is not fought.
+        # ponytail: shielding computed at full rated flow, not scaled by the ramp
+        # fraction -- the differential effect during the ~30 s ramp is
+        # second-order against exposure over the full run; revisit if a design
+        # with an unusually long ramp is ever evaluated. Ruling R4 also requires
+        # it: a shield that depended on `flow_fraction` would put the pump ramp
+        # into the geometry cache key and the whole run's tractability with it.
+        shield = spray_shielding_factor(
+            mode_flow_lpm=design.nozzles.mode_flow_lpm(mode.id),
+            cone_half_angle_deg=mode.cone_half_angle_deg,
+            launch_velocity_ms=mode.launch_velocity_ms,
+            diameter_um=design.nozzles.smd_um(mode.id),
+            drop_height_m=drop_height_m,
+        )
         traj = integrate(
             diameter_um=design.nozzles.smd_um(mode.id),
             launch_velocity_ms=mode.launch_velocity_ms,
             launch_angle_deg=tilt_deg,
             drop_height_m=drop_height_m,
             air_velocity_ms=u_eff_ms,
-            gas_excess_k=gas_excess_k,
+            gas_excess_k=gas_excess_k * shield,
         )
         radius = drop_height_m * math.tan(math.radians(mode.cone_half_angle_deg))
         unit_top, unit_flank, mask = _sweep(positions, gx, gy, top_mask,
