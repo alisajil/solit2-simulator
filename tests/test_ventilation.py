@@ -65,6 +65,13 @@ def test_fans_off_during_a_fire_gives_a_long_backlayer_not_a_crash():
     assert state.backlayer_m > 400.0
 
 
-def test_throttled_velocity_floors_when_fans_are_off_or_reversed():
+def test_throttled_velocity_floors_when_fans_are_off():
+    # Fans off is a modelled state, so the floor is the right answer for it.
     assert vent.throttled_velocity_ms(0.0, CONV_150MW_KW, BORE.free_area_m2) == vent.MIN_EFFECTIVE_VELOCITY_MS
-    assert vent.throttled_velocity_ms(-2.0, CONV_150MW_KW, BORE.free_area_m2) == vent.MIN_EFFECTIVE_VELOCITY_MS
+
+
+def test_throttled_velocity_rejects_a_reversed_fan_velocity():
+    # Reversed flow is not modelled at all; answering with a small forward
+    # velocity would be a silent wrong answer, so it must refuse instead.
+    with pytest.raises(ValueError, match="-2.0"):
+        vent.throttled_velocity_ms(-2.0, CONV_150MW_KW, BORE.free_area_m2)

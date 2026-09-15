@@ -41,12 +41,18 @@ def test_fed_at_fully_mixed_concentration_is_much_worse():
 
 
 def test_fed_heat_ignores_flux_below_the_pain_threshold():
-    assert tenability.fed_heat_increment(temp_c=30.0, flux_kwm2=1.0, dt_s=60.0) < 0.02
+    # 30 C is not above the convective threshold and 1.0 kW/m2 is below the
+    # 2.5 kW/m2 radiant threshold, so neither term contributes: exactly zero.
+    assert tenability.fed_heat_increment(temp_c=30.0, flux_kwm2=1.0, dt_s=60.0) == 0.0
 
 
 def test_fed_heat_accumulates_fast_under_severe_exposure():
     one_minute = tenability.fed_heat_increment(temp_c=200.0, flux_kwm2=10.0, dt_s=60.0)
-    assert one_minute > 0.3
+    # ISO 13571 over one minute, convective + radiant:
+    #   1 / (5.0e7 * 200**-3.4)  = 1.332  (convected heat at 200 C)
+    # + 1 / (6.9  *  10**-1.56)  = 5.262  (radiant heat at 10 kW/m2)
+    # = 6.594
+    assert one_minute == pytest.approx(6.594, rel=0.01)
 
 
 def test_visibility_at_the_stratified_soot_load():

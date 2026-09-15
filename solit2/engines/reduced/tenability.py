@@ -24,9 +24,17 @@ HUGGETT_KJ_PER_KG_O2 = 13_100.0
 MOLAR_MASS_AIR = 28.97
 MOLAR_MASS_CO = 28.01
 MOLAR_MASS_CO2 = 44.01
-# ISO 13571
+# ISO 13571 fractional effective dose: every coefficient, exponent and threshold
+# below is taken from that standard (asphyxiant CO dose with the CO2
+# hyperventilation factor; thermal dose as convected heat plus radiant heat).
 FED_CO_COEFFICIENT = 2.764e-5
 FED_CO_EXPONENT = 1.036
+FED_CO2_HYPERVENTILATION_DIVISOR = 5.0
+FED_HEAT_CONVECTIVE_COEFFICIENT = 5.0e7
+FED_HEAT_CONVECTIVE_EXPONENT = -3.4
+FED_HEAT_CONVECTIVE_THRESHOLD_C = 30.0
+FED_HEAT_RADIANT_COEFFICIENT = 6.9
+FED_HEAT_RADIANT_EXPONENT = -1.56
 FED_HEAT_FLUX_THRESHOLD_KWM2 = 2.5
 # Jin: light-emitting signs.
 JIN_LIGHT_EMITTING = 8.0
@@ -70,7 +78,7 @@ def fed_tox_increment(species: Species, dt_s: float) -> float:
     """ISO 13571 asphyxiant dose, with the CO2 hyperventilation multiplier."""
     if species.co_ppm <= 0:
         return 0.0
-    hyperventilation = math.exp(species.co2_pct / 5.0)
+    hyperventilation = math.exp(species.co2_pct / FED_CO2_HYPERVENTILATION_DIVISOR)
     return (species.co_ppm**FED_CO_EXPONENT * FED_CO_COEFFICIENT
             * hyperventilation * dt_s / 60.0)
 
@@ -79,10 +87,12 @@ def fed_heat_increment(temp_c: float, flux_kwm2: float, dt_s: float) -> float:
     """ISO 13571 thermal dose: convected heat plus radiant heat."""
     minutes = dt_s / 60.0
     dose = 0.0
-    if temp_c > 30.0:
-        dose += minutes / (5.0e7 * temp_c**-3.4)
+    if temp_c > FED_HEAT_CONVECTIVE_THRESHOLD_C:
+        dose += minutes / (FED_HEAT_CONVECTIVE_COEFFICIENT
+                           * temp_c**FED_HEAT_CONVECTIVE_EXPONENT)
     if flux_kwm2 >= FED_HEAT_FLUX_THRESHOLD_KWM2:
-        dose += minutes / (1.33 * flux_kwm2**-1.33)
+        dose += minutes / (FED_HEAT_RADIANT_COEFFICIENT
+                           * flux_kwm2**FED_HEAT_RADIANT_EXPONENT)
     return dose
 
 

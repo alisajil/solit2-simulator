@@ -59,7 +59,14 @@ def throttled_velocity_ms(fan_velocity_ms: float, q_conv_kw: float, area_m2: flo
     """Buoyancy opposes the fans; the effective velocity at the fire falls."""
     if area_m2 <= 0:
         raise ValueError(f"free area must be positive, got {area_m2}")
-    if fan_velocity_ms <= 0:
+    if fan_velocity_ms < 0:
+        raise ValueError(
+            f"fan velocity must not be negative, got {fan_velocity_ms} m/s; "
+            "reversed longitudinal flow is not modelled"
+        )
+    if fan_velocity_ms == 0:
+        # Fans off is a real modelled state: floor the velocity so the caller gets
+        # a (heavily backlayered) state rather than a division by zero.
         return MIN_EFFECTIVE_VELOCITY_MS
     k = load_calibration()["ventilation"]["throttling_coefficient"]["value"]
     thermal = q_conv_kw / (AIR_DENSITY_KGM3 * AIR_CP_KJKGK * AMBIENT_T_K * area_m2 * fan_velocity_ms)
