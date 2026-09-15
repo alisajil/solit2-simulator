@@ -6,6 +6,7 @@ import json
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from typing import Any
 
 from solit2.engines.reduced import criteria as criteria_mod
 from solit2.engines.reduced import score as score_mod
@@ -50,9 +51,25 @@ def _evaluate_case(design: Design, section: str, velocity_ms: float) -> _Case:
     return _Case(trace, hyd, cost, criteria_mod.evaluate(trace, hyd, cost, scoped))
 
 
-def _worst_per_criterion(cases: list[_Case]) -> dict[str, Criterion]:
-    return {cid: min((case.criteria[cid] for case in cases), key=lambda c: c.margin)
-            for cid in cases[0].criteria}
+def _case_id(trace: RunTrace) -> dict[str, Any]:
+    """How a run is named in the envelope, the worst case and a criterion's provenance."""
+    return {"section": trace.section, "velocity_ms": trace.velocity_ms}
+
+
+def _worst_per_criterion(cases: list[_Case]) -> tuple[dict[str, Criterion],
+                                                      dict[str, dict[str, Any]]]:
+    """Each criterion's worst value across the envelope, and the case it came from.
+
+    This is a per-criterion selection, so the case behind one criterion need not be
+    the case behind another, nor the `worst_case` whose trace is reported in full.
+    """
+    merged: dict[str, Criterion] = {}
+    provenance: dict[str, dict[str, Any]] = {}
+    for cid in cases[0].criteria:
+        owner = min(cases, key=lambda case: case.criteria[cid].margin)
+        merged[cid] = owner.criteria[cid]
+        provenance[cid] = _case_id(owner.trace)
+    return merged, provenance
 
 
 def _worst_case(cases: list[_Case]) -> _Case:
@@ -112,7 +129,7 @@ def run(design: Design, sections: tuple[str, ...] | None = None,
     cases = [_evaluate_case(design, section, velocity)
              for section in sections for velocity in velocities]
 
-    merged = _worst_per_criterion(cases)
+    merged, criteria_cases = _worst_per_criterion(cases)
     worst = _worst_case(cases)
     trace, hyd, cost = worst.trace, worst.hydraulics, worst.cost
 
@@ -126,11 +143,11 @@ def run(design: Design, sections: tuple[str, ...] | None = None,
               "engine": ENGINE, "engine_version": ENGINE_VERSION,
               "runtime_s": round(time.perf_counter() - started, 3),
               "timestamp": datetime.now(timezone.utc).isoformat()},
-        envelope=[{"section": case.trace.section, "velocity_ms": case.trace.velocity_ms}
-                  for case in cases],
-        worst_case={"section": trace.section, "velocity_ms": trace.velocity_ms},
+        envelope=[_case_id(case.trace) for case in cases],
+        worst_case=_case_id(trace),
         events=trace.events,
         criteria=merged,
+        criteria_cases=criteria_cases,
         peaks=_peaks(trace, peak_lining),
         mist={"w_fuel_mm_min": final_mist.w_fuel_mm_min, "f_cov": final_mist.f_cov,
               "chi_cool": final_mist.chi_cool, "tau_mist": final_mist.tau_mist},

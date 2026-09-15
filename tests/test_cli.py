@@ -39,6 +39,31 @@ def test_bad_field_exits_two_with_a_named_error(tmp_path):
     assert err["fix"]
 
 
+def test_unwritable_history_path_does_not_lose_the_result(tmp_path):
+    # a regular file where the history's parent directory has to be
+    blocked = tmp_path / "blocked"
+    blocked.write_text("not a directory")
+    proc = _run(["run", "designs/og-dbr-rev0.json",
+                 "--history", str(blocked / "history.jsonl")])
+    assert proc.returncode != 1, "exit 1 is reserved for a validation miss"
+    assert json.loads(proc.stdout)["meta"]["engine"] == "reduced"
+    err = json.loads(proc.stderr)
+    assert "blocked" in err["error"]
+    assert err["fix"]
+
+
+def test_engine_failure_exits_three_with_a_json_error(tmp_path):
+    raw = json.loads(open("designs/og-dbr-rev0.json").read())
+    raw["detection"]["threshold_c"] = 5000.0
+    blind = tmp_path / "blind.json"
+    blind.write_text(json.dumps(raw))
+    proc = _run(["run", str(blind), "--no-history"])
+    assert proc.returncode == 3
+    err = json.loads(proc.stderr)
+    assert "5000.0" in err["error"] and "60.0" in err["error"]
+    assert err["fix"]
+
+
 def test_history_subcommand_lists_the_leaderboard(tmp_path):
     hist = tmp_path / "history.jsonl"
     _run(["run", "designs/og-dbr-rev0.json", "--history", str(hist)])

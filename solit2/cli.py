@@ -49,7 +49,14 @@ def _cmd_run(args: argparse.Namespace) -> int:
     json.dump(payload, sys.stdout, indent=2)
     sys.stdout.write("\n")
     if not args.no_history:
-        history_mod.append(result, Path(args.history))
+        try:
+            history_mod.append(result, Path(args.history))
+        except OSError as exc:
+            # The run itself succeeded and its result is already on stdout, so this
+            # is a bad path, not a failed run: never exit 1 for it.
+            return _fail(str(exc), "--history",
+                         "the result is on stdout but was not recorded; "
+                         "choose a writable history path", EXIT_BAD_INPUT)
     return EXIT_OK
 
 

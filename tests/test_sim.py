@@ -67,6 +67,34 @@ def test_thin_critical_velocity_margin_is_warned_about():
     assert any("critical velocity" in w for w in result.warnings)
 
 
+def test_a_scenario_that_never_trips_the_detector_raises():
+    d = Design.load(BASELINE)
+    blind = d.model_copy(update={"detection": d.detection.model_copy(
+        update={"threshold_c": 5000.0})})
+    with pytest.raises(RuntimeError) as excinfo:
+        sim.run_once(blind, "bored", 5.08)
+    message = str(excinfo.value)
+    assert "5000.0" in message, "the raise must name the threshold it never reached"
+    assert "60.0" in message, "the raise must name the duration it had to reach it in"
+
+
+def test_every_criterion_names_the_case_it_came_from():
+    result = envelope.run(Design.load(BASELINE))
+    assert set(result.criteria_cases) == set(result.criteria)
+    ran = {(c["section"], c["velocity_ms"]) for c in result.envelope}
+    assert all((c["section"], c["velocity_ms"]) in ran
+               for c in result.criteria_cases.values())
+
+
+def test_a_criterion_is_attributed_to_the_case_that_actually_produced_it():
+    design = Design.load(BASELINE)
+    result = envelope.run(design)
+    owner = result.criteria_cases["hrr_control_mw"]
+    trace = sim.run_once(design, owner["section"], owner["velocity_ms"])
+    peak = max(s.hrr_mw for s in trace.after(trace.events["t_full_pressure_s"]))
+    assert result.criteria["hrr_control_mw"].value == pytest.approx(peak)
+
+
 def test_pinning_a_single_velocity_runs_one_case():
     d = Design.load(BASELINE)
     pinned = d.model_copy(update={"ventilation": d.ventilation.model_copy(
