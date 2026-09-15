@@ -1,0 +1,11 @@
+{
+  "note": "relative cost units; absolute currency is out of scope. Baseline = DBR Rev 0.",
+  "head": 1.0,
+  "section_valve": 120.0,
+  "ring_main_per_m": 3.2,
+  "zone_header_per_m": 1.4,
+  "row_pipe_per_m": 0.9,
+  "pump_unit": 1800.0,
+  "tank_per_m3": 45.0,
+  "baseline_total": null
+}
