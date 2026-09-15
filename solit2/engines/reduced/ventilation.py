@@ -60,7 +60,7 @@ def throttled_velocity_ms(fan_velocity_ms: float, q_conv_kw: float, area_m2: flo
     if area_m2 <= 0:
         raise ValueError(f"free area must be positive, got {area_m2}")
     if fan_velocity_ms <= 0:
-        return 0.0
+        return MIN_EFFECTIVE_VELOCITY_MS
     k = load_calibration()["ventilation"]["throttling_coefficient"]["value"]
     thermal = q_conv_kw / (AIR_DENSITY_KGM3 * AIR_CP_KJKGK * AMBIENT_T_K * area_m2 * fan_velocity_ms)
     return max(fan_velocity_ms * (1.0 - k * thermal), MIN_EFFECTIVE_VELOCITY_MS)

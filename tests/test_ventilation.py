@@ -56,3 +56,15 @@ def test_fire_throttles_the_airflow():
 def test_throttling_never_reverses_the_flow():
     state = vent.evaluate(BORE, fan_velocity_ms=1.0, q_conv_kw=CONV_150MW_KW)
     assert state.u_eff_ms > 0.0
+
+
+def test_fans_off_during_a_fire_gives_a_long_backlayer_not_a_crash():
+    state = vent.evaluate(BORE, fan_velocity_ms=0.0, q_conv_kw=CONV_150MW_KW)
+    assert isinstance(state, vent.VentilationState)
+    assert state.u_eff_ms > 0.0
+    assert state.backlayer_m > 400.0
+
+
+def test_throttled_velocity_floors_when_fans_are_off_or_reversed():
+    assert vent.throttled_velocity_ms(0.0, CONV_150MW_KW, BORE.free_area_m2) == vent.MIN_EFFECTIVE_VELOCITY_MS
+    assert vent.throttled_velocity_ms(-2.0, CONV_150MW_KW, BORE.free_area_m2) == vent.MIN_EFFECTIVE_VELOCITY_MS

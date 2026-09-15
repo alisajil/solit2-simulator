@@ -31,3 +31,41 @@ class FireState:
     suppression: float
     pools_remaining: int
     wet_time_s: float
+
+
+@dataclass(frozen=True)
+class StationSample:
+    temp_c: float
+    flux_kwm2: float
+    visibility_m: float
+    fed_tox: float      # cumulative to this instant
+    fed_heat: float     # cumulative to this instant
+
+
+@dataclass(frozen=True)
+class StepRecord:
+    t_s: float
+    hrr_mw: float
+    hrr_free_mw: float
+    ceiling_temp_c: float
+    lining_temp_c: float
+    pipe_temp_c: float
+    target_flux_kwm2: float
+    u_eff_ms: float
+    u_critical_ms: float
+    backlayer_m: float
+    water_lpm: float
+    pools_remaining: int
+    mist: MistEffect
+    stations: dict[str, StationSample]
+
+
+@dataclass(frozen=True)
+class RunTrace:
+    steps: tuple[StepRecord, ...]
+    events: dict
+    section: str
+    velocity_ms: float
+
+    def after(self, t_s: float) -> tuple[StepRecord, ...]:
+        return tuple(s for s in self.steps if s.t_s >= t_s)
