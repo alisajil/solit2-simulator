@@ -35,13 +35,13 @@ AMBIENT_SPECIES = tenability.Species(0.0, 0.0, 0.0, tenability.AMBIENT_O2_PCT)
 class _Scene:
     """Everything a run needs that does not change from one step to the next.
 
-    `positions` and `halo` are built once and reused for every step so that the
-    mist module's geometry cache sees the same key, not an equal-but-new one.
+    `positions` and `envelope` are built once and reused for every step so that
+    the mist module's geometry cache sees the same key, not an equal-but-new one.
     """
     design: Design
     geom: SectionGeometry
     positions: tuple[NozzlePosition, ...]
-    halo: mist_mod.Halo
+    envelope: mist_mod.FuelEnvelope
     model: fire_mod.FireModel
     fire_top_m: float
     h_ef_m: float
@@ -60,8 +60,9 @@ def _build_scene(design: Design, section: str, velocity_ms: float) -> _Scene:
         design=scoped,
         geom=geom,
         positions=nozzle_positions(scoped, geom, fire_x_m=0.0),
-        halo=mist_mod.halo_around(0.0, fire_y, scoped.fire.footprint.length_m,
-                                  scoped.fire.footprint.width_m),
+        envelope=mist_mod.fuel_envelope(0.0, fire_y, scoped.fire.footprint.length_m,
+                                        scoped.fire.footprint.width_m,
+                                        mist_mod.flank_reach_m(fire_top)),
         model=fire_mod.build_model(scoped),
         fire_top_m=fire_top,
         h_ef_m=geom.crown_height_m - fire_top,
@@ -214,7 +215,7 @@ def run_once(design: Design, section: str, velocity_ms: float) -> RunTrace:
         field = thermal.field(scene.geom, scene.model, state, vent, mist, scene.fire_top_m,
                               scene.design.fire.footprint.length_m,
                               scene.design.fire.footprint.width_m, scene.ambient_c)
-        mist = mist_mod.evaluate(scene.design, scene.geom, scene.positions, scene.halo,
+        mist = mist_mod.evaluate(scene.design, scene.geom, scene.positions, scene.envelope,
                                  scene.fire_top_m, vent.u_eff_ms, field.ceiling_excess_k,
                                  q_conv, flow_fraction)
 

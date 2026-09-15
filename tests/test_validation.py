@@ -1,4 +1,56 @@
+from dataclasses import dataclass
+
+from solit2.engines.reduced import envelope
 from validation import compare
+
+
+@dataclass(frozen=True)
+class _FakeResult:
+    """Just enough of a `Result` for the extractors to read."""
+    timeseries: dict
+    peaks: dict
+
+
+def _trace_with_distinct_stations() -> _FakeResult:
+    """Every station carries a different value, and the peaks block carries
+    values that disagree with all of them, so an extractor reading the wrong
+    series cannot accidentally return the right number."""
+    return _FakeResult(
+        timeseries={
+            "u35_temp_c": [10.0, 35.0],
+            "u15_temp_c": [10.0, 15.0],
+            "d15_temp_c": [10.0, 75.0],
+            "d100_temp_c": [10.0, 100.0],
+            "hf_u15_kwm2": [0.1, 0.5],
+        },
+        peaks={"smoke_layer_temp_d15_c": 999.0, "smoke_layer_temp_d100_c": 888.0},
+    )
+
+
+def test_each_temperature_extractor_reads_its_own_station():
+    """Test 6. `u15_temp_c` read the 35 m series and `d100_temp_c` read the
+    peaks block rather than the station's own series; both now read the series
+    named for the station they report."""
+    fake = _trace_with_distinct_stations()
+    assert compare.EXTRACTORS["u15_temp_c"](fake) == 15.0
+    assert compare.EXTRACTORS["d15_temp_c"](fake) == 75.0
+    assert compare.EXTRACTORS["d100_temp_c"](fake) == 100.0
+
+
+def test_the_result_timeseries_carries_every_station_an_extractor_needs():
+    """The extractors above are only correct if the series actually exist and
+    are drawn from the stations they are named for."""
+    from solit2.engines.reduced import sim
+
+    design = compare.load_anchors(("c4",))[0].design
+    trace = sim.run_once(design, "test", design.ventilation.velocity_ms)
+    sampled = trace.steps[::envelope.TIMESERIES_STRIDE_S]
+    series = envelope._timeseries(sampled)
+
+    assert series["u15_temp_c"] == [s.stations["U15"].temp_c for s in sampled]
+    assert series["d100_temp_c"] == [s.stations["D100"].temp_c for s in sampled]
+    assert series["u15_temp_c"] != series["u35_temp_c"], (
+        "the 15 m and 35 m upstream stations must not report the same series")
 
 
 def test_the_anchor_set_is_exactly_the_solit2_guidance_tests():

@@ -27,6 +27,8 @@
     "w_ref_mm_min": {"value": 1.2, "anchor": "none", "note": "basis removed with c1-c3; refit required. Was set against reference cases c1, c2 and c3, none of which survive in validation/anchors, so this value currently rests on nothing and is carried unchanged only to avoid silently altering the physics."},
     "chi_cool_max": {"value": 0.45, "anchor": "none", "note": "basis removed with c3; refit required. This value has no surviving reference case and is carried unchanged pending a refit against c4-c6."},
     "evaporation_k_ref_m2s": {"value": 1.0e-7, "anchor": "none", "note": "basis removed with c3; refit required. d-squared law constant at the reference gas temperature rise; a 100 um drop evaporates in ~0.1 s at that rise and essentially not at all in cool air. The magnitude is physically reasonable but the specific value was set against c3, which no longer exists."},
-    "evaporation_reference_delta_t_k": {"value": 600.0, "anchor": "none", "note": "basis removed with c3; refit required. Paired with evaporation_k_ref_m2s and set against the same deleted reference case."}
+    "evaporation_reference_delta_t_k": {"value": 600.0, "anchor": "none", "note": "basis removed with c3; refit required. Paired with evaporation_k_ref_m2s and set against the same deleted reference case."},
+    "flank_reach_factor": {"value": 0.5, "anchor": "c4,c5", "note": "lateral band, as a multiple of fuel height, in which descending spray strikes the fuel's sides"},
+    "flank_efficiency": {"value": 0.4, "anchor": "c4,c5", "note": "effectiveness of water striking a vertical face relative to water landing on the top face"}
   }
 }

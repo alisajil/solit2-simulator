@@ -12,8 +12,10 @@ from dataclasses import dataclass
 class MistEffect:
     """What the mist is doing to the fire at one instant."""
     eta: float            # suppression efficiency applied to the Class A burning rate, 0..1
-    w_fuel_mm_min: float  # water flux actually landing on the fuel and its 1 m halo
-    f_cov: float          # fraction of that halo reached by at least one spray footprint
+    # effective application on the fuel: top-face water plus flank-band water at
+    # its reduced efficiency, over the top-face area
+    w_fuel_mm_min: float
+    f_cov: float          # fraction of the fuel's interception envelope any spray reaches
     chi_cool: float       # fraction of the convective heat release removed by evaporation
     tau_mist: float       # radiant transmissivity through the mist curtain, 0..1
 
