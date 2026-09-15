@@ -1,0 +1,17 @@
+{
+  "meta": {"name": "solit2-class-b-60mw", "notes": "SOLIT2 Annex 2 diesel pool test"},
+  "tunnel": {"preset": "san_pedro_de_anes", "section": "test"},
+  "fire": {"preset": "pool_60mw"},
+  "nozzles": {"preset": "ultrafog_202_260t"},
+  "zones": {
+    "section_length_m": 20.0,
+    "sections_simultaneous": 3,
+    "activation_delay_s": 100.0,
+    "pump_ramp_s": 30.0,
+    "duration_min": 40.0
+  },
+  "ventilation": {"mode": "longitudinal", "velocity_ms": 2.5, "velocity_range_ms": [2.5, 2.5]},
+  "detection": {"type": "linear_heat", "threshold_c": 60.0, "sensor_spacing_m": 25.0},
+  "hydraulics": {"preset": "orange_gate"},
+  "criteria": {}
+}

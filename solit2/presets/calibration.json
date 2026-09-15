@@ -1,0 +1,27 @@
+{
+  "fire": {
+    "suppression_response_s": {"value": 90.0, "anchor": "c4,c5", "note": "tau_s in S(t)"},
+    "cover_shielding_factor": {"value": 2.5, "anchor": "c4", "note": "PVC tarpaulin delays suppression"},
+    "decay_energy_fraction": {"value": 0.80, "anchor": "none", "note": "fraction burnt before linear decay"},
+    "pool_ventilation_factor": {"value": 1.40, "anchor": "c6", "note": "tunnel wind enhances pool burning"},
+    "pool_ramp_s": {"value": 150.0, "anchor": "c6", "note": "Annex 2: pools need 2-3 min to develop"},
+    "pool_burning_rate_reduction": {"value": 0.55, "anchor": "c6"},
+    "pool_extinction_flux_mm_min": {"value": 1.8, "anchor": "c6"},
+    "pool_extinction_time_s": {"value": 45.0, "anchor": "c6", "note": "per pool; Annex 2: extinguished pool by pool"}
+  },
+  "ventilation": {
+    "throttling_coefficient": {"value": 0.35, "anchor": "c4,c5", "note": "Annex 2 fig 10/19: 3 -> 2 m/s"},
+    "critical_velocity_height": {"value": "crown", "anchor": "none", "note": "H in Li-Ingason; mean height gives ~5% lower u_c"}
+  },
+  "thermal": {
+    "flame_length_coefficient": {"value": 4.3, "anchor": "none", "note": "C_f, Ingason & Li, Tunnel Fire Dynamics ch.11"},
+    "ceiling_temp_cap_k": {"value": 1350.0, "anchor": "none"}
+  },
+  "mist": {
+    "eta_max": {"value": 0.85, "anchor": "c4,c5", "note": "SOLIT2 held a 150 MW potential load to ~30 MW, so the ceiling is at least 0.80"},
+    "w_ref_mm_min": {"value": 1.2, "anchor": "c1,c2,c3"},
+    "chi_cool_max": {"value": 0.45, "anchor": "c3"},
+    "evaporation_k_ref_m2s": {"value": 1.0e-7, "anchor": "c3", "note": "d-squared law constant at the reference gas temperature rise; a 100 um drop evaporates in ~0.1 s at that rise and essentially not at all in cool air"},
+    "evaporation_reference_delta_t_k": {"value": 600.0, "anchor": "c3"}
+  }
+}
