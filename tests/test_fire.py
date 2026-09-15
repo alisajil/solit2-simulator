@@ -79,3 +79,23 @@ def test_mass_loss_and_convective_split():
     assert fire.convective_kw(model, 100.0) == pytest.approx(65_000.0)
     # 100 MW of wood at 17.5 MJ/kg and 80 % combustion efficiency
     assert fire.mass_loss_rate_kgs(model, 100.0) == pytest.approx(7.14, rel=0.02)
+
+
+def test_suppression_relaxes_symmetrically_when_eta_drops_to_zero():
+    # Regression: suppression must relax toward its target in both directions.
+    # Previously, `mist.eta == 0.0` forced suppression straight to 1.0 instead
+    # of continuing the tau-based lag, discarding whatever level it had decayed
+    # to the step before.
+    model = fire.build_model(Design.load(BASELINE))
+    st = fire.initial_state(model)
+    suppressing = MistEffect(eta=0.72, w_fuel_mm_min=3.0, f_cov=0.9, chi_cool=0.35, tau_mist=0.6)
+    for _ in range(600):
+        st = fire.step(model, st, 1.0, suppressing)
+    assert st.suppression < 0.5  # well decayed toward 1 - eta = 0.28 before mist stops
+    before = st.suppression
+
+    st = fire.step(model, st, 1.0, MistEffect.none())
+
+    # a single 1 s step at tau=90 s moves it only slightly toward 1.0, not a jump
+    assert st.suppression == pytest.approx(before, abs=0.02)
+    assert st.suppression < 0.5

@@ -1,8 +1,9 @@
 """Heat release rate for Class A (solid, pallet/HGV) and Class B (diesel pool) fires.
 
 Class A follows a t-squared growth to the design fire, burns at that level until
-most of the fuel energy is gone, then decays linearly. The mist reduces the
-burning rate through a first-order response.
+most of the fuel energy is gone, then decays exponentially toward zero as the
+remaining fuel energy is consumed. The mist reduces the burning rate through a
+first-order response.
 
 Class B follows Babrauskas' pool-fire law per pool, with a ventilation factor for
 the tunnel wind. The mist first reduces the burning rate, then extinguishes the
@@ -94,6 +95,8 @@ def initial_state(model: FireModel) -> FireState:
 
 
 def _free_burn_class_a_kw(model: FireModel, state: FireState, t_s: float) -> float:
+    """t-squared growth to the design plateau, then exponential decay of the
+    remaining fuel energy once `decay_energy_fraction` of the total has burnt."""
     grown = model.alpha_kw_s2 * max(t_s - model.incubation_s, 0.0) ** 2
     plateau = min(grown, model.design_hrr_kw)
     burnt = model.decay_energy_fraction * model.total_energy_mj
@@ -101,6 +104,9 @@ def _free_burn_class_a_kw(model: FireModel, state: FireState, t_s: float) -> flo
         return plateau
     remaining = model.total_energy_mj - state.energy_released_mj
     decay_span = (1.0 - model.decay_energy_fraction) * model.total_energy_mj
+    # ponytail: exponential decay of remaining energy, not the linear ramp described in the design spec —
+    # track decay-start HRR and decay-start time in FireState for a true linear ramp if Task 13's
+    # calibration fit shows the shape disagrees with the anchor tests' decay curves.
     return plateau * max(remaining / decay_span, 0.0)
 
 
@@ -116,11 +122,12 @@ def step(model: FireModel, state: FireState, dt_s: float, mist: MistEffect) -> F
 
     if model.fire_class == "A":
         free_kw = _free_burn_class_a_kw(model, state, t)
-        # first-order approach to the suppressed level while the mist is on the fuel
+        # first-order approach to the suppressed level while the mist is on the fuel;
+        # relaxes toward `target` in both directions so it lags symmetrically when
+        # eta returns to zero instead of snapping back to the free-burn rate
         target = 1.0 - mist.eta
         tau = model.tau_suppression_s
-        decayed = state.suppression + (target - state.suppression) * (1.0 - math.exp(-dt_s / tau))
-        suppression = decayed if mist.eta > 0 else 1.0
+        suppression = state.suppression + (target - state.suppression) * (1.0 - math.exp(-dt_s / tau))
         hrr_kw = free_kw * suppression
         pools, wet = state.pools_remaining, state.wet_time_s
     else:
