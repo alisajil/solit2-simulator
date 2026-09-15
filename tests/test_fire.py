@@ -3,7 +3,7 @@ from solit2.schema.design import Design
 from solit2.engines.reduced import fire
 from solit2.engines.reduced.state import MistEffect
 
-BASELINE = "designs/og-dbr-rev0.json"
+BASELINE = "examples/designs/road-tunnel-twin-bore.json"
 POOL = "tests/fixtures/pool_design.json"
 
 

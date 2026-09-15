@@ -1,0 +1,22 @@
+{
+  "meta": {
+    "name": "solit2-test-protocol",
+    "notes": "The SOLIT2 Annex 7 full-scale test, as a runnable design. Annex 7 5.2.7 mandates that BOTH 1.5 m/s and 3.0 m/s longitudinal velocity be tested, measured 45 m upstream of the fire, so both are carried in `ventilation.velocity_range_ms` and the envelope runs the pair. A velocity range is a property of the test being run, not of the tunnel, which is why it lives here and not in the tunnel preset. Replace the `nozzles` and `hydraulics` blocks with the system actually under test; everything else is the standard's own test condition."
+  },
+  "tunnel": {"preset": "solit2_test", "section": "test"},
+  "fire": {"preset": "hgv_150mw"},
+  "nozzles": {"preset": "template"},
+  "zones": {
+    "section_length_m": 20.0,
+    "sections_simultaneous": 3,
+    "activation_delay_s": 60.0,
+    "pump_ramp_s": 30.0,
+    "duration_min": 30.0
+  },
+  "ventilation": {"mode": "longitudinal", "velocity_range_ms": [1.5, 3.0]},
+  "detection": {"type": "linear_heat", "threshold_c": 60.0, "sensor_spacing_m": 12.0},
+  "hydraulics": {"preset": "template"},
+  "ahj": {},
+  "constraints": {},
+  "criteria": {}
+}

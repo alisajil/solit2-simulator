@@ -1,6 +1,6 @@
 {
-  "preset": "ultrafog_202_260t",
-  "note": "tilt_deg is measured from vertical; the source document states 35 degrees below horizontal, which is 55 degrees from vertical.",
+  "preset": "single_mode_example",
+  "note": "ILLUSTRATION ONLY, not a default and not an endorsement. A single-mode high-pressure head on one sidewall-offset ceiling row, tilted towards the carriageway. tilt_deg is measured from vertical, so 55 degrees here is 35 degrees below horizontal. Replace with the measured performance of the head actually being assessed.",
   "k_factor_lpm_bar05": 4.2,
   "pressure_bar": 56.0,
   "smd_table": {"56": 120.0},

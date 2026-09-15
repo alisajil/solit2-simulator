@@ -3,7 +3,7 @@ from solit2.schema.design import Design
 from solit2.engines.reduced.geometry import section_geometry, nozzle_positions
 from solit2.engines.reduced import mist
 
-BASELINE = "designs/og-dbr-rev0.json"
+BASELINE = "examples/designs/road-tunnel-twin-bore.json"
 FIRE_TOP_M = 4.0
 Q_CONV_KW = 50_000 * 0.65
 

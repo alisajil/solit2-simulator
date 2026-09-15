@@ -1,5 +1,5 @@
 {
-  "note": "relative cost units; absolute currency is out of scope. Baseline = DBR Rev 0.",
+  "note": "Relative cost units; absolute currency is out of scope. Weights are indicative unit rates for comparing designs against each other, not a quotation, and they are normalised against a fixed reference installation.",
   "head": 1.0,
   "section_valve": 120.0,
   "ring_main_per_m": 3.2,

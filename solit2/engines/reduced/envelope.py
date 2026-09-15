@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
 
+from solit2.engines.reduced import constraints as constraints_mod
 from solit2.engines.reduced import criteria as criteria_mod
 from solit2.engines.reduced import score as score_mod
 from solit2.engines.reduced import sim
@@ -16,6 +17,7 @@ from solit2.engines.reduced.geometry import section_geometry
 from solit2.engines.reduced.hydraulics import HydraulicsResult, size_system
 from solit2.engines.reduced.state import RunTrace, StepRecord
 from solit2.schema.design import Design
+from solit2.schema.presets import load_calibration
 from solit2.schema.result import Criterion, Result
 
 ENGINE = "reduced"
@@ -23,6 +25,10 @@ ENGINE_VERSION = "reduced-1.0.0"
 CRITICAL_VELOCITY_WARNING_MARGIN = 0.10
 TIMESERIES_STRIDE_S = 10
 DESIGN_SHA_CHARS = 12
+# The name every shipped placeholder preset carries. A result computed from one
+# is arithmetic, not an assessment, and has to say so in its own output.
+TEMPLATE_PRESET = "template"
+NO_ANCHOR = "none"
 
 
 @dataclass(frozen=True)
@@ -32,6 +38,7 @@ class _Case:
     hydraulics: HydraulicsResult
     cost: CostResult
     criteria: dict[str, Criterion]
+    constraints: dict[str, Criterion]
 
 
 def _velocities(design: Design) -> tuple[float, ...]:
@@ -48,7 +55,9 @@ def _evaluate_case(design: Design, section: str, velocity_ms: float) -> _Case:
     geom = section_geometry(scoped)
     hyd = size_system(scoped, geom)
     cost = cost_index(scoped, hyd)
-    return _Case(trace, hyd, cost, criteria_mod.evaluate(trace, hyd, cost, scoped))
+    return _Case(trace, hyd, cost,
+                 criteria_mod.evaluate(trace, hyd, cost, scoped),
+                 constraints_mod.evaluate(hyd, scoped))
 
 
 def _case_id(trace: RunTrace) -> dict[str, Any]:
@@ -74,18 +83,20 @@ def _assessed_hard(criteria) -> list[Criterion]:
     return [c for c in criteria if c.hard and c.status != "unset"]
 
 
-def _worst_per_criterion(cases: list[_Case]) -> tuple[dict[str, Criterion],
-                                                      dict[str, dict[str, Any]]]:
-    """Each criterion's worst value across the envelope, and the case it came from.
+def _worst_per_id(cases: list[_Case], block: str) -> tuple[dict[str, Criterion],
+                                                           dict[str, dict[str, Any]]]:
+    """Each entry's worst value across the envelope, and the case it came from.
 
-    This is a per-criterion selection, so the case behind one criterion need not be
-    the case behind another, nor the `worst_case` whose trace is reported in full.
+    `block` is "criteria" or "constraints"; both are judged the same way and
+    reported separately. This is a per-entry selection, so the case behind one
+    entry need not be the case behind another, nor the `worst_case` whose trace
+    is reported in full.
     """
     merged: dict[str, Criterion] = {}
     provenance: dict[str, dict[str, Any]] = {}
-    for cid in cases[0].criteria:
-        owner = min(cases, key=lambda case: _severity(case.criteria[cid]))
-        merged[cid] = owner.criteria[cid]
+    for cid in getattr(cases[0], block):
+        owner = min(cases, key=lambda case: _severity(getattr(case, block)[cid]))
+        merged[cid] = getattr(owner, block)[cid]
         provenance[cid] = _case_id(owner.trace)
     return merged, provenance
 
@@ -155,6 +166,50 @@ def _design_sha(design: Design) -> str:
     return hashlib.sha256(payload.encode()).hexdigest()[:DESIGN_SHA_CHARS]
 
 
+def _placeholder_warnings(design: Design) -> list[str]:
+    """Say, in the result itself, that a shipped placeholder is standing in for data."""
+    blocks = (("nozzle", design.nozzles.preset),
+              ("tunnel", design.tunnel.preset),
+              ("hydraulics", design.hydraulics.preset))
+    return [
+        f"the {name} block uses the shipped placeholder template, not measured "
+        f"data; this result is an illustration and not an assessment"
+        for name, preset in blocks if preset == TEMPLATE_PRESET
+    ]
+
+
+def _constraint_warnings(constraints: dict[str, Criterion]) -> list[str]:
+    """A declared limit that is exceeded. Visible, but never a SOLIT2 gate."""
+    return [
+        f"user-declared constraint {cid} is breached: {constraints[cid].value:.4g} "
+        f"against a declared limit of {constraints[cid].limit:.4g}; this is a "
+        f"project constraint, not a SOLIT2 acceptance criterion"
+        for cid in constraints_mod.breached(constraints)
+    ]
+
+
+def _calibration_meta() -> dict[str, Any]:
+    """What the engine's constants rest on, stated in the engine's own output.
+
+    `fitted` is declared in calibration.json rather than inferred: naming an
+    anchor records where a constant came from, which is not the same as having
+    run a fit. The anchor list, by contrast, is read back off the entries so it
+    cannot drift from what they actually cite.
+    """
+    calibration = load_calibration()
+    declared = calibration.get("provenance", {})
+    anchors: set[str] = set()
+    for group, entries in calibration.items():
+        if group == "provenance":
+            continue
+        for entry in entries.values():
+            cited = str(entry.get("anchor", NO_ANCHOR)).split(",")
+            anchors.update(a.strip() for a in cited if a.strip() not in ("", NO_ANCHOR))
+    return {"calibration_fitted": bool(declared.get("fitted", False)),
+            "calibration_anchors": sorted(anchors),
+            "calibration_note": declared.get("note", "")}
+
+
 def run(design: Design, sections: tuple[str, ...] | None = None,
         velocities: tuple[float, ...] | None = None) -> Result:
     started = time.perf_counter()
@@ -164,25 +219,33 @@ def run(design: Design, sections: tuple[str, ...] | None = None,
     cases = [_evaluate_case(design, section, velocity)
              for section in sections for velocity in velocities]
 
-    merged, criteria_cases = _worst_per_criterion(cases)
+    merged, criteria_cases = _worst_per_id(cases, "criteria")
+    # Judged alongside the criteria, reported apart from them, and never passed
+    # to `score.compute` -- a local limit must not read as a SOLIT2 failure.
+    constraints, _ = _worst_per_id(cases, "constraints")
     worst = _worst_case(cases)
     trace, hyd, cost = worst.trace, worst.hydraulics, worst.cost
 
     peak_lining = max(s.lining_temp_c for s in trace.steps)
     scored = score_mod.compute(merged, hyd, cost, trace, peak_lining)
-    warnings = _critical_velocity_warnings(trace) + list(scored.penalties)
+    warnings = (_placeholder_warnings(design)
+                + _critical_velocity_warnings(trace)
+                + _constraint_warnings(constraints)
+                + list(scored.penalties))
     final_mist = max(trace.steps, key=lambda s: s.mist.w_fuel_mm_min).mist
 
     return Result(
         meta={"design_name": design.meta.name, "design_sha": _design_sha(design),
               "engine": ENGINE, "engine_version": ENGINE_VERSION,
               "runtime_s": round(time.perf_counter() - started, 3),
-              "timestamp": datetime.now(timezone.utc).isoformat()},
+              "timestamp": datetime.now(timezone.utc).isoformat(),
+              **_calibration_meta()},
         envelope=[_case_id(case.trace) for case in cases],
         worst_case=_case_id(trace),
         events=trace.events,
         criteria=merged,
         criteria_cases=criteria_cases,
+        constraints=constraints,
         peaks=_peaks(trace, peak_lining),
         mist={"w_fuel_mm_min": final_mist.w_fuel_mm_min, "f_cov": final_mist.f_cov,
               "chi_cool": final_mist.chi_cool, "tau_mist": final_mist.tau_mist},

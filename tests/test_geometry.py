@@ -2,7 +2,7 @@ import pytest
 from solit2.schema.design import Design
 from solit2.engines.reduced.geometry import section_geometry, nozzle_positions
 
-BASELINE = "designs/og-dbr-rev0.json"
+BASELINE = "examples/designs/road-tunnel-twin-bore.json"
 
 
 def test_bored_section_matches_the_ga_drawing():

@@ -1,0 +1,26 @@
+{
+  "meta": {
+    "name": "road-tunnel-twin-bore",
+    "notes": "ILLUSTRATION ONLY. A worked example showing how a complete design is assembled: an 11 m twin-bore road tunnel, a 150 MW Class A fire load, a bimodal high-pressure head on two ceiling rows, and the site's own engineering limits declared in `constraints`. Every number here is an example, not a recommendation. The `ahj` block is deliberately empty: SOLIT2 Annex 7 7.1 leaves every acceptance limit to the authority having jurisdiction."
+  },
+  "tunnel": {"preset": "twin_bore_11m", "tube": "LHS", "section": "bored"},
+  "fire": {"preset": "hgv_150mw"},
+  "nozzles": {"preset": "bimodal_example"},
+  "zones": {
+    "section_length_m": 30.0,
+    "sections_simultaneous": 3,
+    "activation_delay_s": 60.0,
+    "pump_ramp_s": 30.0,
+    "duration_min": 60.0
+  },
+  "ventilation": {"mode": "longitudinal", "velocity_range_ms": [3.88, 5.08]},
+  "detection": {"type": "linear_heat", "threshold_c": 60.0, "sensor_spacing_m": 25.0},
+  "hydraulics": {"preset": "example"},
+  "constraints": {
+    "note": "Site and procurement limits this example project imposes. NOT from SOLIT2 and not acceptance criteria: the feeder capacity available at this portal, and the discharge density the installed pump power leaves headroom for. They are judged separately from the Annex 7 criteria and a breach is not a SOLIT2 failure.",
+    "max_pump_power_kw": 650.0,
+    "max_application_density_mm_min": 3.8
+  },
+  "ahj": {},
+  "criteria": {}
+}

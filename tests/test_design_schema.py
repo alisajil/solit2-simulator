@@ -3,19 +3,19 @@ import pytest
 from pydantic import ValidationError
 from solit2.schema.design import AHJ, Design, Nozzles
 
-BASELINE = "designs/og-dbr-rev0.json"
+BASELINE = "examples/designs/road-tunnel-twin-bore.json"
 
-# Real mistelix_msx_t100 droplet-size-vs-pressure performance data (matches
-# solit2/presets/nozzle_mistelix_msx_t100.json), reused to build ad hoc
-# Nozzles fixtures at pressures the baseline design and its JSON presets
+# The example bimodal head's droplet-size-vs-pressure table (matches
+# examples/presets/nozzle_bimodal_example.json), reused to build ad hoc
+# Nozzles fixtures at pressures the example design and its JSON presets
 # don't happen to use.
-_MISTELIX_SMD_TABLE = {"34.5": 118.0, "45": 107.0, "50": 102.0, "60": 95.0}
+_EXAMPLE_SMD_TABLE = {"34.5": 118.0, "45": 107.0, "50": 102.0, "60": 95.0}
 
 
 def _nozzles(pressure_bar: float, smd_table: dict[str, float]) -> Nozzles:
     """Build a standalone, valid Nozzles model at a given pressure/table.
 
-    Mode geometry and mounting are copied from the mistelix_msx_t100 preset;
+    Mode geometry and mounting are copied from the bimodal example preset;
     only `pressure_bar` and `smd_table` vary, so tests can isolate
     `smd_um`'s interpolation/clamping behaviour at pressures the checked-in
     JSON presets don't cover.
@@ -38,7 +38,7 @@ def _nozzles(pressure_bar: float, smd_table: dict[str, float]) -> Nozzles:
     )
 
 
-def test_baseline_design_loads_with_dbr_values():
+def test_the_example_design_loads_with_its_stated_values():
     d = Design.load(BASELINE)
     assert d.nozzles.k_factor_lpm_bar05 == pytest.approx(4.1)
     assert d.nozzles.pressure_bar == pytest.approx(50.0)
@@ -70,23 +70,23 @@ def test_smd_um_interpolates_between_table_keys() -> None:
     # Expected values worked out by hand from the log-log linear
     # interpolation rule smd_um's docstring names (Y = Y0 + f*(Y1-Y0) in
     # ln-space, f = (ln(p)-ln(x0))/(ln(x1)-ln(x0)), result = exp(Y)), applied
-    # to the real mistelix_msx_t100 table
+    # to the example bimodal table
     # {34.5: 118.0, 45: 107.0, 50: 102.0, 60: 95.0} -- not read off whatever
     # smd_um happens to return:
     #   p=40 bar, between (34.5, 118.0) and (45, 107.0)  -> 111.74 um
     #   p=48 bar, between (45, 107.0) and (50, 102.0)    -> 103.91 um
     #   p=55 bar, between (50, 102.0) and (60, 95.0)     -> 98.28 um
-    assert _nozzles(40.0, _MISTELIX_SMD_TABLE).smd_um("fine") == pytest.approx(111.74, abs=1.0)
-    assert _nozzles(48.0, _MISTELIX_SMD_TABLE).smd_um("fine") == pytest.approx(103.91, abs=1.0)
-    assert _nozzles(55.0, _MISTELIX_SMD_TABLE).smd_um("fine") == pytest.approx(98.28, abs=1.0)
+    assert _nozzles(40.0, _EXAMPLE_SMD_TABLE).smd_um("fine") == pytest.approx(111.74, abs=1.0)
+    assert _nozzles(48.0, _EXAMPLE_SMD_TABLE).smd_um("fine") == pytest.approx(103.91, abs=1.0)
+    assert _nozzles(55.0, _EXAMPLE_SMD_TABLE).smd_um("fine") == pytest.approx(98.28, abs=1.0)
 
 
 def test_smd_um_clamps_outside_table_domain() -> None:
     # Above the table's highest key (60 bar): clamps to the 60-bar value.
     # pressure_bar=140 is the schema's own upper legal bound, well above 60.
-    assert _nozzles(140.0, _MISTELIX_SMD_TABLE).smd_um("fine") == pytest.approx(95.0)
+    assert _nozzles(140.0, _EXAMPLE_SMD_TABLE).smd_um("fine") == pytest.approx(95.0)
 
-    # Below the table's lowest key: the real mistelix table's lowest key
+    # Below the table's lowest key: the example table's lowest key
     # (34.5) coincides exactly with the NFPA750 pressure floor, so a legal
     # Nozzles.pressure_bar can never actually fall below it -- the low-clamp
     # branch is unreachable through that specific preset. A synthetic table
@@ -129,7 +129,7 @@ def test_mode_fractions_must_sum_to_one(tmp_path):
     assert "1.400" in msg
 
 
-def test_velocity_envelope_defaults_to_tender_range():
+def test_the_example_design_declares_its_own_velocity_envelope():
     d = Design.load(BASELINE)
     assert d.ventilation.velocity_ms is None
     assert d.ventilation.velocity_range_ms == (3.88, 5.08)
@@ -170,8 +170,8 @@ def test_the_ahj_block_is_frozen_and_rejects_unknown_fields():
 
 
 def test_the_solit2_test_tunnel_preset_loads(tmp_path):
-    """Annex 7 5.2.7 mandates BOTH 1.5 and 3.0 m/s; test conditions are not
-    the Orange Gate site conditions, which 3.3 governs transferring between."""
+    """Annex 7 5.2.7 mandates BOTH 1.5 and 3.0 m/s. Test conditions are not
+    site conditions, which Annex 7 3.3 governs transferring between."""
     raw = json.loads(open(BASELINE).read())
     raw["tunnel"] = {"preset": "solit2_test"}
     raw["ventilation"] = {"mode": "longitudinal", "velocity_range_ms": [1.5, 3.0]}

@@ -11,6 +11,12 @@ from functools import lru_cache
 from pathlib import Path
 
 PRESET_DIR = Path(__file__).resolve().parent.parent / "presets"
+# Illustrations live outside the package: they are examples of how a design is
+# put together, never defaults, and the tool must run without them.
+EXAMPLE_PRESET_DIR = PRESET_DIR.parent.parent / "examples" / "presets"
+# Shipped presets win a name collision, so an example can never shadow the
+# standard's own test tunnel or fire loads.
+SEARCH_PATH = (PRESET_DIR, EXAMPLE_PRESET_DIR)
 
 _KIND_PREFIX = {
     "tunnel": "tunnel_",
@@ -20,15 +26,25 @@ _KIND_PREFIX = {
 }
 
 
+def _available(prefix: str) -> list[str]:
+    """Every preset name of one kind, from both locations, de-duplicated."""
+    seen: dict[str, None] = {}
+    for directory in SEARCH_PATH:
+        for path in sorted(directory.glob(f"{prefix}*.json")):
+            seen.setdefault(path.stem[len(prefix):], None)
+    return sorted(seen)
+
+
 def load_preset(kind: str, name: str) -> dict:
-    """Load `presets/<kind>_<name>.json`."""
+    """Load `<kind>_<name>.json` from the shipped presets, then the examples."""
     if kind not in _KIND_PREFIX:
         raise KeyError(f"unknown preset kind {kind!r}; expected one of {sorted(_KIND_PREFIX)}")
-    path = PRESET_DIR / f"{_KIND_PREFIX[kind]}{name}.json"
-    if not path.exists():
-        available = sorted(p.stem for p in PRESET_DIR.glob(f"{_KIND_PREFIX[kind]}*.json"))
-        raise FileNotFoundError(f"no {kind} preset {name!r}; available: {available}")
-    return json.loads(path.read_text())
+    prefix = _KIND_PREFIX[kind]
+    for directory in SEARCH_PATH:
+        path = directory / f"{prefix}{name}.json"
+        if path.exists():
+            return json.loads(path.read_text())
+    raise FileNotFoundError(f"no {kind} preset {name!r}; available: {_available(prefix)}")
 
 
 @lru_cache(maxsize=1)

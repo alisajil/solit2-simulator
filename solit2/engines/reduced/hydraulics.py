@@ -1,7 +1,8 @@
 """Flow, pipe friction, pump duty, power and tank volume.
 
-Sizing follows the tender: the main is sized for the three simultaneous zones
-plus 10 %, and the pump head is rated 10 % above the required discharge.
+The main is sized for the design's own simultaneous zones plus the design's
+safety factor, and the pump head is rated by that same factor above the
+required discharge pressure.
 """
 from __future__ import annotations
 

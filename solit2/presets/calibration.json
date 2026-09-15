@@ -1,4 +1,9 @@
 {
+  "provenance": {
+    "fitted": false,
+    "note": "The constants below are hand-set from the cited reference cases and from published literature. No least-squares fit against the reference cases has been run, so no constant here is a fitted value and the engine reports calibration_fitted as false. `anchor` names the reference cases a constant was set against; it must name only cases that still exist in validation/anchors, or \"none\".",
+    "reference_cases": "SOLIT2 Engineering Guidance Annex 2, full-scale fire tests c4 (Class A with cover), c5 (Class A without cover) and c6 (Class B diesel pools)."
+  },
   "fire": {
     "suppression_response_s": {"value": 90.0, "anchor": "c4,c5", "note": "tau_s in S(t)"},
     "cover_shielding_factor": {"value": 2.5, "anchor": "c4", "note": "PVC tarpaulin delays suppression"},
@@ -19,9 +24,9 @@
   },
   "mist": {
     "eta_max": {"value": 0.85, "anchor": "c4,c5", "note": "SOLIT2 held a 150 MW potential load to ~30 MW, so the ceiling is at least 0.80"},
-    "w_ref_mm_min": {"value": 1.2, "anchor": "c1,c2,c3"},
-    "chi_cool_max": {"value": 0.45, "anchor": "c3"},
-    "evaporation_k_ref_m2s": {"value": 1.0e-7, "anchor": "c3", "note": "d-squared law constant at the reference gas temperature rise; a 100 um drop evaporates in ~0.1 s at that rise and essentially not at all in cool air"},
-    "evaporation_reference_delta_t_k": {"value": 600.0, "anchor": "c3"}
+    "w_ref_mm_min": {"value": 1.2, "anchor": "none", "note": "basis removed with c1-c3; refit required. Was set against reference cases c1, c2 and c3, none of which survive in validation/anchors, so this value currently rests on nothing and is carried unchanged only to avoid silently altering the physics."},
+    "chi_cool_max": {"value": 0.45, "anchor": "none", "note": "basis removed with c3; refit required. This value has no surviving reference case and is carried unchanged pending a refit against c4-c6."},
+    "evaporation_k_ref_m2s": {"value": 1.0e-7, "anchor": "none", "note": "basis removed with c3; refit required. d-squared law constant at the reference gas temperature rise; a 100 um drop evaporates in ~0.1 s at that rise and essentially not at all in cool air. The magnitude is physically reasonable but the specific value was set against c3, which no longer exists."},
+    "evaporation_reference_delta_t_k": {"value": 600.0, "anchor": "none", "note": "basis removed with c3; refit required. Paired with evaporation_k_ref_m2s and set against the same deleted reference case."}
   }
 }

@@ -81,6 +81,11 @@ class Result(BaseModel):
     criteria: dict[str, Criterion]
     # criterion id -> the case that produced that criterion's reported value.
     criteria_cases: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    # The user's own engineering limits, deliberately NOT merged into
+    # `criteria`: one is a local circumstance and the other is the standard, and
+    # a reader must be able to tell which verdict is which. Nothing here can
+    # appear in `score.gates_failed`.
+    constraints: dict[str, Criterion] = Field(default_factory=dict)
     peaks: dict[str, float]
     mist: dict[str, Any]
     hydraulics: dict[str, Any]

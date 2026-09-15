@@ -31,8 +31,6 @@ def _criteria(**overrides):
         "max_co_ppm": Criterion.build(40.0, 500.0, "<=", True),
         "structure_exposure_length_m": Criterion.build(7.0, 20.0, "<=", True),
         "structure_exposure_duration_s": Criterion.build(120.0, 600.0, "<=", True),
-        "power_kw": Criterion.build(375.0, 650.0, "<=", True),
-        "density_mm_min": Criterion.build(2.4, 3.8, "<=", False),
     }
     base.update(overrides)
     return base
@@ -48,8 +46,6 @@ def _unset_criteria():
     ops = {"min_visibility_m": ">="}
     out = {cid: Criterion.build(1.0, None, ops.get(cid, "<="), True) for cid in AHJ_DEFERRED}
     out["target_ignited"] = Criterion.build(False, None, "is_false", True)
-    out["power_kw"] = Criterion.build(375.0, 650.0, "<=", True)
-    out["density_mm_min"] = Criterion.build(2.4, 3.8, "<=", False)
     return out
 
 
@@ -71,8 +67,10 @@ def test_a_failed_hard_gate_zeroes_the_score_and_is_named():
 
 
 def test_a_failed_soft_criterion_does_not_zero_the_score():
+    # `compute` is generic over the criteria dict, so any soft, failing entry
+    # exercises the rule that only HARD gates zero a score.
     s = score_mod.compute(
-        _criteria(density_mm_min=Criterion.build(4.5, 3.8, "<=", False)),
+        _criteria(a_soft_criterion=Criterion.build(4.5, 3.8, "<=", False)),
         _Hyd(), _Cost(), _Trace(), peak_lining_c=690.0)
     assert s.gates_passed
     assert s.total > 0.0
@@ -93,12 +91,9 @@ def test_hotter_lining_scores_lower():
 
 def test_penalty_for_exceeding_the_density_headroom():
     # score.compute() reads the penalty threshold from `hyd.density_mm_min`
-    # directly (see score.py), not from the criteria dict, so the mock hyd
-    # must carry the exceeding value too -- mirrors the `lean` mock below.
+    # directly (see score.py), not from the criteria dict.
     dense = type("H", (), {"flow_lpm": 2174.3, "power_kw": 375.0, "density_mm_min": 4.5})()
-    s = score_mod.compute(
-        _criteria(density_mm_min=Criterion.build(4.5, 3.8, "<=", False)),
-        dense, _Cost(), _Trace(), peak_lining_c=690.0)
+    s = score_mod.compute(_criteria(), dense, _Cost(), _Trace(), peak_lining_c=690.0)
     assert any("density" in p for p in s.penalties)
 
 

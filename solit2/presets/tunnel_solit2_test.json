@@ -1,6 +1,6 @@
 {
   "preset": "solit2_test",
-  "note": "SOLIT2 Annex 7 test tunnel (San Pedro de Anes test gallery, where the SOLIT2 full-scale tests were run). Annex 7 5.2.7 mandates that BOTH 1.5 m/s and 3.0 m/s longitudinal velocity be tested, measured 45 m upstream of the fire; a design using this preset carries them as ventilation.velocity_range_ms = [1.5, 3.0]. Annex 7 5.2.6 puts the fire target 5 m downstream of the mock-up, of the same width, height and combustibility. These are TEST conditions, not site conditions; Annex 7 3.3 governs transferring results between them.",
+  "note": "The SOLIT2 Annex 7 test tunnel: the geometry of the test gallery where the SOLIT2 full-scale tests were run. This is the standard, not a project. Annex 7 5.2.6 puts the fire target 5 m downstream of the mock-up, of the same width, height and combustibility. Annex 7 5.2.7 mandates that BOTH 1.5 m/s and 3.0 m/s longitudinal velocity be tested, measured 45 m upstream of the fire -- a velocity range is a property of the TEST, not of the tunnel, so it is not carried here: see examples/designs/solit2-test-protocol.json, which sets ventilation.velocity_range_ms to [1.5, 3.0] so the envelope actually runs both. These are TEST conditions, not site conditions; Annex 7 3.3 governs transferring results between them.",
   "tube": "LHS",
   "section": "test",
   "shape": "box",

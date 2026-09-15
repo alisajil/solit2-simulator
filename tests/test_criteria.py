@@ -5,7 +5,7 @@ from solit2.engines.reduced import criteria as criteria_mod
 from solit2.engines.reduced import sim as sim_mod
 from solit2.engines.reduced.state import MistEffect, RunTrace, StationSample, StepRecord
 
-BASELINE = "designs/og-dbr-rev0.json"
+BASELINE = "examples/designs/road-tunnel-twin-bore.json"
 
 # Every criterion whose limit SOLIT2 Annex 7 7.1 defers to the authority
 # having jurisdiction, and which therefore reads "unset" until one is set.
@@ -16,8 +16,10 @@ AHJ_DEPENDENT = {
 }
 
 
-# Minimal stand-ins, in the style of tests/test_score.py: `evaluate` only reads
-# `power_kw` and `density_mm_min` off the hydraulics, and nothing off the cost.
+# Minimal stand-ins, in the style of tests/test_score.py. `evaluate` reads
+# nothing off the hydraulics or the cost any more: the two entries that did
+# (`power_kw`, `density_mm_min`) were a project's feeder capacity and a vendor's
+# design margin, and are now user-declared `constraints` judged separately.
 class _Hyd:
     flow_lpm = 2174.3
     power_kw = 375.0
@@ -158,18 +160,25 @@ def test_every_spec_criterion_is_defined_once():
         "target_ignited", "hrr_below_tvs_design_mw",
         "max_air_temp_c", "max_heat_flux_kwm2", "min_visibility_m", "max_fed", "max_co_ppm",
         "structure_exposure_length_m", "structure_exposure_duration_s",
-        "power_kw", "density_mm_min",
     }
 
 
 def test_the_vendor_criteria_are_gone():
-    """These came from the APPLUS+TST report, not from SOLIT2 Annex 7."""
+    """These came from one manufacturer's test report, not from SOLIT2 Annex 7."""
     ids = {c.id for c in criteria_mod.DEFAULT_CRITERIA}
     assert ids.isdisjoint({
         "hrr_control_mw", "target_hf_kwm2", "u35_temp_c", "hf_u15_kwm2", "hf_u35_kwm2",
         "visibility_u35_m", "fed_d35", "ff_u5_hf_kwm2", "ff_d20_temp_c",
         "remote_nozzle_bar", "pools_extinguished_s",
     })
+
+
+def test_the_project_and_vendor_limits_are_gone_from_the_criteria():
+    """`power_kw` was one tunnel's feeder capacity and `density_mm_min` one
+    vendor's power-headroom figure. Neither is an Annex 7 acceptance criterion;
+    both are now declared by the user in `constraints` and reported apart."""
+    ids = {c.id for c in criteria_mod.DEFAULT_CRITERIA}
+    assert ids.isdisjoint({"power_kw", "density_mm_min"})
 
 
 def test_stations_cover_every_criterion_location():
@@ -306,22 +315,8 @@ def test_structure_exposure_reports_length_and_duration_not_a_peak_temperature()
     assert out["structure_exposure_length_m"].passed
 
 
-# --- the engineering constraints, which are not Annex 7 ---------------------
-
-def test_power_is_capped_by_the_designs_own_hydraulics_not_a_hardcoded_figure():
-    design = Design.load(BASELINE)
-    out = _evaluate(design)
-    assert out["power_kw"].limit == pytest.approx(design.hydraulics.power_cap_kw)
-    assert out["power_kw"].hard
-    assert out["power_kw"].status != "unset"
-
-
-def test_density_is_reported_but_does_not_gate():
-    out = _evaluate(Design.load(BASELINE))
-    assert out["density_mm_min"].hard is False
-    assert out["density_mm_min"].limit == pytest.approx(
-        criteria_mod.PUMP_POWER_DENSITY_HEADROOM_MM_MIN)
-
+# The engineering constraints that used to live here are now user-declared and
+# evaluated by solit2.engines.reduced.constraints; see tests/test_independence.py.
 
 # --- design-level overrides still work --------------------------------------
 

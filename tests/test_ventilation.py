@@ -2,7 +2,7 @@ import pytest
 from solit2.engines.reduced.geometry import SectionGeometry
 from solit2.engines.reduced import ventilation as vent
 
-# Orange Gate bore, cut & cover box, and the San Pedro test tunnel
+# An 11 m bored section, a cut & cover box, and the SOLIT2 test tunnel
 BORE = SectionGeometry("bored", 10.146, 7.625, 70.29, "circle", 5.5, 2.125)
 BOX = SectionGeometry("cut_cover", 9.0, 6.5, 58.5, "box")
 SPDA = SectionGeometry("test", 9.5, 5.17, 48.0, "box")
@@ -11,7 +11,7 @@ CONV_150MW_KW = 150_000 * 0.65
 CONV_100MW_KW = 100_000 * 0.65
 
 
-def test_critical_velocity_orange_gate_bore_150mw():
+def test_critical_velocity_bored_section_150mw():
     # Li, Lei & Ingason 2010: Q* > 0.15 so u_c* = 0.43, u_c = 0.43 sqrt(g H)
     assert vent.critical_velocity_ms(CONV_150MW_KW, BORE.crown_height_m) == pytest.approx(3.72, abs=0.05)
 
@@ -39,7 +39,7 @@ def test_backlayering_grows_as_velocity_falls():
     assert at_2 < 200.0
 
 
-def test_tender_floor_velocity_clears_the_bore_by_a_thin_margin():
+def test_the_example_floor_velocity_clears_the_bore_by_a_thin_margin():
     u_c = vent.critical_velocity_ms(CONV_150MW_KW, BORE.crown_height_m)
     assert 3.88 > u_c
     assert (3.88 - u_c) / u_c < 0.10   # under 10 % margin - the engine must warn

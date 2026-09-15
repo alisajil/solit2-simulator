@@ -2,7 +2,7 @@ from validation import compare
 
 
 def test_the_anchor_set_is_exactly_the_solit2_guidance_tests():
-    """The APPLUS+TST cases (c1-c3) are a different vendor's campaign on a
+    """The retired cases c1-c3 were a different manufacturer's campaign on a
     different nozzle; the validation basis is the SOLIT2 guidance tests only."""
     anchors = compare.load_anchors()
     assert {a.id for a in anchors} == {"c4", "c5", "c6"}

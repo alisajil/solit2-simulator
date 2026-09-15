@@ -2,7 +2,7 @@ import pytest
 from solit2.schema.design import Design
 from solit2.engines.reduced import sim, envelope
 
-BASELINE = "designs/og-dbr-rev0.json"
+BASELINE = "examples/designs/road-tunnel-twin-bore.json"
 
 
 def test_run_once_produces_a_full_hour_of_one_second_steps():

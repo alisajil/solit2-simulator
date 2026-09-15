@@ -9,10 +9,14 @@ tunnel".
 
 So Annex 7 mandates exactly one absolute rule -- section 7.2.1, that the target
 must not ignite -- and four CATEGORIES of criteria whose numbers belong to the
-authority having jurisdiction. Every limit below is therefore either read off
-`design.ahj` (and reported as unset until an authority sets it), or is an
-engineering constraint of this particular system that is labelled as such and
-claims no Annex 7 basis.
+authority having jurisdiction. Every limit below is therefore read off
+`design.ahj` and reported as unset until an authority sets it.
+
+Nothing else belongs here. A limit that comes from a project's electrical
+supply or a manufacturer's design margin is not an acceptance criterion, and
+putting one in this table would let a local circumstance be reported as a
+SOLIT2 failure. Those live in `design.constraints` and are evaluated by
+`solit2.engines.reduced.constraints` into their own block of the result.
 """
 from __future__ import annotations
 
@@ -39,9 +43,6 @@ IGNITION_EXPOSURE_S = 60.0
 # target at this flux is in flame contact and has ignited without waiting out
 # the exposure clock. `sim` clamps the target flux to this on flame contact.
 FLAME_CONTACT_FLUX_KWM2 = 50.0
-# Pump-power headroom of this system, not an Annex 7 figure. Mirrors
-# score.DENSITY_HEADROOM_MM_MIN, which applies the same threshold as a penalty.
-PUMP_POWER_DENSITY_HEADROOM_MM_MIN = 3.8
 DEFAULT_STEP_INTERVAL_S = 1.0
 
 
@@ -145,13 +146,6 @@ DEFAULT_CRITERIA: tuple[CriterionSpec, ...] = (
     CriterionSpec("structure_exposure_duration_s",
                   lambda d: d.ahj.max_structure_exposure_duration_s, "<=", True,
                   lambda t, h, c, d: _structure_exposure_duration_s(t)),
-    # Engineering constraints of this system. Not Annex 7 criteria, and labelled
-    # so: the pump power the design itself specifies, and the discharge density
-    # the pump-power headroom allows.
-    CriterionSpec("power_kw", lambda d: d.hydraulics.power_cap_kw, "<=", True,
-                  lambda t, h, c, d: h.power_kw),
-    CriterionSpec("density_mm_min", lambda d: PUMP_POWER_DENSITY_HEADROOM_MM_MIN,
-                  "<=", False, lambda t, h, c, d: h.density_mm_min),
 )
 
 

@@ -75,7 +75,7 @@ def test_field_reports_breathing_height_temperatures_in_the_annex2_range():
     from solit2.engines.reduced import fire
     from solit2.schema.design import Design
 
-    d = Design.load("designs/og-dbr-rev0.json")
+    d = Design.load("examples/designs/road-tunnel-twin-bore.json")
     model = fire.build_model(d)
     st = fire.FireState(t_s=900.0, hrr_mw=50.0, hrr_free_mw=150.0,
                         energy_released_mj=30_000.0, suppression=0.33,
@@ -95,7 +95,7 @@ def test_stratification_blend_is_anchored_at_breathing_height():
     from solit2.engines.reduced import fire
     from solit2.schema.design import Design
 
-    d = Design.load("designs/og-dbr-rev0.json")
+    d = Design.load("examples/designs/road-tunnel-twin-bore.json")
     model = fire.build_model(d)
     st = fire.FireState(t_s=900.0, hrr_mw=50.0, hrr_free_mw=150.0,
                         energy_released_mj=30_000.0, suppression=0.33,
@@ -119,7 +119,7 @@ def test_structure_exposure_length_is_zero_below_the_threshold_and_finite_above_
     from solit2.engines.reduced import fire
     from solit2.schema.design import Design
 
-    d = Design.load("designs/og-dbr-rev0.json")
+    d = Design.load("examples/designs/road-tunnel-twin-bore.json")
     model = fire.build_model(d)
 
     def _field(hrr_mw):
@@ -148,7 +148,7 @@ def test_structure_exposure_length_grows_with_the_fire():
     from solit2.engines.reduced import fire
     from solit2.schema.design import Design
 
-    d = Design.load("designs/og-dbr-rev0.json")
+    d = Design.load("examples/designs/road-tunnel-twin-bore.json")
     model = fire.build_model(d)
     lengths = []
     for hrr_mw in (30.0, 40.0, 50.0):
@@ -172,7 +172,7 @@ def test_exposure_length_saturates_at_the_instrumented_span():
     from solit2.engines.reduced import fire
     from solit2.schema.design import Design
 
-    d = Design.load("designs/og-dbr-rev0.json")
+    d = Design.load("examples/designs/road-tunnel-twin-bore.json")
     model = fire.build_model(d)
     st = fire.FireState(t_s=900.0, hrr_mw=150.0, hrr_free_mw=150.0,
                         energy_released_mj=30_000.0, suppression=0.0,

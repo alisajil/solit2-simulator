@@ -10,7 +10,9 @@ from dataclasses import dataclass, field
 from solit2.schema.result import Criterion
 
 WEIGHTS = {"water": 0.30, "margin": 0.30, "cost": 0.20, "structural": 0.20}
-# Mistelix DBR Rev 0 three-zone demand, the reference for the water component.
+# Reference three-zone water demand the `water` component is scored against. A
+# fixed normalisation constant inherited from the worked example, not a target
+# and not a limit: it sets the scale of the score, never whether a design passes.
 BASELINE_FLOW_LPM = 2174.3
 SCORE_CLIP = 1.5
 CEILING_TEMP_CAP_C = 1350.0

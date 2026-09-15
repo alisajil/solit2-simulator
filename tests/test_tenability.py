@@ -2,8 +2,8 @@ import pytest
 from solit2.schema.design import Design
 from solit2.engines.reduced import fire, tenability
 
-BASELINE = "designs/og-dbr-rev0.json"
-# Orange Gate bore at 5 m/s: 70.29 m2 x 5 m/s
+BASELINE = "examples/designs/road-tunnel-twin-bore.json"
+# The example bored section at 5 m/s: 70.29 m2 x 5 m/s
 AIR_M3S = 70.29 * 5.0
 
 

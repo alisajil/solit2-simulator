@@ -211,8 +211,27 @@ class Hydraulics(Frozen):
     loop_factor: float = Field(gt=0, le=1)
     static_head_bar: float
     fittings_loss_bar: float
-    power_cap_kw: float
     safety_factor: float = 1.10
+
+
+class Constraints(Frozen):
+    """Engineering limits the user's own project imposes.
+
+    Not from SOLIT2. These are site and procurement constraints -- the feeder
+    capacity at a portal, a water volume a tank farm can hold, a pressure band a
+    procurement spec fixes -- and they are evaluated separately from the
+    acceptance criteria and reported in their own block. A constraint breach is
+    a local circumstance, never a SOLIT2 failure, so it can never fail a gate.
+
+    Every limit is `None` until the user declares it, and an undeclared limit
+    reports as unset exactly as an unset AHJ limit does.
+    """
+    note: str = ""
+    max_pump_power_kw: float | None = None
+    max_application_density_mm_min: float | None = None
+    max_water_volume_m3: float | None = None
+    max_nozzle_pressure_bar: float | None = None
+    min_nozzle_pressure_bar: float | None = None
 
 
 class AHJ(Frozen):
@@ -253,6 +272,9 @@ class Design(Frozen):
     detection: Detection
     hydraulics: Hydraulics
     ahj: AHJ = Field(default_factory=AHJ)
+    # The user's own engineering limits, kept apart from `criteria` because one
+    # is a local circumstance and the other is the standard.
+    constraints: Constraints = Field(default_factory=Constraints)
     criteria: dict = Field(default_factory=dict)
 
     @classmethod

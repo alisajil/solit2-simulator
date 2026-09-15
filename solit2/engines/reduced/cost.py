@@ -1,7 +1,14 @@
 """Relative installed-cost index for a candidate design.
 
-Quantities cover both tubes. The index is normalised so the DBR Rev 0 baseline
-scores 1.00; only ratios between designs are meaningful.
+Quantities cover both tubes. The index is normalised against a fixed reference
+installation so that reference scores 1.00; only ratios between designs are
+meaningful, and the absolute number carries no currency and no endorsement.
+
+NOTE ON SCOPE: the reference installation's tube lengths and total below are
+fixed constants inherited from the worked example this tool was first built
+around. They are a normalisation baseline, not an assessment input, but they
+are not derived from the design being evaluated either, so a cost index is
+comparable between designs and is NOT a statement about any real installation.
 """
 from __future__ import annotations
 
@@ -13,9 +20,10 @@ from solit2.engines.reduced.hydraulics import HydraulicsResult
 from solit2.schema.design import Design
 
 _WEIGHTS = json.loads((Path(__file__).resolve().parents[2] / "presets" / "cost_weights.json").read_text())
-# Both tubes: LHS 4240 m and RHS 4260 m (HPWM-TECHNICAL SPEC_R2 section 3).
+# The reference installation's two tubes. A fixed normalisation baseline, not
+# the geometry of the design under evaluation.
 TUBE_LENGTHS_M = (4240.0, 4260.0)
-# Cost of the DBR Rev 0 design in the units above; see test_baseline_index_is_one.
+# Cost of the reference installation in the units above; see the cost tests.
 BASELINE_TOTAL = 128_535.82945588144
 
 

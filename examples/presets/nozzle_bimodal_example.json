@@ -1,5 +1,6 @@
 {
-  "preset": "mistelix_msx_t100",
+  "preset": "bimodal_example",
+  "note": "ILLUSTRATION ONLY, not a default and not an endorsement. A bimodal high-pressure head: a fine fraction for gas-phase cooling and a coarse, high-momentum fraction for fuel-surface wetting, on two staggered ceiling rows. Replace with the measured performance of the head actually being assessed.",
   "k_factor_lpm_bar05": 4.1,
   "pressure_bar": 50.0,
   "smd_table": {"34.5": 118.0, "45": 107.0, "50": 102.0, "60": 95.0},

@@ -1,0 +1,14 @@
+{
+  "preset": "template",
+  "note": "PLACEHOLDER, NOT DATA. A parametric rectangular tunnel with no project identity, here so the tool runs out of the box and immediately shows a result that is obviously a placeholder. Nothing computed from these dimensions means anything. Replace every figure with the real geometry of the tunnel being assessed, or point the design at your own preset.",
+  "tube": "LHS",
+  "section": "cut_cover",
+  "shape": "box",
+  "width_m": 10.0,
+  "height_m": 6.0,
+  "clearance_m": 5.0,
+  "length_m": 1000.0,
+  "gradient_pct": 0.0,
+  "ambient_temp_c": 20.0,
+  "ambient_rh_pct": 60.0
+}

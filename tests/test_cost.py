@@ -4,7 +4,7 @@ from solit2.engines.reduced.geometry import section_geometry
 from solit2.engines.reduced.hydraulics import size_system
 from solit2.engines.reduced.cost import cost_index
 
-BASELINE = "designs/og-dbr-rev0.json"
+BASELINE = "examples/designs/road-tunnel-twin-bore.json"
 
 
 def _cost(design):
@@ -12,11 +12,11 @@ def _cost(design):
     return cost_index(design, size_system(design, geom))
 
 
-def test_zone_and_head_counts_match_the_dbr_boq():
+def test_zone_and_head_counts_match_the_reference_quantities():
     c = _cost(Design.load(BASELINE))
-    assert c.zones == 283            # DBR 10.1: LHS 141 + RHS 142
+    assert c.zones == 283            # reference quantities: 141 + 142
     assert c.section_valves == 283
-    assert c.heads == 7075           # DBR 10.1: ~7100
+    assert c.heads == 7075           # reference quantities: ~7100
 
 
 def test_baseline_index_is_one():
