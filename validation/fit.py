@@ -40,6 +40,12 @@ FITTED_KEYS = (
     ("mist", "evaporation_k_ref_m2s", 1.0e-8, 1.0e-6),
     ("mist", "flank_reach_factor", 0.10, 2.00),
     ("mist", "flank_efficiency", 0.05, 1.00),
+    # Bounds per task-17c-brief.md: deliberately narrower than the original
+    # task-17-brief.md suggestion (1e-4, 5.0). One order of magnitude either
+    # side of the 0.05 starting value, symmetric in log space. The wider bounds
+    # above were what the discarded attempt's stash left in this file; verified
+    # against task-17c-brief.md step 4 and corrected here rather than assumed.
+    ("mist", "shielding_reference_loading_kgm3", 0.005, 0.50),
     ("fire", "suppression_response_s", 20.0, 300.0),
     ("fire", "cover_shielding_factor", 1.0, 6.0),
     ("fire", "pool_ventilation_factor", 0.8, 2.5),
