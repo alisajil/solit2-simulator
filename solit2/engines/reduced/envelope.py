@@ -156,6 +156,7 @@ def _timeseries(sampled: tuple[StepRecord, ...]) -> dict[str, list[float]]:
         "d15_temp_c": [s.stations["D15"].temp_c for s in sampled],
         "d100_temp_c": [s.stations["D100"].temp_c for s in sampled],
         "hf_u15_kwm2": [s.stations["U15"].flux_kwm2 for s in sampled],
+        "hf_d15_kwm2": [s.stations["D15"].flux_kwm2 for s in sampled],
         "fed_d35": [s.stations["D35"].fed_tox for s in sampled],
         "backlayering_m": [s.backlayer_m for s in sampled],
         "velocity_ms": [s.u_eff_ms for s in sampled],

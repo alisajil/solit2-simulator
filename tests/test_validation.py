@@ -22,6 +22,7 @@ def _trace_with_distinct_stations() -> _FakeResult:
             "d15_temp_c": [10.0, 75.0],
             "d100_temp_c": [10.0, 100.0],
             "hf_u15_kwm2": [0.1, 0.5],
+            "hf_d15_kwm2": [0.2, 2.5],
         },
         peaks={"smoke_layer_temp_d15_c": 999.0, "smoke_layer_temp_d100_c": 888.0},
     )
@@ -37,6 +38,21 @@ def test_each_temperature_extractor_reads_its_own_station():
     assert compare.EXTRACTORS["d100_temp_c"](fake) == 100.0
 
 
+def test_the_heat_flux_extractor_reads_the_downstream_station():
+    """Task 17 test 6. `hf_d15_kwm2` read `max(timeseries["hf_u15_kwm2"])` --
+    the UPSTREAM station's flux reported as a downstream quantity, the wrong
+    side of the fire entirely. The two series are given different values here so
+    an extractor reading the upstream one cannot return the right number by
+    luck. `hf_u15_kwm2` has no extractor of its own because no anchor measures
+    upstream flux; what is asserted is that the downstream extractor reads the
+    downstream series and not the other one.
+    """
+    fake = _trace_with_distinct_stations()
+    assert fake.timeseries["hf_u15_kwm2"] != fake.timeseries["hf_d15_kwm2"]
+    assert compare.EXTRACTORS["hf_d15_kwm2"](fake) == 2.5
+    assert compare.EXTRACTORS["hf_d15_kwm2"](fake) != max(fake.timeseries["hf_u15_kwm2"])
+
+
 def test_the_result_timeseries_carries_every_station_an_extractor_needs():
     """The extractors above are only correct if the series actually exist and
     are drawn from the stations they are named for."""
@@ -49,6 +65,8 @@ def test_the_result_timeseries_carries_every_station_an_extractor_needs():
 
     assert series["u15_temp_c"] == [s.stations["U15"].temp_c for s in sampled]
     assert series["d100_temp_c"] == [s.stations["D100"].temp_c for s in sampled]
+    assert series["hf_u15_kwm2"] == [s.stations["U15"].flux_kwm2 for s in sampled]
+    assert series["hf_d15_kwm2"] == [s.stations["D15"].flux_kwm2 for s in sampled]
     assert series["u15_temp_c"] != series["u35_temp_c"], (
         "the 15 m and 35 m upstream stations must not report the same series")
 

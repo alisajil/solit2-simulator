@@ -95,7 +95,7 @@ EXTRACTORS = {
     "u15_temp_c": lambda r: max(r.timeseries["u15_temp_c"]),
     "d15_temp_c": lambda r: max(r.timeseries["d15_temp_c"]),
     "d100_temp_c": lambda r: max(r.timeseries["d100_temp_c"]),
-    "hf_d15_kwm2": lambda r: max(r.timeseries["hf_u15_kwm2"]),
+    "hf_d15_kwm2": lambda r: max(r.timeseries["hf_d15_kwm2"]),
     "backlayering": lambda r: bool(r.events["backlayering"]["occurred"]),
     "pools_extinguished": lambda r: r.events["pools_extinguished_at_s"] is not None,
 }
