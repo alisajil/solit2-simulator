@@ -86,3 +86,26 @@ def test_field_reports_breathing_height_temperatures_in_the_annex2_range():
     assert 50.0 < f.gas_temp_c(15.0, 1.8) < 130.0
     assert 40.0 < f.gas_temp_c(100.0, 1.8) < 90.0
     assert f.ceiling_temp_c(0.0) > 500.0
+
+
+def test_stratification_blend_is_anchored_at_breathing_height():
+    from solit2.engines.reduced.state import MistEffect
+    from solit2.engines.reduced.ventilation import evaluate
+    from solit2.engines.reduced import fire
+    from solit2.schema.design import Design
+
+    d = Design.load("designs/og-dbr-rev0.json")
+    model = fire.build_model(d)
+    st = fire.FireState(t_s=900.0, hrr_mw=50.0, hrr_free_mw=150.0,
+                        energy_released_mj=30_000.0, suppression=0.33,
+                        pools_remaining=0, wet_time_s=0.0)
+    vent = evaluate(BORE, 4.5, fire.convective_kw(model, 50.0))
+    f = thermal.field(BORE, model, st, vent, MistEffect.none(),
+                      fire_top_m=4.0, fire_length_m=8.4, fire_width_m=2.4, ambient_c=30.0)
+
+    x = 15.0
+    excess = f.ceiling_temp_c(x) - f.ambient_c
+    # Anchored at breathing height: the blend must equal strat_factor exactly there.
+    assert f.gas_temp_c(x, 1.8) == pytest.approx(f.ambient_c + f.strat_factor * excess)
+    # Anchored at the crown: the full excess arrives, matching the ceiling value.
+    assert f.gas_temp_c(x, f.height_m) == pytest.approx(f.ceiling_temp_c(x))

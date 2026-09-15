@@ -3,7 +3,10 @@ from solit2.engines.reduced import droplet
 
 
 def test_drag_coefficient_switches_from_stokes_to_newton():
-    assert droplet.drag_coefficient(0.5) == pytest.approx(48.0, rel=0.1)
+    # Schiller-Naumann at Re=0.5: 24/Re * (1 + 0.15*Re**0.687) = 52.4722.
+    # Pure Stokes (24/Re) would give 48.0, so this value discriminates between
+    # the two rather than merely recording whatever the code currently outputs.
+    assert droplet.drag_coefficient(0.5) == pytest.approx(52.4722, rel=0.001)
     assert droplet.drag_coefficient(2000.0) == pytest.approx(0.44)
 
 
