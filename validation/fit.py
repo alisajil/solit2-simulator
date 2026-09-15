@@ -46,6 +46,9 @@ FITTED_KEYS = (
     ("fire", "pool_burning_rate_reduction", 0.1, 0.9),
     ("fire", "pool_extinction_flux_mm_min", 0.5, 5.0),
     ("ventilation", "throttling_coefficient", 0.0, 1.0),
+    # One order of magnitude either side of the 0.05 starting value,
+    # symmetric in log space (0.05/0.005 == 0.50/0.05 == 10).
+    ("mist", "shielding_reference_loading_kgm3", 0.005, 0.50),
 )
 
 # Relative finite-difference step for the numerical Jacobian.
