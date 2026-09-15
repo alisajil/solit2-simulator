@@ -52,7 +52,7 @@ from solit2.engines.reduced.droplet import integrate, spray_shielding_factor
 from solit2.engines.reduced.geometry import NozzlePosition, SectionGeometry
 from solit2.engines.reduced.state import MistEffect
 from solit2.schema.design import Design
-from solit2.schema.presets import load_calibration
+from solit2.schema.presets import load_calibration, register_cache_invalidation_hook
 
 WATER_DENSITY_KGM3 = 1000.0
 WATER_CP_KJKGK = 4.18
@@ -145,6 +145,15 @@ class _ModeGeometry:
 # dozen entries of roughly 2 kB each; swap for an LRU if a fitting loop over
 # thousands of designs makes the footprint matter.
 _GEOMETRY_CACHE: dict[tuple, tuple[_ModeGeometry, ...]] = {}
+
+# `_compute_geometry` calls `spray_shielding_factor`, which reads its own
+# calibration constants internally -- values `_geometry_key` cannot see because
+# they never pass through its arguments. A fit that changes them would
+# otherwise go on being served trajectories computed under whatever value
+# happened to populate a cache entry first. Registering unconditionally, at
+# import time, means that discipline does not depend on `_geometry_key` (or
+# whoever edits it next) knowing every constant every callee reads.
+register_cache_invalidation_hook(_GEOMETRY_CACHE.clear)
 
 
 def flank_reach_m(fire_top_height_m: float) -> float:
@@ -290,9 +299,16 @@ def _geometry_key(design: Design, positions: tuple[NozzlePosition, ...],
     envelope runs several, a calibration fit runs many - cannot read each
     other's entries. The fuel envelope is part of the key too, so moving
     `flank_reach_factor` between fits cannot serve a stale sweep.
+
+    `mode_flow_lpm` is part of the key for the same reason: `_compute_geometry`
+    feeds it to `spray_shielding_factor`, so two designs that differ only in
+    K-factor or pressure -- same droplet size, cone angle, launch velocity,
+    mounting and fire geometry -- would otherwise collide on one entry and read
+    back a shield factor computed for the wrong flow rate.
     """
     nozzles = design.nozzles
-    modes = tuple((m.id, nozzles.smd_um(m.id), m.cone_half_angle_deg, m.launch_velocity_ms)
+    modes = tuple((m.id, nozzles.smd_um(m.id), m.cone_half_angle_deg, m.launch_velocity_ms,
+                  nozzles.mode_flow_lpm(m.id))
                   for m in nozzles.modes)
     return (modes, nozzles.mounting.tilt_deg, drop_height_m,
             u_bucket_ms, gas_bucket_k, positions, envelope)

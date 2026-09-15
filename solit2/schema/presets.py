@@ -6,6 +6,7 @@ preset supplies everything else.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from copy import deepcopy
 from functools import lru_cache
 from pathlib import Path
@@ -59,9 +60,28 @@ def load_calibration() -> dict:
     return json.loads((PRESET_DIR / "calibration.json").read_text())
 
 
+# Every module that caches something computed FROM calibration -- even only
+# indirectly, through a function it calls that reads a constant this module
+# never sees -- registers its cache's `.clear` here at import time. This is the
+# one chokepoint every calibration write goes through (`apply_vector`, and
+# nowhere else): hand-threading each individual constant into `reload_calibration`
+# is fragile, because the next person who reads a calibration value from inside
+# a cached function will reintroduce the same staleness unless they remember
+# that exact discipline. Registering unconditionally means no constant can opt
+# out of invalidation by omission.
+_CACHE_INVALIDATION_HOOKS: list[Callable[[], None]] = []
+
+
+def register_cache_invalidation_hook(hook: Callable[[], None]) -> None:
+    """Run `hook()` on every future `reload_calibration()`, starting now."""
+    _CACHE_INVALIDATION_HOOKS.append(hook)
+
+
 def reload_calibration() -> None:
-    """Clear the `load_calibration` cache so the next call re-reads the file."""
+    """Clear the `load_calibration` cache, and every registered dependent cache."""
     load_calibration.cache_clear()
+    for hook in _CACHE_INVALIDATION_HOOKS:
+        hook()
 
 
 def deep_merge(base: dict, override: dict) -> dict:

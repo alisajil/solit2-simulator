@@ -1,8 +1,9 @@
 import copy
+import json
 
 import pytest
 from solit2.schema.design import Design
-from solit2.schema.presets import load_calibration
+from solit2.schema.presets import PRESET_DIR, load_calibration, reload_calibration
 from solit2.engines.reduced.geometry import section_geometry, nozzle_positions
 from solit2.engines.reduced import mist
 
@@ -168,6 +169,162 @@ def test_the_geometry_cache_serves_repeats_and_still_separates_two_designs():
 
     assert other is not first
     assert other[0].footprint_radius_m > first[0].footprint_radius_m
+
+
+# --- task 17b: the geometry cache's two blind spots -------------------------
+#
+# `_compute_geometry` calls `spray_shielding_factor`, which reads
+# `shielding_reference_loading_kgm3` from calibration INTERNALLY -- a value
+# `_geometry_key` never sees, because it never passes through its own
+# arguments. These tests mutate the real calibration.json and call the real
+# `reload_calibration()`, because the bug is specifically about whether that
+# one chokepoint actually busts `_GEOMETRY_CACHE`: monkeypatching
+# `load_calibration` in memory, as `_pin_mist_calibration` does elsewhere in
+# this file, would bypass the exact code path being tested.
+
+CALIBRATION_PATH = PRESET_DIR / "calibration.json"
+
+# Bucket-aligned (a multiple of `GAS_EXCESS_BUCKET_K`) so `_geometry`'s own R4
+# quantisation cannot silently move it. The COARSE mode (index 1 of a design
+# loaded from BASELINE) is used throughout: it is evaporation-resistant enough
+# -- see `test_coarse_core_survives_the_same_hot_gas` in test_droplet.py --
+# that the whole shielding sweep below stays in a smooth, monotonic regime
+# instead of every point collapsing onto the FULLY_EVAPORATED_UM floor, which
+# would hide a stale cache behind discretisation noise instead of a clean
+# signal.
+SHIELDING_CACHE_GAS_EXCESS_K = 900.0
+COARSE_MODE_INDEX = 1
+
+# Spans the shield factor from ~0.11 to ~0.93 at the coarse mode's own flow
+# (measured directly against droplet.spray_shielding_factor before writing
+# this sweep), giving surviving_fraction values that are cleanly separated
+# rather than merely different in the last decimal place.
+SHIELDING_SWEEP_KGM3 = (0.005, 0.02, 0.05, 0.2, 1.0)
+# flank_efficiency never reaches `_compute_geometry` at all -- it only scales
+# the cheap per-call flank credit in `_effective_flux_mm_min` -- so moving it
+# between shielding points is a pure probe of whether reloading calibration
+# for ANY reason still busts the geometry cache, exactly as a fit's
+# finite-difference Jacobian does when it steps through the other eleven
+# fitted constants between shielding steps.
+SHIELDING_SWEEP_SECOND_CONSTANT = (0.10, 0.40, 0.70)
+
+
+@pytest.fixture
+def real_calibration_file():
+    """Restore calibration.json and both process-wide caches afterward, so a
+    test that writes the real file cannot leak into any other test."""
+    original = CALIBRATION_PATH.read_text()
+    try:
+        yield
+    finally:
+        CALIBRATION_PATH.write_text(original)
+        reload_calibration()
+        mist._GEOMETRY_CACHE.clear()
+
+
+def _write_mist_constants(**overrides) -> None:
+    """Write named `mist` calibration constants to the real file and reload --
+    the same write-then-reload sequence `validation.fit.apply_vector` uses."""
+    cal = json.loads(CALIBRATION_PATH.read_text())
+    for name, value in overrides.items():
+        cal["mist"][name]["value"] = value
+    CALIBRATION_PATH.write_text(json.dumps(cal))
+    reload_calibration()
+
+
+def _coarse_survival(design, positions, envelope) -> float:
+    geometry = mist._geometry(design, positions, envelope, FIRE_TOP_M, 5.0,
+                              SHIELDING_CACHE_GAS_EXCESS_K)
+    return geometry[COARSE_MODE_INDEX].surviving_fraction
+
+
+def test_reloading_calibration_busts_the_geometry_cache_too(real_calibration_file):
+    """Task 17b bug 1, direct proof. Two calls for the same design and flight
+    condition, with only `shielding_reference_loading_kgm3` changed between
+    them via a real write plus `reload_calibration()`, must give different
+    results -- proving the second call is not silently served a trajectory
+    computed under the first value."""
+    d, geom, pos, env, _ = _setup()
+    mist._GEOMETRY_CACHE.clear()
+
+    _write_mist_constants(shielding_reference_loading_kgm3=0.005)
+    low_ref = _coarse_survival(d, pos, env)
+
+    _write_mist_constants(shielding_reference_loading_kgm3=1.0)
+    high_ref = _coarse_survival(d, pos, env)
+
+    assert low_ref != high_ref, (
+        "the second call was served a trajectory computed under the FIRST "
+        "shielding_reference_loading_kgm3, not the value just reloaded"
+    )
+
+
+def test_a_shielding_sweep_agrees_with_a_grid_that_also_moves_another_constant(
+        real_calibration_file):
+    """Task 17b bug 1, second angle -- the test that would have caught the
+    discarded fit's problem directly. A one-dimensional sweep of
+    `shielding_reference_loading_kgm3` alone, and a two-dimensional grid that
+    also moves `flank_efficiency` and visits the same shielding values in a
+    different order, must agree at every shielding value they share: the
+    geometry has to depend on the shielding value currently in the file, never
+    on what else was set in between or on which sweep got there first."""
+    d, geom, pos, env, _ = _setup()
+
+    mist._GEOMETRY_CACHE.clear()
+    sweep = {}
+    for ref in SHIELDING_SWEEP_KGM3:
+        _write_mist_constants(shielding_reference_loading_kgm3=ref)
+        sweep[ref] = _coarse_survival(d, pos, env)
+
+    mist._GEOMETRY_CACHE.clear()
+    grid = {}
+    for efficiency in SHIELDING_SWEEP_SECOND_CONSTANT:
+        for ref in reversed(SHIELDING_SWEEP_KGM3):
+            _write_mist_constants(shielding_reference_loading_kgm3=ref,
+                                  flank_efficiency=efficiency)
+            grid[(efficiency, ref)] = _coarse_survival(d, pos, env)
+
+    for (efficiency, ref), grid_value in grid.items():
+        assert grid_value == pytest.approx(sweep[ref]), (
+            f"shielding_reference_loading_kgm3={ref}: the 1D sweep saw "
+            f"{sweep[ref]:.6f}, the grid (flank_efficiency={efficiency} also "
+            f"moving) saw {grid_value:.6f} for the same shielding value -- the "
+            f"geometry cache served a trajectory computed under a different one"
+        )
+
+
+def test_two_designs_that_differ_only_in_flow_get_different_cached_geometry():
+    """Task 17b bug 2. `_geometry_key`'s `modes` tuple carried droplet size,
+    cone angle and launch velocity but not `mode_flow_lpm`, so two designs
+    sharing every other spray-geometry input -- differing only in K-factor or
+    pressure -- could silently share one cache entry and read back a shield
+    factor computed for the wrong flow rate. This test does not touch
+    calibration at all; it fits entirely within the default `real` file."""
+    mist._GEOMETRY_CACHE.clear()
+    d = Design.load(BASELINE)
+    geom = section_geometry(d)
+    pos = nozzle_positions(d, geom, fire_x_m=0.0)
+    env = _envelope(d, geom)
+
+    doubled_flow = d.model_copy(update={"nozzles": d.nozzles.model_copy(
+        update={"k_factor_lpm_bar05": d.nozzles.k_factor_lpm_bar05 * 2.0})})
+    doubled_pos = nozzle_positions(doubled_flow, geom, fire_x_m=0.0)
+
+    # Every OTHER spray-geometry input is unchanged: pressure (hence smd_um),
+    # cone angle, launch velocity, mounting and nozzle positions all agree --
+    # only the flow K-factor was touched.
+    assert doubled_flow.nozzles.modes == d.nozzles.modes
+    assert doubled_flow.nozzles.mounting == d.nozzles.mounting
+    assert doubled_pos == pos
+    assert doubled_flow.nozzles.mode_flow_lpm("coarse") != d.nozzles.mode_flow_lpm("coarse")
+
+    base = _coarse_survival(d, pos, env)
+    other = _coarse_survival(doubled_flow, doubled_pos, env)
+
+    assert other != base, (
+        "two designs differing only in K-factor (hence mode_flow_lpm) got "
+        "identical cached geometry -- mode_flow_lpm is missing from _geometry_key"
+    )
 
 
 # --- behaviour carried over from the top-plane model ------------------------
