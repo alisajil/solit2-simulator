@@ -205,12 +205,22 @@ def test_a_breached_constraint_does_not_fail_the_solit2_gates():
 
 # --- test 7: the engine states what its constants rest on -------------------
 
-def test_meta_reports_the_calibration_as_unfitted(tmp_path):
+def test_meta_reports_the_calibration_as_fitted_without_claiming_it_is_validated():
+    """A least-squares fit against c4-c6 has been run, so the engine says so.
+
+    The fit did not reach the reference values, so `fitted` must never be left
+    to read as `validated`: the note carried in every result has to point at the
+    command that reports how far the engine actually lands from the tests.
+    """
     result = envelope.run(Design.load(REPO_ROOT / EXAMPLE_DESIGN))
-    assert result.meta["calibration_fitted"] is False, (
-        "no fit has been run against the reference cases, and an unfitted "
-        "engine must say so in its own output")
-    assert result.meta["calibration_note"]
+    assert result.meta["calibration_fitted"] is True, (
+        "validation/fit.py has been run against the reference cases, and an "
+        "engine whose constants came from a fit must say so in its own output")
+    note = result.meta["calibration_note"]
+    assert note, "what the constants rest on must be stated in every result"
+    assert "solit2 validate" in note, (
+        "the note must send the reader to the command that lists the misses, "
+        "or a fitted calibration reads as a validated one")
     assert isinstance(result.meta["calibration_anchors"], list)
 
 

@@ -62,13 +62,20 @@ Every result states what the constants rest on, in its own `meta` block:
 - `calibration_anchors` — the reference case ids the constants cite.
 - `calibration_note` — what the basis is, in a sentence.
 
-**At the time of writing `calibration_fitted` is `false`**: the constants are
-hand-set, not fitted, and the tool says so rather than letting a reader assume
-otherwise. Four constants in the `mist` group previously cited reference cases
-that no longer exist; their notes now record that their basis was removed and a
-refit is required, rather than naming a case that would not survive a check.
+**`calibration_fitted` is now `true`**: a least-squares fit of twelve constants
+against `c4`–`c6` has been run, and the tool says so rather than letting a reader
+assume the constants are still hand-set. Everything else in `calibration.json` is
+hand-set from published literature and is not a fitted value.
 
-*Enforced by:* `test_meta_reports_the_calibration_as_unfitted` and
+**Fitted is not validated.** The fit moved the cost by 0.02 % and did not reach
+the reference values: `c4` and `c5` still model a 150 MW peak against 30 and
+20 MW measured. `calibration_note` says so in every result and names
+`solit2 validate` as the command that lists the misses, so `fitted: true` can
+never be read as a claim that the model agrees with the tests.
+
+*Enforced by:*
+`test_meta_reports_the_calibration_as_fitted_without_claiming_it_is_validated`,
+which fails if the note stops pointing at that command, and
 `test_every_anchor_the_calibration_cites_still_exists`, which fails if any
 constant cites a reference case that is not in `validation/anchors/`.
 
