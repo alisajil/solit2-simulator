@@ -7,8 +7,8 @@
   "fire": {
     "suppression_response_s": {"value": 90.0, "anchor": "c4,c5", "note": "tau_s in S(t)"},
     "cover_shielding_factor": {"value": 2.5, "anchor": "c4", "note": "PVC tarpaulin delays suppression"},
-    "decay_energy_fraction": {"value": 0.80, "anchor": "none", "note": "fraction burnt before linear decay"},
-    "pool_ventilation_factor": {"value": 1.40, "anchor": "c6", "note": "tunnel wind enhances pool burning"},
+    "decay_energy_fraction": {"value": 0.8, "anchor": "none", "note": "fraction burnt before linear decay"},
+    "pool_ventilation_factor": {"value": 1.4, "anchor": "c6", "note": "tunnel wind enhances pool burning"},
     "pool_ramp_s": {"value": 150.0, "anchor": "c6", "note": "Annex 2: pools need 2-3 min to develop"},
     "pool_burning_rate_reduction": {"value": 0.55, "anchor": "c6"},
     "pool_extinction_flux_mm_min": {"value": 1.8, "anchor": "c6"},
@@ -26,7 +26,7 @@
     "eta_max": {"value": 0.85, "anchor": "c4,c5", "note": "SOLIT2 held a 150 MW potential load to ~30 MW, so the ceiling is at least 0.80"},
     "w_ref_mm_min": {"value": 1.2, "anchor": "none", "note": "basis removed with c1-c3; refit required. Was set against reference cases c1, c2 and c3, none of which survive in validation/anchors, so this value currently rests on nothing and is carried unchanged only to avoid silently altering the physics."},
     "chi_cool_max": {"value": 0.45, "anchor": "none", "note": "basis removed with c3; refit required. This value has no surviving reference case and is carried unchanged pending a refit against c4-c6."},
-    "evaporation_k_ref_m2s": {"value": 1.0e-7, "anchor": "none", "note": "basis removed with c3; refit required. d-squared law constant at the reference gas temperature rise; a 100 um drop evaporates in ~0.1 s at that rise and essentially not at all in cool air. The magnitude is physically reasonable but the specific value was set against c3, which no longer exists."},
+    "evaporation_k_ref_m2s": {"value": 1e-07, "anchor": "none", "note": "basis removed with c3; refit required. d-squared law constant at the reference gas temperature rise; a 100 um drop evaporates in ~0.1 s at that rise and essentially not at all in cool air. The magnitude is physically reasonable but the specific value was set against c3, which no longer exists."},
     "evaporation_reference_delta_t_k": {"value": 600.0, "anchor": "none", "note": "basis removed with c3; refit required. Paired with evaporation_k_ref_m2s and set against the same deleted reference case."},
     "flank_reach_factor": {"value": 0.5, "anchor": "c4,c5", "note": "lateral band, as a multiple of fuel height, in which descending spray strikes the fuel's sides"},
     "flank_efficiency": {"value": 0.4, "anchor": "c4,c5", "note": "effectiveness of water striking a vertical face relative to water landing on the top face"}
