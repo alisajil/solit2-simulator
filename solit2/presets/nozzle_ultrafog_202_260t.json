@@ -1,5 +1,6 @@
 {
   "preset": "ultrafog_202_260t",
+  "note": "tilt_deg is measured from vertical; the source document states 35 degrees below horizontal, which is 55 degrees from vertical.",
   "k_factor_lpm_bar05": 4.2,
   "pressure_bar": 56.0,
   "smd_table": {"56": 120.0},
@@ -12,6 +13,6 @@
     "row_lateral_offsets_m": [4.55],
     "height_above_carriageway_m": 4.97,
     "pitch_m": 3.8,
-    "tilt_deg": 35.0
+    "tilt_deg": 55.0
   }
 }
