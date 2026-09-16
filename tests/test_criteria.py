@@ -30,14 +30,28 @@ class _Cost:
     index = 1.0
 
 
-def _station(temp_c=25.0, flux_kwm2=0.2, visibility_m=200.0, fed_tox=0.0, co_ppm=0.0):
-    return StationSample(temp_c=temp_c, flux_kwm2=flux_kwm2, visibility_m=visibility_m,
-                         fed_tox=fed_tox, fed_heat=0.0, co_ppm=co_ppm)
+def _station(name, temp_c=25.0, flux_kwm2=0.2, visibility_m=200.0, fed_tox=0.0,
+             co_ppm=0.0):
+    """A sample shaped like that station's own Annex 7 Table 5 instrument list.
+
+    The values offered are kept whole where Table 5 puts a sensor and dropped
+    where it does not, so a fixture cannot accidentally hand a criterion a
+    reading from a location the standard does not instrument.
+    """
+    kit = criteria_mod.INSTRUMENTS[name]
+    return StationSample(
+        temp_c=temp_c,
+        flux_kwm2=flux_kwm2 if kit.heat_flux else None,
+        visibility_m=visibility_m if kit.visibility else None,
+        fed_tox=fed_tox if kit.toxic_gas else None,
+        fed_heat=0.0 if kit.thermal_dose else None,
+        co_ppm=co_ppm if kit.carbon_monoxide else None,
+    )
 
 
 def _step(t_s, hrr_mw, target_flux_kwm2, stations, target_exposure_s=0.0,
           structure_exposure_length_m=0.0):
-    full = {name: _station() for name in criteria_mod.STATIONS}
+    full = {name: _station(name) for name in criteria_mod.STATIONS}
     full.update(stations)
     return StepRecord(
         t_s=t_s, hrr_mw=hrr_mw, hrr_free_mw=hrr_mw, ceiling_temp_c=400.0,
@@ -56,17 +70,21 @@ def _trace(steps=None):
     the system's response delay must be accounted for), so the 150 MW first step
     must not reach it. The settled step is deliberately worse DOWNSTREAM than
     upstream at every life-safety quantity, because Annex 7 7.2.2 asks for both.
+
+    Each worst value is placed at a station Annex 7 Table 5 actually instruments
+    for that quantity: the flux pair at U15/D15 (section 6.4.2), the visibility
+    pair at U45/D100 (6.4.5), the gas pair at U45/D45 (6.4.3).
     """
     return RunTrace(
         steps=steps or (
             _step(0.0, hrr_mw=150.0, target_flux_kwm2=9.0, stations={}),
             _step(120.0, hrr_mw=46.0, target_flux_kwm2=9.8, stations={
-                "U45": _station(temp_c=31.0, flux_kwm2=0.3, visibility_m=60.0,
+                "U45": _station("U45", temp_c=31.0, visibility_m=60.0,
                                 fed_tox=0.02, co_ppm=10.0),
-                "U05": _station(flux_kwm2=2.0),
-                "D05": _station(flux_kwm2=4.0),
-                "D15": _station(temp_c=52.0, visibility_m=12.0, co_ppm=120.0),
-                "D45": _station(temp_c=58.0, fed_tox=0.05),
+                "U15": _station("U15", flux_kwm2=2.0),
+                "D15": _station("D15", temp_c=52.0, flux_kwm2=4.0),
+                "D100": _station("D100", visibility_m=12.0),
+                "D45": _station("D45", temp_c=58.0, fed_tox=0.05, co_ppm=120.0),
             }, structure_exposure_length_m=7.0),
         ),
         events={"t_full_pressure_s": 90.0},
@@ -291,10 +309,10 @@ def test_life_safety_criteria_take_the_worst_of_upstream_and_downstream():
     # Every one of these worst values sits at a DOWNSTREAM station in `_trace`;
     # the old upstream-only criteria would have reported the U45 figure instead.
     assert out["max_air_temp_c"].value == pytest.approx(58.0)     # D45, not U45's 31.0
-    assert out["max_heat_flux_kwm2"].value == pytest.approx(4.0)  # D05, not U05's 2.0
-    assert out["min_visibility_m"].value == pytest.approx(12.0)   # D15, not U45's 60.0
+    assert out["max_heat_flux_kwm2"].value == pytest.approx(4.0)  # D15, not U15's 2.0
+    assert out["min_visibility_m"].value == pytest.approx(12.0)   # D100, not U45's 60.0
     assert out["max_fed"].value == pytest.approx(0.05)            # D45, not U45's 0.02
-    assert out["max_co_ppm"].value == pytest.approx(120.0)        # D15, not U45's 10.0
+    assert out["max_co_ppm"].value == pytest.approx(120.0)        # D45, not U45's 10.0
 
 
 def test_life_safety_criteria_compare_against_the_ahj_limits():

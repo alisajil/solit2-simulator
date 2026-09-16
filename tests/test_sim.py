@@ -138,12 +138,18 @@ def test_each_step_carries_the_two_annex_7_running_quantities():
         assert after.target_exposure_s in (0.0, pytest.approx(before.target_exposure_s + 1.0))
 
 
-def test_every_station_sample_carries_carbon_monoxide():
-    """Annex 7 7.2.2 calls CO out by name, so it has to reach the stations."""
+def test_every_carbon_monoxide_station_carries_carbon_monoxide():
+    """Annex 7 7.2.2 calls CO out by name, so it has to reach the stations that
+    measure it -- Table 5's U45 and D45, and not the twelve that do not."""
+    from solit2.engines.reduced.criteria import CO_STATIONS
+
     trace = sim.run_once(Design.load(BASELINE), "bored", 5.08)
     late = trace.steps[-1]
-    assert all(s.co_ppm >= 0.0 for s in late.stations.values())
-    assert max(s.co_ppm for s in late.stations.values()) > 0.0
+    measured = [late.stations[name].co_ppm for name in CO_STATIONS]
+    assert all(value >= 0.0 for value in measured)
+    assert max(measured) > 0.0
+    assert all(sample.co_ppm is None for name, sample in late.stations.items()
+               if name not in CO_STATIONS)
 
 
 def test_the_result_reports_the_unset_criteria_and_the_target_context():

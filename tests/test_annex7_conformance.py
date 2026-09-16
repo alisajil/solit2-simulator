@@ -125,9 +125,9 @@ def _sampled_heights() -> _RecordingField:
                           design.fire.footprint.length_m, design.fire.footprint.width_m,
                           scene.ambient_c)
     recorder = _RecordingField(field)
-    zero = {name: 0.0 for name in criteria_mod.STATIONS}
+    doses = {name: 0.0 for name in criteria_mod.STATIONS}
     sim_mod._sample_stations(scene, recorder, MistEffect.none(), vent,
-                             Species(50.0, 0.5, 0.02, 20.0), 0.0, zero, dict(zero))
+                             Species(50.0, 0.5, 0.02, 20.0), 0.0, doses, dict(doses))
     return recorder
 
 

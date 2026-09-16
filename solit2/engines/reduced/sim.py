@@ -192,11 +192,11 @@ def _sample_stations(scene: _Scene, field: ThermalField, mist: MistEffect,
                      fed_heat: dict[str, float]) -> dict[str, StationSample]:
     """What the instruments at each Annex 7 Table 5 location read this step.
 
-    `criteria.INSTRUMENTS` decides which of the newly reported quantities exist
-    at each: a quantity Table 5 does not instrument there is left absent, not
-    zeroed, so it can never be silently averaged or compared as if it were a
-    reading. `fed_tox` and `fed_heat` are the run's dose accumulators and are
-    advanced here by this step's increment.
+    `criteria.INSTRUMENTS` decides what exists at each: a quantity Table 5 does
+    not instrument there is left absent, not zeroed, so it can never be silently
+    averaged or compared as if it were a reading. `fed_tox` and `fed_heat` are
+    the run's dose accumulators, keyed by the stations whose instruments can
+    produce them, and are advanced here by this step's increment.
 
     Heights. The thermocouple ladder is `criteria.thermocouple_heights_m`; the
     flux gauge is at HEAT_FLUX_HEIGHT_M (section 6.4.2). ISO 13571's thermal
@@ -217,19 +217,24 @@ def _sample_stations(scene: _Scene, field: ThermalField, mist: MistEffect,
         temps = ((scene.ambient_c,) * len(tree.heights_m) if upstream_clear
                  else field.gas_temp_profile_c(x_m, tree.heights_m))
         temp = temps[tree.breathing_index]
-        flux = field.radiant_flux_kwm2(x_m, HEAT_FLUX_HEIGHT_M, mist.tau_mist)
+        flux = (field.radiant_flux_kwm2(x_m, HEAT_FLUX_HEIGHT_M, mist.tau_mist)
+                if kit.heat_flux else None)
         local = AMBIENT_SPECIES if upstream_clear else species
-        fed_tox[name] += tenability.fed_tox_increment(local, DT_S)
-        fed_heat[name] += tenability.fed_heat_increment(temp, flux, DT_S)
+        if kit.toxic_gas:
+            fed_tox[name] += tenability.fed_tox_increment(local, DT_S)
+        if kit.thermal_dose:
+            fed_heat[name] += tenability.fed_heat_increment(temp, flux, DT_S)
         in_zone = abs(x_m) <= scene.half_active_length_m
         # Upstream of the backlayering front neither the fire's water nor the
         # spray's has reached the station; it is still tunnel air.
         water = local.h2o_ratio + (0.0 if upstream_clear else mist_water_ratio)
         samples[name] = StationSample(
             temp_c=temp, temps_c=temps, heights_m=tree.heights_m, flux_kwm2=flux,
-            visibility_m=tenability.visibility_m(local.soot_gm3,
-                                                 kappa_mist if in_zone else 0.0),
-            fed_tox=fed_tox[name], fed_heat=fed_heat[name], co_ppm=local.co_ppm,
+            visibility_m=(tenability.visibility_m(local.soot_gm3,
+                                                  kappa_mist if in_zone else 0.0)
+                          if kit.visibility else None),
+            fed_tox=fed_tox.get(name), fed_heat=fed_heat.get(name),
+            co_ppm=local.co_ppm if kit.carbon_monoxide else None,
             co2_pct=local.co2_pct if kit.carbon_dioxide else None,
             o2_pct=local.o2_pct if kit.oxygen else None,
             relative_humidity_pct=(
@@ -318,8 +323,13 @@ def run_once(design: Design, section: str, velocity_ms: float) -> RunTrace:
     state = fire_mod.initial_state(scene.model)
     mist = MistEffect.none()
     events = _initial_events()
-    fed_tox = {name: 0.0 for name in STATIONS}
-    fed_heat = {name: 0.0 for name in STATIONS}
+    # Only the stations whose Table 5 instruments can produce the dose. The ISO
+    # 13571 asphyxiant dose needs the CO and the CO2 measured at U45 and D45;
+    # the thermal dose needs the heat flux measured at U15 and D15, and a
+    # thermal dose carrying only its convective term is a different quantity,
+    # not a weaker one.
+    fed_tox = {name: 0.0 for name, kit in INSTRUMENTS.items() if kit.toxic_gas}
+    fed_heat = {name: 0.0 for name, kit in INSTRUMENTS.items() if kit.thermal_dose}
     pipe_temp = scene.ambient_c
     steps: list[StepRecord] = []
     peak_hrr = 0.0

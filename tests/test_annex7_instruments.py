@@ -21,7 +21,8 @@ from solit2.engines.reduced import fire as fire_mod
 from solit2.engines.reduced import sim as sim_mod
 from solit2.engines.reduced import tenability, thermal
 from solit2.engines.reduced.geometry import section_geometry
-from solit2.engines.reduced.state import MistEffect
+from solit2.engines.reduced.state import (MistEffect, RunTrace, StationSample,
+                                          StepRecord)
 from solit2.engines.reduced.ventilation import VentilationState
 from solit2.schema.design import Design
 
@@ -208,9 +209,10 @@ def _samples(backlayer_m: float = 0.0) -> dict:
                           scene.fire_top_m, scene.fire_base_m,
                           design.fire.footprint.length_m, design.fire.footprint.width_m,
                           scene.ambient_c)
-    zero = {name: 0.0 for name in criteria_mod.STATIONS}
+    fed_tox = {n: 0.0 for n in criteria_mod.stations_carrying(lambda k: k.toxic_gas)}
+    fed_heat = {n: 0.0 for n in criteria_mod.stations_carrying(lambda k: k.thermal_dose)}
     return sim_mod._sample_stations(scene, field, MistEffect.none(), vent,
-                                    SAMPLED_SPECIES, 0.0, zero, dict(zero))
+                                    SAMPLED_SPECIES, 0.0, fed_tox, fed_heat)
 
 
 def test_every_station_reports_a_tree_of_its_table_5_size():
@@ -248,14 +250,47 @@ def test_an_upstream_station_clear_of_the_backlayer_reports_tunnel_air():
     assert engulfed.o2_pct == SAMPLED_SPECIES.o2_pct
 
 
-def test_only_the_table_5_locations_report_gas_humidity_or_air_velocity():
+def test_a_station_reports_a_quantity_if_and_only_if_table_5_instruments_it():
+    """Every optional quantity, both directions, at every station: present where
+    Table 5 puts a sensor and `None` -- not zero -- where it does not."""
     samples = _samples()
     for name, sample in samples.items():
         kit = criteria_mod.INSTRUMENTS[name]
         assert (sample.o2_pct is None) != (kit.oxygen > 0), name
         assert (sample.co2_pct is None) != (kit.carbon_dioxide > 0), name
+        assert (sample.co_ppm is None) != (kit.carbon_monoxide > 0), name
         assert (sample.relative_humidity_pct is None) != (kit.relative_humidity > 0), name
         assert (sample.air_velocity_ms is None) != kit.air_velocity, name
+        assert (sample.flux_kwm2 is None) != kit.heat_flux, name
+        assert (sample.visibility_m is None) != kit.visibility, name
+        assert (sample.fed_tox is None) != kit.toxic_gas, name
+        assert (sample.fed_heat is None) != kit.heat_flux, name
+
+
+def test_heat_flux_is_reported_at_u15_and_d15_and_nowhere_else():
+    """Annex 7 section 6.4.2 puts two heat flux sensors in the tunnel, at U15
+    and D15. A flux reported anywhere else is a number no test could produce and
+    so no test could contradict."""
+    reported = {name for name, sample in _samples().items()
+                if sample.flux_kwm2 is not None}
+    assert reported == {"U15", "D15"}
+
+
+def test_gas_concentrations_are_reported_at_u45_and_d45_and_nowhere_else():
+    """Annex 7 section 6.4.3: oxygen, carbon dioxide and carbon monoxide "on
+    both sides of the fire. Such places are U45 and D45"."""
+    samples = _samples()
+    for field in ("o2_pct", "co2_pct", "co_ppm", "relative_humidity_pct"):
+        reported = {name for name, sample in samples.items()
+                    if getattr(sample, field) is not None}
+        assert reported == {"U45", "D45"}, field
+
+
+def test_visibility_is_reported_at_the_four_section_6_4_5_locations():
+    """Annex 7 section 6.4.5: "at minimum in U045, D045; D100, D215"."""
+    reported = {name for name, sample in _samples().items()
+                if sample.visibility_m is not None}
+    assert reported == {"U45", "D45", "D100", "D215"}
 
 
 def test_air_velocity_is_the_sections_own_throttled_velocity():
@@ -308,6 +343,81 @@ def test_the_water_of_combustion_tracks_the_carbon_dioxide_yield():
     double = tenability.species_at(model, 80.0, 200.0, 0.4)
     assert double.co2_pct / single.co2_pct == pytest.approx(
         double.h2o_ratio / single.h2o_ratio)
+
+
+# --- the criteria honour the map ---------------------------------------------
+
+class _Hyd:
+    flow_lpm = 2174.3
+
+
+class _Cost:
+    index = 1.0
+
+
+def _trace_with(overrides: dict[str, dict]) -> RunTrace:
+    """One step in which every station reads calmly except those named.
+
+    Built by hand rather than by running the engine, because the point is a
+    reading the sampler would never produce: a heat flux at a station Table 5
+    puts no gauge at. A search that filtered on `None` instead of on the
+    instrument map would see these and pass this test wrongly.
+    """
+    stations = {}
+    for name in criteria_mod.STATIONS:
+        kit = criteria_mod.INSTRUMENTS[name]
+        seen = overrides.get(name, {})
+        stations[name] = StationSample(
+            temp_c=seen.get("temp_c", 25.0),
+            flux_kwm2=seen.get("flux_kwm2", 0.1 if kit.heat_flux else None),
+            visibility_m=seen.get("visibility_m", 500.0 if kit.visibility else None),
+            fed_tox=seen.get("fed_tox", 0.0 if kit.toxic_gas else None),
+            fed_heat=0.0 if kit.thermal_dose else None,
+            co_ppm=seen.get("co_ppm", 0.0 if kit.carbon_monoxide else None))
+    step = StepRecord(
+        t_s=100.0, hrr_mw=20.0, hrr_free_mw=20.0, ceiling_temp_c=300.0,
+        lining_temp_c=300.0, pipe_temp_c=80.0, target_flux_kwm2=1.0, u_eff_ms=2.0,
+        u_critical_ms=2.5, backlayer_m=0.0, water_lpm=1000.0, pools_remaining=0,
+        mist=MistEffect.none(), stations=stations)
+    return RunTrace((step,), {"t_full_pressure_s": 0.0}, "bored", 2.0)
+
+
+def test_a_worst_station_search_cannot_see_an_uninstrumented_station():
+    """D05 carries seven thermocouples and nothing else. Given a catastrophic
+    flux, visibility, CO and dose there, every one of which would otherwise be
+    the worst in the tunnel by a wide margin, the criteria must report the
+    instrumented stations' figures instead."""
+    rogue = _trace_with({
+        "D05": {"flux_kwm2": 500.0, "visibility_m": 0.1, "co_ppm": 9000.0,
+                "fed_tox": 9.0},
+        "D15": {"flux_kwm2": 1.25},
+        "D100": {"visibility_m": 42.0},
+        "D45": {"co_ppm": 30.0, "fed_tox": 0.02},
+    })
+    out = criteria_mod.evaluate(rogue, _Hyd(), _Cost(), Design.load(BASELINE))
+    assert out["max_heat_flux_kwm2"].value == pytest.approx(1.25)
+    assert out["min_visibility_m"].value == pytest.approx(42.0)
+    assert out["max_co_ppm"].value == pytest.approx(30.0)
+    assert out["max_fed"].value == pytest.approx(0.02)
+
+
+def test_the_temperature_criterion_still_sees_every_station():
+    """Table 5 puts thermocouples at all fifteen locations, so the one
+    life-safety quantity that is measured everywhere must still be searched
+    everywhere -- the point is to drop phantom readings, not real ones."""
+    rogue = _trace_with({"D05": {"temp_c": 310.0}})
+    out = criteria_mod.evaluate(rogue, _Hyd(), _Cost(), Design.load(BASELINE))
+    assert out["max_air_temp_c"].value == pytest.approx(310.0)
+
+
+def test_the_criteria_search_exactly_the_stations_the_instrument_map_names():
+    """The searched sets are derived from INSTRUMENTS, not restated, so this
+    pins them to the Annex 7 sections rather than to the derivation."""
+    assert criteria_mod.HEAT_FLUX_STATIONS == ("U15", "D15")
+    assert criteria_mod.VISIBILITY_STATIONS == ("U45", "D45", "D100", "D215")
+    assert criteria_mod.CO_STATIONS == ("U45", "D45")
+    assert criteria_mod.FED_TOX_STATIONS == ("U45", "D45")
+    assert set(criteria_mod.THERMOCOUPLE_STATIONS) == set(criteria_mod.STATIONS)
 
 
 def test_evaporated_mist_water_is_the_water_the_mist_module_charged_for():

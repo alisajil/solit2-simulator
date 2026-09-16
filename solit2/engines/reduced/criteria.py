@@ -239,13 +239,23 @@ def _peak_after_activation(trace: RunTrace, attribute: str) -> float:
     return max(getattr(s, attribute) for s in steps)
 
 
-def _worst_station_value(trace: RunTrace, field: str, worst) -> float:
-    """The worst value of `field` over every station and every step.
+def _worst_station_value(trace: RunTrace, field: str, worst,
+                         at: tuple[str, ...]) -> float:
+    """The worst value of `field` over every step, at the stations in `at`.
 
     `worst` is `max` or `min`. Annex 7 section 7.2.2 asks for the life-safety
-    quantities upstream and downstream both, so every station counts.
+    quantities upstream and downstream both, so every station THAT CARRIES THE
+    INSTRUMENT counts -- and only those. Searching all of them let a criterion
+    be driven by a reading from a location Table 5 puts no such sensor at, which
+    is a number no real test could produce and so no test could contradict.
+
+    `at` comes from INSTRUMENTS rather than from the samples being `None`, so a
+    sampler and a criterion that disagreed about the instrument map would fail
+    loudly on the `None` instead of quietly dropping a station.
     """
-    return worst(worst(getattr(sample, field) for sample in step.stations.values())
+    if not at:
+        raise ValueError(f"no Annex 7 Table 5 station instruments {field}")
+    return worst(worst(getattr(step.stations[name], field) for name in at)
                  for step in trace.steps)
 
 
@@ -274,6 +284,15 @@ def _structure_exposure_duration_s(trace: RunTrace) -> float:
     return sum(interval for s in trace.steps if s.structure_exposure_length_m > 0.0)
 
 
+# Where each section 7.2.2 quantity is actually measured, resolved once from the
+# Table 5 instrument map rather than restated here, so adding or removing a
+# sensor above moves the criteria with it.
+THERMOCOUPLE_STATIONS = stations_carrying(lambda kit: kit.thermocouples > 0)
+HEAT_FLUX_STATIONS = stations_carrying(lambda kit: kit.heat_flux)
+VISIBILITY_STATIONS = stations_carrying(lambda kit: kit.visibility)
+CO_STATIONS = stations_carrying(lambda kit: kit.carbon_monoxide > 0)
+FED_TOX_STATIONS = stations_carrying(lambda kit: kit.toxic_gas)
+
 DEFAULT_CRITERIA: tuple[CriterionSpec, ...] = (
     # 7.2.1 -- the one absolute rule. "Prevention of fire spread is essential in
     # every case and fire target shall not have ignited during the test. FFFS has
@@ -289,17 +308,27 @@ DEFAULT_CRITERIA: tuple[CriterionSpec, ...] = (
                   "<=", True, lambda t, h, c, d: _peak_after_activation(t, "hrr_mw")),
     # 7.2.2 life safety -- temperature, heat radiation, visibility and gas
     # concentrations, upstream AND downstream, with CO called out specially.
-    # Every limit is the AHJ's to set.
+    # Every limit is the AHJ's to set, and every search runs over the stations
+    # Table 5 instruments for that quantity and no others.
+    #
+    # `temp_c` rather than the whole thermocouple tree: 7.2.2 is a tenability
+    # criterion and is evaluated at breathing height. The tree's upper rungs are
+    # smoke-layer temperatures, which belong to 7.2.4's structure criterion.
     CriterionSpec("max_air_temp_c", lambda d: d.ahj.max_air_temp_c, "<=", True,
-                  lambda t, h, c, d: _worst_station_value(t, "temp_c", max)),
+                  lambda t, h, c, d: _worst_station_value(t, "temp_c", max,
+                                                          THERMOCOUPLE_STATIONS)),
     CriterionSpec("max_heat_flux_kwm2", lambda d: d.ahj.max_heat_flux_kwm2, "<=", True,
-                  lambda t, h, c, d: _worst_station_value(t, "flux_kwm2", max)),
+                  lambda t, h, c, d: _worst_station_value(t, "flux_kwm2", max,
+                                                          HEAT_FLUX_STATIONS)),
     CriterionSpec("min_visibility_m", lambda d: d.ahj.min_visibility_m, ">=", True,
-                  lambda t, h, c, d: _worst_station_value(t, "visibility_m", min)),
+                  lambda t, h, c, d: _worst_station_value(t, "visibility_m", min,
+                                                          VISIBILITY_STATIONS)),
     CriterionSpec("max_fed", lambda d: d.ahj.max_fed, "<=", True,
-                  lambda t, h, c, d: _worst_station_value(t, "fed_tox", max)),
+                  lambda t, h, c, d: _worst_station_value(t, "fed_tox", max,
+                                                          FED_TOX_STATIONS)),
     CriterionSpec("max_co_ppm", lambda d: d.ahj.max_co_ppm, "<=", True,
-                  lambda t, h, c, d: _worst_station_value(t, "co_ppm", max)),
+                  lambda t, h, c, d: _worst_station_value(t, "co_ppm", max,
+                                                          CO_STATIONS)),
     # 7.2.4 tunnel structure -- "the minimum criterion is that high temperature
     # exposure areas will be limited to a small area, directly above fire loads
     # or slightly downstream", and ">500 C are allowed if exposure time is short
