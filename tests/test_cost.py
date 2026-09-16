@@ -38,10 +38,61 @@ def test_zone_and_head_counts_come_from_the_design_not_a_fixed_tunnel():
     assert c.heads == c.zones * d.heads_per_zone
 
 
-def test_the_index_is_the_total_over_the_normalisation_constant():
-    """`BASELINE_TOTAL` is a divisor, not a quantity: it sets the scale, only."""
-    c = _cost(Design.load(BASELINE))
-    assert c.index == pytest.approx(c.total / cost_mod.BASELINE_TOTAL)
+def test_the_index_is_cost_per_metre_against_the_reference_per_metre():
+    """The reference sets the scale and no quantity. It is applied PER METRE of
+    protected tube: indexing against the reference total alone made every design
+    in a short tunnel score near zero and clip the score's cost dimension to the
+    same value, which made that weight inert. Per metre, two designs differ by
+    what they actually install rather than by how long their tunnel is."""
+    d = Design.load(BASELINE)
+    c = _cost(d)
+    length = d.tunnel.length_m * d.tunnel.tubes
+    assert c.index == pytest.approx((c.total / length) / cost_mod.BASELINE_PER_M)
+
+
+def test_the_index_is_nearly_free_of_tunnel_length():
+    """The property the per-metre form exists for: a design is indexed on what it
+    installs, not on how long its tunnel is.
+
+    It is NOT exactly length-invariant, and should not be. Pumps and tank are
+    sized by the activated section, because only one section ever flows, so that
+    plant is shared across the whole bore and amortises as the tunnel grows. The
+    distribution quantities do scale, so the residual drift is small and in the
+    physically right direction -- longer tunnel, slightly cheaper per metre.
+    Asserted as a bounded band rather than equality, so the amortisation stays
+    visible instead of being tuned away."""
+    d = Design.load(BASELINE)
+    indices = []
+    for mult in (1, 2, 4):
+        longer = d.model_copy(update={"tunnel": d.tunnel.model_copy(
+            update={"length_m": d.tunnel.length_m * mult})})
+        indices.append(_cost(longer).index)
+    assert max(indices) / min(indices) < 1.15          # was a 4x swing before
+    assert indices[0] > indices[1] > indices[2]        # and amortises, never grows
+
+
+def test_distribution_quantities_scale_with_the_tunnel():
+    """What SHOULD scale, does: pipe and zones are per-metre of bore."""
+    d = Design.load(BASELINE)
+    longer = d.model_copy(update={"tunnel": d.tunnel.model_copy(
+        update={"length_m": d.tunnel.length_m * 2})})
+    a, b = _cost(d), _cost(longer)
+    assert b.ring_main_m == pytest.approx(2 * a.ring_main_m)
+    assert b.row_pipe_m == pytest.approx(2 * a.row_pipe_m)
+    # zones is a rounded count, so it doubles to within one zone per tube
+    assert b.zones == pytest.approx(2 * a.zones, abs=d.tunnel.tubes)
+
+
+def test_a_tunnel_shorter_than_half_a_zone_still_gets_one_zone_per_tube():
+    """round() alone returns zero zones there, and a design with no zones has no
+    heads and no cost at all -- a silently free system."""
+    d = Design.load(BASELINE)
+    tiny = d.model_copy(update={"tunnel": d.tunnel.model_copy(
+        update={"length_m": d.zones.section_length_m * 0.4})})
+    c = _cost(tiny)
+    assert c.zones == tiny.tunnel.tubes
+    assert c.heads > 0
+    assert c.total > 0
 
 
 def test_tighter_pitch_costs_more():

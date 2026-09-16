@@ -21,11 +21,20 @@ from solit2.engines.reduced.hydraulics import HydraulicsResult
 from solit2.schema.design import Design
 
 _WEIGHTS = json.loads((Path(__file__).resolve().parents[2] / "presets" / "cost_weights.json").read_text())
-# Cost of the reference installation in the units above: the denominator that
-# turns a total into an index. Any design, in any tunnel, is indexed against
-# this one number -- it sets the scale of the ratio and decides no quantity of
-# the design being evaluated. See the cost tests.
+# The reference installation: its cost in the units above, and the total tube
+# length that cost covered. The index is a cost PER METRE OF PROTECTED TUBE
+# against this reference's cost per metre, which is what makes it scale-free.
+#
+# Indexing against BASELINE_TOTAL alone stopped working once quantities became
+# the design's own: the reference is 8.5 km of tube, so a 600 m test gallery
+# scored 0.095 and every design in it clipped the score's cost dimension to the
+# same 1.0, leaving that 0.20 weight inert. Per metre, a dense design in a short
+# tunnel and a sparse one in a long tunnel are compared on the thing that
+# actually differs between them. Neither number decides any quantity of the
+# design being evaluated. See the cost tests.
 BASELINE_TOTAL = 128_535.82945588144
+BASELINE_LENGTH_M = 8_500.0
+BASELINE_PER_M = BASELINE_TOTAL / BASELINE_LENGTH_M
 
 
 @dataclass(frozen=True)
@@ -45,7 +54,9 @@ class CostResult:
 def cost_index(design: Design, hyd: HydraulicsResult) -> CostResult:
     zone_len = design.zones.section_length_m
     tubes = design.tunnel.tubes
-    zones = tubes * round(design.tunnel.length_m / zone_len)
+    # A tunnel shorter than half a zone still needs one zone per tube: round()
+    # alone returns 0 there, and a design with no zones has no heads and no cost.
+    zones = tubes * max(1, round(design.tunnel.length_m / zone_len))
     heads = zones * design.heads_per_zone
     rows = design.nozzles.mounting.rows
     total_length = design.tunnel.length_m * tubes
@@ -64,5 +75,6 @@ def cost_index(design: Design, hyd: HydraulicsResult) -> CostResult:
         + pumps * _WEIGHTS["pump_unit"]
         + hyd.tank_m3 * _WEIGHTS["tank_per_m3"]
     )
+    index = (total / total_length) / BASELINE_PER_M
     return CostResult(zones, heads, zones, ring_main_m, zone_header_m, row_pipe_m,
-                      pumps, hyd.tank_m3, total, total / BASELINE_TOTAL)
+                      pumps, hyd.tank_m3, total, index)
