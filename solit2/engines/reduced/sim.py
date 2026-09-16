@@ -354,9 +354,14 @@ def run_once(design: Design, section: str, velocity_ms: float) -> RunTrace:
         field = thermal.field(scene.geom, scene.model, state, vent, mist, scene.fire_top_m,
                               scene.fire_base_m, scene.design.fire.footprint.length_m,
                               scene.design.fire.footprint.width_m, scene.ambient_c)
+        # `state` is this step's fire, so the suppression efficiency the mist
+        # reports is the one that applies to the fire actually burning rather
+        # than to a fully involved one. `fire.step` consumes it on the NEXT
+        # step, which is the same one-step lag the mist has always had.
         mist = mist_mod.evaluate(scene.design, scene.geom, scene.positions, scene.envelope,
                                  scene.fire_top_m, vent.u_eff_ms, field.ceiling_excess_k,
-                                 q_conv, flow_fraction)
+                                 q_conv, flow_fraction,
+                                 hrr_mw=state.hrr_mw, hrr_free_mw=state.hrr_free_mw)
 
         species = tenability.species_at(scene.model, state.hrr_mw, scene.air_m3s,
                                         field.strat_factor)

@@ -414,9 +414,66 @@ def _effective_flux_mm_min(deliveries: tuple[ModeDelivery, ...], envelope: FuelE
     return (q_top + flank_efficiency * q_flank) / envelope.top.area_m2
 
 
+def burning_fraction(hrr_mw: float, hrr_free_mw: float) -> float:
+    """How much of the fire the mist has NOT yet knocked down, 0..1.
+
+    The share of the free-burning fire still alive, which is what decides how
+    hard the next increment of knockdown is. Before the fire exists, or before
+    the spray has taken anything off it, this is 1 and the suppression law below
+    reduces exactly to its unhardened form.
+    """
+    if hrr_free_mw <= 0.0:
+        return 1.0
+    return min(max(hrr_mw / hrr_free_mw, 0.0), 1.0)
+
+
+def _suppression_efficiency(cal: dict, w_fuel: float, f_cov: float,
+                            f_burn: float) -> float:
+    """Fractional reduction in the Class A burning rate this delivery achieves.
+
+    The water number `w_fuel * f_cov / w_ref` is what an unsuppressed, fully
+    involved fire costs to knock down. A fire the spray has already driven down
+    is not a smaller copy of that fire: the exposed fuel it could reach has
+    burnt away or been wetted, and what is left is the shielded, deep-seated
+    part of the load -- inside the stack, under the tarpaulin -- which the same
+    delivered density reaches far less of. Each further increment of knockdown
+    therefore costs disproportionately more water, and the water number is
+    discounted by `f_burn ** exponent` to say so.
+
+    SOLIT2 Annex 2 sections 6.1 and 6.2 report exactly this outcome: after the
+    full 30 minutes of discharge the HRR "was limited to a significantly lower
+    level" and the fire brigade still had to "finally extinguish the remaining
+    fire". The system controlled the fire at a level and held it there; it did
+    not put it out. A law whose efficiency is independent of how far the fire
+    has already been driven down cannot reproduce that -- it has no level to
+    settle at and runs on to near-extinction.
+
+    This is what makes the suppressed HRR settle. `fire.step` relaxes toward
+    `1 - eta`, so with eta falling as the fire falls the two curves cross at one
+    burning fraction and stay there: below it the spray loses grip and the fire
+    recovers, above it the spray bites harder and drives it back down. The
+    crossing moves with the delivered water, which is what makes the level a
+    design quantity rather than a property of `eta_max`.
+    """
+    water_number = (w_fuel * f_cov / cal["w_ref_mm_min"]["value"]
+                    * f_burn ** cal["suppression_hardening_exponent"]["value"])
+    return cal["eta_max"]["value"] * (1.0 - math.exp(-water_number))
+
+
 def evaluate(design: Design, geom: SectionGeometry, positions: tuple[NozzlePosition, ...],
              envelope: FuelEnvelope, fire_top_m: float, u_eff_ms: float, gas_excess_k: float,
-             q_conv_kw: float, flow_fraction: float) -> MistEffect:
+             q_conv_kw: float, flow_fraction: float, *,
+             hrr_mw: float, hrr_free_mw: float) -> MistEffect:
+    """What the spray is doing to the fire this step.
+
+    `hrr_mw` and `hrr_free_mw` are the fire as it stands and the fire that would
+    be burning without the system, both from the step that has just run. The
+    suppression law needs them because how hard a fire is to knock down further
+    depends on how far it has already been knocked down -- see
+    `_suppression_efficiency`. Nothing else here reads them, and in particular
+    they are NOT part of the geometry cache key: the delivery is unchanged, only
+    what that delivery buys against this fire.
+    """
     if flow_fraction <= 0:
         return MistEffect.none()
 
@@ -427,8 +484,8 @@ def evaluate(design: Design, geom: SectionGeometry, positions: tuple[NozzlePosit
     w_fuel = _effective_flux_mm_min(deliveries, envelope,
                                     cal["flank_efficiency"]["value"])
     f_cov = _coverage(geometries, deliveries)
-    eta = cal["eta_max"]["value"] * (
-        1.0 - math.exp(-w_fuel * f_cov / cal["w_ref_mm_min"]["value"]))
+    eta = _suppression_efficiency(cal, w_fuel, f_cov,
+                                  burning_fraction(hrr_mw, hrr_free_mw))
 
     head_count = len(positions)
     chi_cool = _cooling_fraction(design, geometries, head_count, flow_fraction,

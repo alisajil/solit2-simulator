@@ -1,3 +1,4 @@
+import math
 import copy
 import json
 
@@ -10,6 +11,7 @@ from solit2.engines.reduced import mist
 BASELINE = "examples/designs/road-tunnel-twin-bore.json"
 FIRE_TOP_M = 4.0
 Q_CONV_KW = 50_000 * 0.65
+HRR_MW = 50.0
 
 # What the previous top-face-only delivery model reported for the SOLIT2
 # reference geometry (c4: nozzles 0.9 m above a 4.0 m fuel top, 2.25 m/s, cold
@@ -49,13 +51,21 @@ def _envelope(design, geom, reach_m=None):
 
 
 def _setup(design=None, u_ms=5.0, gas_excess_k=0.0, flow_fraction=1.0, reach_m=None,
-           fire_top_m=FIRE_TOP_M):
+           fire_top_m=FIRE_TOP_M, hrr_mw=HRR_MW, hrr_free_mw=HRR_MW):
+    """Delivery against a fully involved fire unless a test says otherwise.
+
+    `hrr_mw == hrr_free_mw` is a fire the spray has taken nothing off yet, which
+    makes `mist.burning_fraction` 1 and the hardening term 1. Every delivery
+    test here is about what reaches the fuel, not about how far the fire has
+    already been driven down, so that is the condition they all want.
+    """
     d = design or Design.load(BASELINE)
     geom = section_geometry(d)
     pos = nozzle_positions(d, geom, fire_x_m=0.0)
     env = _envelope(d, geom, reach_m)
     effect = mist.evaluate(d, geom, pos, env, fire_top_m, u_ms, gas_excess_k,
-                           Q_CONV_KW, flow_fraction)
+                           Q_CONV_KW, flow_fraction,
+                           hrr_mw=hrr_mw, hrr_free_mw=hrr_free_mw)
     return d, geom, pos, env, effect
 
 
@@ -430,3 +440,132 @@ def test_shielding_does_not_widen_the_geometry_cache_key():
     assert abs(hit_rate - TASK_16_CACHE_HIT_RATE_PCT) <= 1.0, (
         f"hit rate {hit_rate:.2f}% against Task 16's "
         f"{TASK_16_CACHE_HIT_RATE_PCT}%: shielding widened the cache key")
+
+
+# --- task 24: the suppression law's dependence on the fire it is fighting -----
+#
+# The equilibrium these tests describe is real but is NOT reachable in the
+# shipped engine: `suppression_hardening_exponent` is 0.0 because every value
+# large enough to matter lifts c4 over the delivery model's evaporation cliff
+# (w_fuel falls 109x between 275 K and 350 K of ceiling excess) and the fire
+# escapes to free burn. See the constant's note in calibration.json. These pin
+# the LAW, on a delivery held fixed, so that the day the delivery stops being
+# near-binary in gas temperature the term can be raised and verified.
+
+# Pinned for the same reason the envelope tests pin the flank constants: these
+# are about the SHAPE of the suppression law and must keep their meaning after a
+# fit has moved the values. Both sit near their current fitted values, so the
+# levels below stay comparable with the task-24 measurements.
+LAW_SHAPE_ETA_MAX = 0.97
+LAW_SHAPE_W_REF_MM_MIN = 0.31
+# The delivery c4 actually runs at once the mist is established, from the trace
+# in the task-24 report: 4.18 mm/min over 19.8% of the interception envelope.
+C4_W_FUEL_MM_MIN = 4.18
+C4_F_COV = 0.198
+
+
+def _law_cal(exponent):
+    """The mist constants with the law's shape pinned and one exponent set."""
+    cal = copy.deepcopy(load_calibration())["mist"]
+    cal["eta_max"]["value"] = LAW_SHAPE_ETA_MAX
+    cal["w_ref_mm_min"]["value"] = LAW_SHAPE_W_REF_MM_MIN
+    cal["suppression_hardening_exponent"]["value"] = exponent
+    return cal
+
+
+def _settled(cal, w_fuel, f_cov=C4_F_COV, start=1.0, steps=400):
+    """Iterate `S -> 1 - eta(S)` to where the suppressed fire comes to rest.
+
+    `fire.step` relaxes the suppression fraction toward `1 - eta` and the fire is
+    `hrr_free * suppression`, so a fixed point of this map IS the plateau the
+    time loop walks to -- without paying for a 42-minute run to find it.
+    """
+    s = start
+    for _ in range(steps):
+        s = 1.0 - mist._suppression_efficiency(cal, w_fuel, f_cov, s)
+    return s
+
+
+def _step_ratios(levels):
+    """How evenly a ladder of settled levels is spaced, as successive ratios."""
+    return [a / b for a, b in zip(levels, levels[1:])]
+
+
+def test_burning_fraction_is_the_share_of_free_burn_still_alive():
+    assert mist.burning_fraction(30.0, 150.0) == pytest.approx(0.2)
+    # a fire the spray has taken nothing off yet
+    assert mist.burning_fraction(150.0, 150.0) == pytest.approx(1.0)
+    # before the fire exists there is nothing to be a fraction of
+    assert mist.burning_fraction(0.0, 0.0) == 1.0
+    assert mist.burning_fraction(5.0, 0.0) == 1.0
+    # and the ratio can never leave 0..1, whatever rounding hands it
+    assert mist.burning_fraction(151.0, 150.0) == 1.0
+    assert mist.burning_fraction(-1.0, 150.0) == 0.0
+
+
+def test_a_zero_exponent_reproduces_the_unhardened_law_exactly():
+    """The shipped default must be the previous model to the last bit.
+
+    `suppression_hardening_exponent` is 0.0 in calibration.json, so this is what
+    guarantees the structural change moved no anchor. Asserted against the closed
+    form the module used before, at the live constants, not a recorded number.
+    """
+    cal = copy.deepcopy(load_calibration())["mist"]
+    cal["suppression_hardening_exponent"]["value"] = 0.0
+    eta_max, w_ref = cal["eta_max"]["value"], cal["w_ref_mm_min"]["value"]
+    for w_fuel, f_cov, f_burn in ((4.18, 0.198, 0.26), (8.23, 0.191, 0.03),
+                                  (0.013, 0.19, 1.0)):
+        unhardened = eta_max * (1.0 - math.exp(-w_fuel * f_cov / w_ref))
+        assert mist._suppression_efficiency(cal, w_fuel, f_cov, f_burn) == unhardened
+
+
+def test_hardening_makes_an_already_knocked_down_fire_cost_more_water():
+    """The law's defining behaviour: what is left is the part the spray reaches
+    least, so the same delivery buys a smaller fractional reduction."""
+    cal = _law_cal(0.5)
+    etas = [mist._suppression_efficiency(cal, C4_W_FUEL_MM_MIN, C4_F_COV, f)
+            for f in (0.05, 0.2, 0.5, 1.0)]
+    assert etas == sorted(etas), "eta must rise with the fire still left to fight"
+    assert etas[0] < etas[-1]
+
+
+def test_the_hardened_law_settles_at_a_stable_interior_level():
+    """The point of the change: a plateau, not a transient on the way to nothing."""
+    cal = _law_cal(0.5)
+    floor = 1.0 - LAW_SHAPE_ETA_MAX
+
+    level = _settled(cal, C4_W_FUEL_MM_MIN)
+    assert 3.0 * floor < level < 1.0, "must settle well above near-extinction"
+
+    # stable, not merely stationary: pushed either way it comes back
+    for nudge in (0.4, 2.0):
+        assert _settled(cal, C4_W_FUEL_MM_MIN,
+                        start=min(level * nudge, 1.0)) == pytest.approx(level, rel=1e-6)
+
+
+def test_hardening_is_what_stops_the_law_collapsing_into_a_switch():
+    """Consequence 2 of the task-24 brief, pinned.
+
+    Unhardened, the settled level has no `S` in it at all -- it is just
+    `1 - eta(delivery)` -- and over a 16x ladder in water it runs onto the
+    `1 - eta_max` floor and stops responding. That saturation is why the design
+    sweep is bimodal. Hardened, the same ladder stays off the floor and its
+    steps stay near-even, which is what a design tool can interpolate between.
+    """
+    water = (1.0, 2.0, C4_W_FUEL_MM_MIN, 8.0, 16.0)
+    floor = 1.0 - LAW_SHAPE_ETA_MAX
+
+    plain = [_settled(_law_cal(0.0), w) for w in water]
+    hardened = [_settled(_law_cal(0.5), w) for w in water]
+
+    assert plain[-1] == pytest.approx(floor, abs=0.005), (
+        f"the unhardened law must saturate onto its floor: {plain}")
+    assert hardened[-1] > 2.5 * floor, (
+        f"the hardened law must stay off the floor: {hardened}")
+
+    assert hardened == sorted(hardened, reverse=True), f"not monotone: {hardened}"
+    plain_spread = max(_step_ratios(plain)) / min(_step_ratios(plain))
+    hardened_spread = max(_step_ratios(hardened)) / min(_step_ratios(hardened))
+    assert hardened_spread < plain_spread / 1.5, (
+        f"hardened steps {_step_ratios(hardened)} are no more even than "
+        f"unhardened {_step_ratios(plain)}")
