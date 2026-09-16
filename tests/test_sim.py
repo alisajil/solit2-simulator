@@ -160,3 +160,112 @@ def test_the_result_reports_the_unset_criteria_and_the_target_context():
                for cid in result.score["criteria_unset"])
     assert "target_peak_flux_kwm2" in result.peaks
     assert "target_max_exposure_s" in result.peaks
+
+
+# --- Annex 7 sections 5.2.6 / 6.3: where the fire target actually sits -------
+
+class _FluxRecorder:
+    """A `ThermalField` stand-in that records the x it was asked to radiate to.
+
+    What matters is the target position that REACHES `sim`, so it is captured at
+    the call rather than read back off a constant that may be unused.
+    """
+
+    def __init__(self, flame_tip_x_m: float, flux_kwm2: float = 1.0):
+        self.flame_tip_x_m = flame_tip_x_m
+        self._flux_kwm2 = flux_kwm2
+        self.asked_x_m: list[float] = []
+
+    def radiant_flux_kwm2(self, x_m: float, height_m: float, tau_mist: float) -> float:
+        self.asked_x_m.append(x_m)
+        return self._flux_kwm2
+
+
+def _asked_target_x_m(design: Design) -> float:
+    from solit2.engines.reduced.state import MistEffect
+    scene = sim._build_scene(design, "bored", 5.08)
+    recorder = _FluxRecorder(flame_tip_x_m=0.0)
+    sim._target_flux_kwm2(scene, recorder, MistEffect.none())
+    assert len(recorder.asked_x_m) == 1, "the target flux is read at exactly one place"
+    return recorder.asked_x_m[0]
+
+
+def _with_mock_up_length(design: Design, length_m: float) -> Design:
+    footprint = design.fire.footprint.model_copy(update={"length_m": length_m})
+    return design.model_copy(update={"fire": design.fire.model_copy(
+        update={"footprint": footprint})})
+
+
+def test_the_target_x_is_half_the_mock_up_plus_the_standoff():
+    """Annex 7 section 5.2.6 puts the target "5m downstream behind the mock-up",
+    and section 6.3 puts the x origin "longitudinally in the middle of the
+    mock-up". The target's x in that frame is therefore half the mock-up length
+    plus the standoff, not the standoff on its own."""
+    design = Design.load(BASELINE)
+    expected = design.fire.footprint.length_m / 2.0 + design.fire.target_distance_m
+    assert _asked_target_x_m(design) == pytest.approx(expected)
+
+
+def test_a_longer_mock_up_carries_the_target_downstream_with_it():
+    """The position is derived from the mock-up, not hardcoded: a 16 m mock-up
+    puts its ends at U8/D8 and its target at D13."""
+    design = _with_mock_up_length(Design.load(BASELINE), 16.0)
+    assert _asked_target_x_m(design) == pytest.approx(8.0 + design.fire.target_distance_m)
+
+
+def test_the_annex7_mock_up_puts_the_target_at_d10_not_d5():
+    """Regression guard on the frame bug. Annex 7 section 6.3: "the ends of the
+    HGV Class A mock-up are located in U5 and D5. Correspondingly the fire target
+    is located at D10." `target_distance_m` is 5.0 m, but that is the standoff
+    BEHIND the mock-up, not a position in the thermal field's x-frame; using it
+    as one declared flame contact 5 m too early."""
+    from solit2.engines.reduced.criteria import STATIONS
+    design = Design.load(BASELINE)
+    assert design.fire.footprint.length_m == 10.0
+    assert design.fire.target_distance_m == 5.0
+    assert _asked_target_x_m(design) == pytest.approx(10.0)
+    assert _asked_target_x_m(design) == pytest.approx(STATIONS["Target"])
+
+
+def test_flame_contact_is_judged_against_the_target_x_not_the_standoff():
+    """A 7 m tip is past the 5 m standoff but well short of the D10 target, so it
+    is not flame contact and the flux stays the radiant one."""
+    from solit2.engines.reduced.criteria import FLAME_CONTACT_FLUX_KWM2
+    from solit2.engines.reduced.state import MistEffect
+    scene = sim._build_scene(Design.load(BASELINE), "bored", 5.08)
+    short = _FluxRecorder(flame_tip_x_m=7.0, flux_kwm2=1.0)
+    assert sim._target_flux_kwm2(scene, short, MistEffect.none()) == pytest.approx(1.0)
+    reaching = _FluxRecorder(flame_tip_x_m=10.0, flux_kwm2=1.0)
+    assert sim._target_flux_kwm2(
+        scene, reaching, MistEffect.none()) == pytest.approx(FLAME_CONTACT_FLUX_KWM2)
+
+
+def test_a_tip_short_of_the_target_leaves_the_flux_below_the_contact_clamp(monkeypatch):
+    """Annex 7 section 7.2.1 end to end: with a deflected-flame coefficient small
+    enough that the tip stops short of D10, a real thermal field hands `sim` a
+    radiant flux STRICTLY below the flame-contact clamp -- so the criterion has
+    something left to discriminate with."""
+    import copy
+    from solit2.engines.reduced import fire as fire_mod
+    from solit2.engines.reduced import thermal
+    from solit2.engines.reduced.criteria import FLAME_CONTACT_FLUX_KWM2
+    from solit2.engines.reduced.state import FireState, MistEffect
+    from solit2.engines.reduced.ventilation import evaluate
+
+    design = Design.load(BASELINE)
+    scene = sim._build_scene(design, "bored", 5.08)
+    cal = copy.deepcopy(thermal.load_calibration())
+    cal["thermal"]["flame_length_coefficient"]["value"] = 0.5
+    monkeypatch.setattr(thermal, "load_calibration", lambda: cal)
+
+    state = FireState(t_s=600.0, hrr_mw=30.0, hrr_free_mw=30.0,
+                      energy_released_mj=10_000.0, suppression=0.5,
+                      pools_remaining=0, wet_time_s=180.0)
+    vent = evaluate(scene.geom, 5.08, fire_mod.convective_kw(scene.model, 30.0))
+    field = thermal.field(scene.geom, scene.model, state, vent, MistEffect.none(),
+                          fire_top_m=scene.fire_top_m, fire_base_m=scene.fire_base_m,
+                          fire_length_m=design.fire.footprint.length_m,
+                          fire_width_m=design.fire.footprint.width_m, ambient_c=20.0)
+
+    assert field.flame_tip_x_m < design.fire.target_x_m
+    assert sim._target_flux_kwm2(scene, field, MistEffect.none()) < FLAME_CONTACT_FLUX_KWM2

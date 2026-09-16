@@ -95,6 +95,24 @@ class Fire(Frozen):
     def alpha(self) -> float:
         return self.alpha_kw_s2 if self.alpha_kw_s2 is not None else GROWTH_ALPHA_KW_S2[self.growth]
 
+    @property
+    def target_x_m(self) -> float:
+        """The fire target's position in the measurement x-frame, in metres.
+
+        Two Annex 7 sections meet here and they measure from different places.
+        Section 5.2.6 places the target "5m downstream behind the mock-up", so
+        `target_distance_m` is a standoff from the mock-up's DOWNSTREAM END.
+        Section 6.3 puts the frame's origin "longitudinally in the middle of the
+        mock-up", which is where the engine's x = 0 sits. Converting between them
+        costs half the mock-up length, and section 6.3 states the result for the
+        section 5.2.2 mock-up outright: "the ends of the HGV Class A mock-up are
+        located in U5 and D5. Correspondingly the fire target is located at D10."
+
+        Derived from the footprint rather than written down, so a mock-up of any
+        other length carries its target with it and cannot fall out of step.
+        """
+        return self.footprint.length_m / 2.0 + self.target_distance_m
+
 
 class Mode(Frozen):
     id: str

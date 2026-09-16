@@ -258,9 +258,17 @@ def _sample_stations(scene: _Scene, field: ThermalField, mist: MistEffect,
 
 
 def _target_flux_kwm2(scene: _Scene, field: ThermalField, mist: MistEffect) -> float:
-    distance = scene.design.fire.target_distance_m
-    flux = field.radiant_flux_kwm2(distance, scene.fire_top_m / 2.0, mist.tau_mist)
-    if field.flame_tip_x_m >= distance:
+    """Heat flux at the fire target, whether radiated to it or carried by flame.
+
+    Both comparisons are made at `Fire.target_x_m`, the target's position in the
+    thermal field's own x-frame (Annex 7 sections 5.2.6 and 6.3 -- D10 for the
+    section 5.2.2 mock-up). `target_distance_m` is a standoff measured from the
+    END of the mock-up and is half a mock-up short of a position in this frame;
+    using it as one put the target at D5 and declared flame contact 5 m early.
+    """
+    target_x_m = scene.design.fire.target_x_m
+    flux = field.radiant_flux_kwm2(target_x_m, scene.fire_top_m / 2.0, mist.tau_mist)
+    if field.flame_tip_x_m >= target_x_m:
         return max(flux, FLAME_CONTACT_FLUX_KWM2)
     return flux
 
