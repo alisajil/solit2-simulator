@@ -129,6 +129,20 @@ def test_mode_fractions_must_sum_to_one(tmp_path):
     assert "1.400" in msg
 
 
+def test_fire_base_height_must_be_below_the_fuel_top(tmp_path):
+    """Task 18: the fuel cannot start above its own top, and the schema must
+    say so by naming both values, not merely reject with some generic error."""
+    raw = json.loads(open(BASELINE).read())
+    raw["fire"] = {"preset": "hgv_150mw", "footprint": {"base_height_m": 5.0}}
+    p = tmp_path / "bad_base_height.json"
+    p.write_text(json.dumps(raw))
+    with pytest.raises(ValidationError) as e:
+        Design.load(p)
+    msg = str(e.value)
+    assert "5.0" in msg  # base_height_m, the offending value
+    assert "4.0" in msg  # top_height_m (hgv_150mw's preset value), for comparison
+
+
 def test_the_example_design_declares_its_own_velocity_envelope():
     d = Design.load(BASELINE)
     assert d.ventilation.velocity_ms is None

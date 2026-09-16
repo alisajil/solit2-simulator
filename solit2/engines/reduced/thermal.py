@@ -64,14 +64,16 @@ def max_ceiling_excess_k(hrr_kw: float, q_conv_kw: float, u_ms: float,
         )
     if hrr_kw <= 0:
         return 0.0
-    cap = load_calibration()["thermal"]["ceiling_temp_cap_k"]["value"]
+    thermal_cal = load_calibration()["thermal"]
+    cap = thermal_cal["ceiling_temp_cap_k"]["value"]
+    coefficient = thermal_cal["ceiling_excess_coefficient"]["value"]
     w_star = _plume_velocity_scale_ms(q_conv_kw, b_fo_m)
     v_prime = u_ms / w_star if w_star > 0 else math.inf
     if v_prime <= REGION_TRANSITION_V:
         excess = REGION_I_COEFFICIENT * hrr_kw ** (2.0 / 3.0) / h_ef_m ** (5.0 / 3.0)
     else:
         excess = hrr_kw / (u_ms * b_fo_m ** (1.0 / 3.0) * h_ef_m ** (5.0 / 3.0))
-    return min(excess, cap)
+    return min(excess * coefficient, cap)
 
 
 def longitudinal_decay(x_m: float, height_m: float) -> float:
@@ -173,20 +175,34 @@ def exposure_length_m(thermal_field: ThermalField, threshold_c: float,
 
 def field(geom: SectionGeometry, fire_model: FireModel, fire_state: FireState,
           vent_state: VentilationState, mist: MistEffect, fire_top_m: float,
-          fire_length_m: float, fire_width_m: float, ambient_c: float) -> ThermalField:
+          fire_base_m: float, fire_length_m: float, fire_width_m: float,
+          ambient_c: float) -> ThermalField:
     hrr_kw = fire_state.hrr_mw * 1000.0
     q_conv = convective_kw(fire_model, fire_state.hrr_mw)
     b_fo = equivalent_radius_m(fire_length_m, fire_width_m)
-    h_ef = geom.crown_height_m - fire_top_m
+    # Li & Ingason's effective height is the ceiling clearance above the BASE of
+    # the fire source, not the fuel top -- see Task 18. Used for the ceiling
+    # excess correlation only; every other height below is measured from
+    # fire_top_m, because it means something else (see flame_clearance_m).
+    h_ef = geom.crown_height_m - fire_base_m
     excess = max_ceiling_excess_k(hrr_kw, q_conv, vent_state.u_eff_ms, b_fo, h_ef)
     # evaporating mist removes part of the convective heat before it reaches the ceiling
     excess *= 1.0 - mist.chi_cool
     strat = stratification_factor(vent_state.u_eff_ms, geom.crown_height_m, excess)
     diameter = 2.0 * b_fo
     flame = heskestad_flame_length_m(hrr_kw, diameter)
-    centroid = fire_top_m + 0.5 * min(flame, h_ef)
+    # The visible flame stands ON the fuel top and rises into the headroom
+    # above it, so its ceiling clip is crown_height_m - fire_top_m, unlike h_ef
+    # above. Reusing h_ef (the larger, base-referenced value) here would let a
+    # tall fuel stack's clipped centroid sit ABOVE the crown: at the HGV c4/c5
+    # anchor geometry (crown 5.2 m, top 4.0 m, base 1.0 m assumed) a 149 MW
+    # free burn gives centroid = 4.0 + 0.5*4.2 = 6.1 m under a 5.2 m ceiling.
+    # crown_height_m - fire_top_m is unaffected by this task (fire_top_m does
+    # not change), so this is the pre-existing expression, not a new one.
+    flame_clearance_m = geom.crown_height_m - fire_top_m
+    centroid = fire_top_m + 0.5 * min(flame, flame_clearance_m)
     c_f = load_calibration()["thermal"]["flame_length_coefficient"]["value"]
-    tip = c_f * max(flame - h_ef, 0.0)  # flame that cannot rise is deflected downstream
+    tip = c_f * max(flame - flame_clearance_m, 0.0)  # flame that cannot rise is deflected downstream
     return ThermalField(ceiling_excess_k=excess, strat_factor=strat, ambient_c=ambient_c,
                         height_m=geom.crown_height_m, hrr_kw=hrr_kw,
                         radiative_fraction=radiative_fraction(fire_model),

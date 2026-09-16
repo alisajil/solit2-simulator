@@ -49,6 +49,7 @@ FITTED_KEYS = (
     # One order of magnitude either side of the 0.05 starting value,
     # symmetric in log space (0.05/0.005 == 0.50/0.05 == 10).
     ("mist", "shielding_reference_loading_kgm3", 0.005, 0.50),
+    ("thermal", "ceiling_excess_coefficient", 0.3, 2.0),
 )
 
 # Relative finite-difference step for the numerical Jacobian.

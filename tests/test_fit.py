@@ -82,6 +82,19 @@ def test_apply_vector_keeps_the_rest_of_the_calibration_intact(restored_calibrat
                 assert after[group][name] == entry, f"{group}.{name} was not being fitted"
 
 
+def test_fitted_keys_has_fourteen_entries_including_the_ceiling_excess_coefficient(
+        restored_calibration):
+    """Task 18 adds thermal.ceiling_excess_coefficient, the fourteenth fitted
+    constant, and it must round-trip through current_vector/apply_vector like
+    every other one."""
+    assert len(fit.FITTED_KEYS) == 14
+    assert ("thermal", "ceiling_excess_coefficient", 0.3, 2.0) in fit.FITTED_KEYS
+
+    vector = fit.current_vector()
+    fit.apply_vector(vector)
+    assert fit.current_vector() == pytest.approx(vector)
+
+
 def test_apply_vector_is_visible_to_the_memoised_loader(restored_calibration):
     """A fit that wrote the file but left the cached dict in place would move
     nothing at all, and every residual would come back identical."""

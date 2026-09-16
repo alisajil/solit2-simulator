@@ -44,6 +44,7 @@ class _Scene:
     envelope: mist_mod.FuelEnvelope
     model: fire_mod.FireModel
     fire_top_m: float
+    fire_base_m: float
     h_ef_m: float
     ambient_c: float
     air_m3s: float
@@ -56,6 +57,7 @@ def _build_scene(design: Design, section: str, velocity_ms: float) -> _Scene:
     geom = section_geometry(scoped)
     fire_y = scoped.fire.lane_centre_offset_from_wall_m - geom.road_width_m / 2.0
     fire_top = scoped.fire.footprint.top_height_m
+    fire_base = scoped.fire.footprint.base_height_m
     return _Scene(
         design=scoped,
         geom=geom,
@@ -65,6 +67,10 @@ def _build_scene(design: Design, section: str, velocity_ms: float) -> _Scene:
                                         mist_mod.flank_reach_m(fire_top)),
         model=fire_mod.build_model(scoped),
         fire_top_m=fire_top,
+        fire_base_m=fire_base,
+        # The linear-heat detector's own Alpert ceiling-jet correlation is a
+        # separate quantity from thermal.field()'s Li & Ingason h_ef and is out
+        # of scope for Task 18: unchanged, still fuel-top-referenced.
         h_ef_m=geom.crown_height_m - fire_top,
         ambient_c=scoped.tunnel.ambient_temp_c,
         air_m3s=geom.free_area_m2 * velocity_ms,
@@ -213,7 +219,7 @@ def run_once(design: Design, section: str, velocity_ms: float) -> RunTrace:
         flow_fraction = _flow_fraction(scene.design.zones, events, state.t_s)
 
         field = thermal.field(scene.geom, scene.model, state, vent, mist, scene.fire_top_m,
-                              scene.design.fire.footprint.length_m,
+                              scene.fire_base_m, scene.design.fire.footprint.length_m,
                               scene.design.fire.footprint.width_m, scene.ambient_c)
         mist = mist_mod.evaluate(scene.design, scene.geom, scene.positions, scene.envelope,
                                  scene.fire_top_m, vent.u_eff_ms, field.ceiling_excess_k,

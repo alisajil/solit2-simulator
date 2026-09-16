@@ -1,3 +1,4 @@
+import copy
 import math
 import pytest
 from solit2.engines.reduced.geometry import SectionGeometry
@@ -7,6 +8,9 @@ BORE = SectionGeometry("bored", 10.146, 7.625, 70.29, "circle", 5.5, 2.125)
 # HGV load 8.4 x 2.4 m, top 4.0 m above the carriageway
 B_FO = thermal.equivalent_radius_m(8.4, 2.4)
 H_EF = 7.625 - 4.0
+# The SOLIT2 Annex 7 test tunnel: 5.2 m crown, the geometry the c4/c5/c6
+# anchors and Task 18's own worked examples are stated against.
+TEST_TUNNEL = SectionGeometry("test", 9.5, 5.2, 48.0, "box")
 
 
 def test_equivalent_radius_of_the_hgv_footprint():
@@ -82,11 +86,17 @@ def test_field_reports_breathing_height_temperatures_in_the_annex2_range():
                         pools_remaining=0, wet_time_s=0.0)
     vent = evaluate(BORE, 4.5, fire.convective_kw(model, 50.0))
     f = thermal.field(BORE, model, st, vent, MistEffect.none(),
-                      fire_top_m=4.0, fire_length_m=8.4, fire_width_m=2.4, ambient_c=30.0)
+                      fire_top_m=4.0, fire_base_m=1.0, fire_length_m=8.4,
+                      fire_width_m=2.4, ambient_c=30.0)
     # SOLIT2 Annex 2 suppressed Class A: D15 50-100 C, D100 50-65 C
     assert 50.0 < f.gas_temp_c(15.0, 1.8) < 130.0
     assert 40.0 < f.gas_temp_c(100.0, 1.8) < 90.0
-    assert f.ceiling_temp_c(0.0) > 500.0
+    # Task 18 raised h_ef for this tall-fuel fixture from 3.625 m (crown - fuel
+    # top) to 6.625 m (crown - assumed fuel base), which lowers the ceiling
+    # excess this un-fitted correlation reports; 424 C replaces the pre-fix
+    # figure here. Still comfortably hotter than the D15 breathing-height
+    # range above, which is the sanity check this line is making.
+    assert f.ceiling_temp_c(0.0) > 300.0
 
 
 def test_stratification_blend_is_anchored_at_breathing_height():
@@ -102,7 +112,8 @@ def test_stratification_blend_is_anchored_at_breathing_height():
                         pools_remaining=0, wet_time_s=0.0)
     vent = evaluate(BORE, 4.5, fire.convective_kw(model, 50.0))
     f = thermal.field(BORE, model, st, vent, MistEffect.none(),
-                      fire_top_m=4.0, fire_length_m=8.4, fire_width_m=2.4, ambient_c=30.0)
+                      fire_top_m=4.0, fire_base_m=1.0, fire_length_m=8.4,
+                      fire_width_m=2.4, ambient_c=30.0)
 
     x = 15.0
     excess = f.ceiling_temp_c(x) - f.ambient_c
@@ -128,11 +139,15 @@ def test_structure_exposure_length_is_zero_below_the_threshold_and_finite_above_
                             pools_remaining=0, wet_time_s=0.0)
         vent = evaluate(BORE, 4.5, fire.convective_kw(model, hrr_mw))
         return thermal.field(BORE, model, st, vent, MistEffect.none(), fire_top_m=4.0,
-                             fire_length_m=8.4, fire_width_m=2.4, ambient_c=30.0)
+                             fire_base_m=1.0, fire_length_m=8.4, fire_width_m=2.4,
+                             ambient_c=30.0)
 
     threshold = 500.0
     span_m = 100.0 - -35.0 + thermal.STRUCTURE_SCAN_STEP_M
-    cool, hot = _field(2.0), _field(30.0)
+    # 30 MW cleared this threshold pre-Task-18; the corrected (larger) h_ef
+    # for this tall-fuel fixture needs a bigger fire to do the same -- 70 MW
+    # gives 612 C at x=0 against the un-fitted correlation.
+    cool, hot = _field(2.0), _field(70.0)
     assert cool.ceiling_temp_c(0.0) < threshold < hot.ceiling_temp_c(0.0)
 
     assert thermal.exposure_length_m(cool, threshold, -35.0, 100.0) == 0.0
@@ -151,13 +166,18 @@ def test_structure_exposure_length_grows_with_the_fire():
     d = Design.load("examples/designs/road-tunnel-twin-bore.json")
     model = fire.build_model(d)
     lengths = []
-    for hrr_mw in (30.0, 40.0, 50.0):
+    # Task 18's corrected h_ef needs a hotter range than 30/40/50 MW to clear
+    # the 500 C threshold at all for this tall-fuel fixture (see the previous
+    # test); 70/90/110 MW keeps this test's own point, that a bigger fire
+    # never holds less tunnel above threshold, meaningful again.
+    for hrr_mw in (70.0, 90.0, 110.0):
         st = fire.FireState(t_s=900.0, hrr_mw=hrr_mw, hrr_free_mw=hrr_mw,
                             energy_released_mj=30_000.0, suppression=0.0,
                             pools_remaining=0, wet_time_s=0.0)
         vent = evaluate(BORE, 4.5, fire.convective_kw(model, hrr_mw))
         f = thermal.field(BORE, model, st, vent, MistEffect.none(), fire_top_m=4.0,
-                          fire_length_m=8.4, fire_width_m=2.4, ambient_c=30.0)
+                          fire_base_m=1.0, fire_length_m=8.4, fire_width_m=2.4,
+                          ambient_c=30.0)
         lengths.append(thermal.exposure_length_m(f, 500.0, -35.0, 100.0))
     assert lengths == sorted(lengths)
     assert lengths[0] < lengths[-1]
@@ -179,7 +199,8 @@ def test_exposure_length_saturates_at_the_instrumented_span():
                         pools_remaining=0, wet_time_s=0.0)
     vent = evaluate(BORE, 4.5, fire.convective_kw(model, 150.0))
     f = thermal.field(BORE, model, st, vent, MistEffect.none(), fire_top_m=4.0,
-                      fire_length_m=8.4, fire_width_m=2.4, ambient_c=30.0)
+                      fire_base_m=1.0, fire_length_m=8.4, fire_width_m=2.4,
+                      ambient_c=30.0)
     span_m = 100.0 - -35.0 + thermal.STRUCTURE_SCAN_STEP_M
     assert thermal.exposure_length_m(f, 500.0, -35.0, 100.0) == pytest.approx(span_m)
 
@@ -193,3 +214,122 @@ def test_exposure_length_rejects_a_non_positive_scan_step():
 _ZERO_FIELD = thermal.ThermalField(
     ceiling_excess_k=0.0, strat_factor=0.1, ambient_c=30.0, height_m=7.625,
     hrr_kw=0.0, radiative_fraction=0.3, flame_centroid_z_m=4.0, flame_tip_x_m=0.0)
+
+
+def _tall_fuel_scene(hrr_mw):
+    """c4/c5-shaped geometry: HGV footprint, 5.2 m crown, 4.0 m fuel top,
+    1.0 m assumed fuel base -- the tall-fuel case Task 18's defect lived in.
+    Returns (geom, model, fire_state, vent_state)."""
+    from solit2.engines.reduced.ventilation import evaluate
+    from solit2.engines.reduced import fire
+    from solit2.schema.design import Design
+
+    d = Design.load("examples/designs/road-tunnel-twin-bore.json")
+    model = fire.build_model(d)
+    st = fire.FireState(t_s=60.0, hrr_mw=hrr_mw, hrr_free_mw=hrr_mw,
+                        energy_released_mj=1_000.0, suppression=0.0,
+                        pools_remaining=0, wet_time_s=0.0)
+    vent = evaluate(TEST_TUNNEL, 2.25, fire.convective_kw(model, hrr_mw))
+    return TEST_TUNNEL, model, st, vent
+
+
+def test_effective_height_is_referenced_to_the_fuel_base_not_the_fuel_top(monkeypatch):
+    """Task 18 defect, asserted directly: h_ef must reach the correlation as
+    crown - fire_base (5.2 - 1.0 = 4.2 m), not the pre-fix crown - fire_top
+    (5.2 - 4.0 = 1.2 m). This is the defect itself, so the assertion is on the
+    height reaching the correlation, not on a temperature it produces."""
+    from solit2.engines.reduced.state import MistEffect
+
+    geom, model, st, vent = _tall_fuel_scene(30.0)
+    seen = {}
+    real = thermal.max_ceiling_excess_k
+
+    def _spy(hrr_kw, q_conv_kw, u_ms, b_fo_m, h_ef_m):
+        seen["h_ef_m"] = h_ef_m
+        return real(hrr_kw, q_conv_kw, u_ms, b_fo_m, h_ef_m)
+
+    monkeypatch.setattr(thermal, "max_ceiling_excess_k", _spy)
+
+    thermal.field(geom, model, st, vent, MistEffect.none(),
+                 fire_top_m=4.0, fire_base_m=1.0, fire_length_m=8.4,
+                 fire_width_m=2.4, ambient_c=20.0)
+
+    assert seen["h_ef_m"] == pytest.approx(4.2)
+    assert seen["h_ef_m"] != pytest.approx(1.2)
+
+
+def test_tall_fuel_ceiling_excess_no_longer_saturates_across_the_hrr_range():
+    """The saturation test: pre-fix, H_ef=1.2 m sends both a measured 30 MW and
+    a free-burn 149 MW fire straight into the 1350 K cap, so the optimiser
+    sees the same answer regardless of HRR. Post-fix (H_ef=4.2 m) they must
+    differ, restoring the gradient Task 17c found missing."""
+    from solit2.engines.reduced.state import MistEffect
+
+    def _excess(hrr_mw):
+        geom, model, st, vent = _tall_fuel_scene(hrr_mw)
+        f = thermal.field(geom, model, st, vent, MistEffect.none(),
+                          fire_top_m=4.0, fire_base_m=1.0, fire_length_m=8.4,
+                          fire_width_m=2.4, ambient_c=20.0)
+        return f.ceiling_excess_k
+
+    low, high = _excess(30.0), _excess(149.0)
+    assert low != pytest.approx(high)
+    assert low < high
+
+
+def test_flat_fuel_ceiling_excess_is_barely_disturbed_by_the_fix():
+    """Corroborating case: a pool sits almost on the floor (base 0.0, top
+    0.4), so referencing h_ef to the base instead of the top moves it only
+    from 4.8 m to 5.2 m -- the fix must be confined to tall fuel and leave c6,
+    the one anchor that already passes, essentially undisturbed.
+
+    `fire_base_m=fire_top_m` reproduces the pre-fix formula exactly, since
+    h_ef = crown - fire_base_m then collapses to crown - fire_top_m, so no
+    separate "before" code path needs to be kept around to make this
+    comparison."""
+    from solit2.engines.reduced.state import MistEffect
+    from solit2.engines.reduced.ventilation import evaluate
+    from solit2.engines.reduced import fire
+    from solit2.schema.design import Design
+
+    d = Design.load("examples/designs/road-tunnel-twin-bore.json")
+    model = fire.build_model(d)
+    st = fire.FireState(t_s=60.0, hrr_mw=20.0, hrr_free_mw=20.0,
+                        energy_released_mj=1_000.0, suppression=0.0,
+                        pools_remaining=0, wet_time_s=0.0)
+    vent = evaluate(TEST_TUNNEL, 2.0, fire.convective_kw(model, 20.0))
+
+    before = thermal.field(TEST_TUNNEL, model, st, vent, MistEffect.none(),
+                           fire_top_m=0.4, fire_base_m=0.4, fire_length_m=17.5,
+                           fire_width_m=1.6, ambient_c=20.0)
+    after = thermal.field(TEST_TUNNEL, model, st, vent, MistEffect.none(),
+                         fire_top_m=0.4, fire_base_m=0.0, fire_length_m=17.5,
+                         fire_width_m=1.6, ambient_c=20.0)
+
+    relative_change = abs(after.ceiling_excess_k - before.ceiling_excess_k) / before.ceiling_excess_k
+    assert relative_change < 0.15
+
+
+def test_ceiling_excess_coefficient_scales_linearly_below_the_cap_and_still_caps_above_it(monkeypatch):
+    """The new fitted constant must be a plain multiplier on the correlation's
+    output applied before the cap: doubling it doubles a sub-cap excess, and a
+    large enough fire still comes back at exactly the cap regardless."""
+    base_cal = copy.deepcopy(thermal.load_calibration())
+
+    def _at_coefficient(value):
+        cal = copy.deepcopy(base_cal)
+        cal["thermal"]["ceiling_excess_coefficient"]["value"] = value
+        monkeypatch.setattr(thermal, "load_calibration", lambda: cal)
+
+    _at_coefficient(1.0)
+    unscaled = thermal.max_ceiling_excess_k(hrr_kw=5_000, q_conv_kw=3_250,
+                                            u_ms=0.3, b_fo_m=B_FO, h_ef_m=H_EF)
+
+    _at_coefficient(2.0)
+    doubled = thermal.max_ceiling_excess_k(hrr_kw=5_000, q_conv_kw=3_250,
+                                           u_ms=0.3, b_fo_m=B_FO, h_ef_m=H_EF)
+    assert doubled == pytest.approx(2.0 * unscaled, rel=0.01)
+
+    capped = thermal.max_ceiling_excess_k(hrr_kw=150_000, q_conv_kw=97_500,
+                                          u_ms=4.5, b_fo_m=B_FO, h_ef_m=H_EF)
+    assert capped == pytest.approx(base_cal["thermal"]["ceiling_temp_cap_k"]["value"])

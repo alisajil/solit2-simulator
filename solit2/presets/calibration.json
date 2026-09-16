@@ -20,7 +20,9 @@
   },
   "thermal": {
     "flame_length_coefficient": {"value": 4.3, "anchor": "none", "note": "C_f, Ingason & Li, Tunnel Fire Dynamics ch.11"},
-    "ceiling_temp_cap_k": {"value": 1350.0, "anchor": "none"}
+    "ceiling_temp_cap_k": {"value": 1350.0, "anchor": "none"},
+    "ceiling_excess_coefficient": {"value": 1.0, "anchor": "c4,c5,c6",
+      "note": "scale on the Li & Ingason maximum ceiling excess, absorbing correlation magnitude error and the assumed fire-base height; 1.0 is the unscaled correlation"}
   },
   "mist": {
     "eta_max": {"value": 0.9783912110477297, "anchor": "c4,c5", "note": "SOLIT2 held a 150 MW potential load to ~30 MW, so the ceiling is at least 0.80"},

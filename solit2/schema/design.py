@@ -49,6 +49,21 @@ class Footprint(Frozen):
     length_m: float = Field(gt=0)
     width_m: float = Field(gt=0)
     top_height_m: float = Field(gt=0)
+    # Li & Ingason's effective tunnel height is measured from the BASE of the
+    # fire source to the ceiling, not from the fuel top -- see thermal.field().
+    # `provenance` records whether a value is a measured figure or, like the
+    # HGV mock-up's load-platform height, an engineering assumption.
+    base_height_m: float = Field(ge=0)
+    provenance: str | None = None
+
+    @model_validator(mode="after")
+    def _base_below_top(self) -> "Footprint":
+        if self.base_height_m >= self.top_height_m:
+            raise ValueError(
+                f"base_height_m={self.base_height_m} must be less than "
+                f"top_height_m={self.top_height_m}: the fuel cannot start above its own top"
+            )
+        return self
 
 
 class Pool(Frozen):

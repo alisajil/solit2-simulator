@@ -6,7 +6,7 @@
   "incubation_s": 0.0,
   "covered": false,
   "pools": {"count": 7, "length_m": 2.5, "width_m": 1.6, "fuel": "diesel"},
-  "footprint": {"length_m": 17.5, "width_m": 1.6, "top_height_m": 0.4},
+  "footprint": {"length_m": 17.5, "width_m": 1.6, "top_height_m": 0.4, "base_height_m": 0.0},
   "lane_centre_offset_from_wall_m": 3.4,
   "target_distance_m": 5.0
 }
