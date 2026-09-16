@@ -5,33 +5,33 @@
     "reference_cases": "SOLIT2 Engineering Guidance Annex 2, full-scale fire tests c4 (Class A with cover), c5 (Class A without cover) and c6 (Class B diesel pools)."
   },
   "fire": {
-    "suppression_response_s": {"value": 203.788037912828, "anchor": "c4,c5", "note": "tau_s in S(t)"},
-    "cover_shielding_factor": {"value": 3.165353855527469, "anchor": "c4", "note": "PVC tarpaulin delays suppression"},
+    "suppression_response_s": {"value": 218.25516842667466, "anchor": "c4,c5", "note": "tau_s in S(t)"},
+    "cover_shielding_factor": {"value": 1.2590081171525536, "anchor": "c4", "note": "PVC tarpaulin delays suppression"},
     "decay_energy_fraction": {"value": 0.8, "anchor": "none", "note": "fraction burnt before linear decay"},
-    "pool_ventilation_factor": {"value": 1.3986371022512163, "anchor": "c6", "note": "tunnel wind enhances pool burning"},
+    "pool_ventilation_factor": {"value": 1.3972376796656882, "anchor": "c6", "note": "tunnel wind enhances pool burning"},
     "pool_ramp_s": {"value": 150.0, "anchor": "c6", "note": "Annex 2: pools need 2-3 min to develop"},
     "pool_burning_rate_reduction": {"value": 0.55, "anchor": "c6"},
     "pool_extinction_flux_mm_min": {"value": 1.8, "anchor": "c6"},
     "pool_extinction_time_s": {"value": 45.0, "anchor": "c6", "note": "per pool; Annex 2: extinguished pool by pool"}
   },
   "ventilation": {
-    "throttling_coefficient": {"value": 0.18132017585443902, "anchor": "c4,c5", "note": "Annex 2 fig 10/19: 3 -> 2 m/s"},
+    "throttling_coefficient": {"value": 0.08939110359935876, "anchor": "c4,c5", "note": "Annex 2 fig 10/19: 3 -> 2 m/s"},
     "critical_velocity_height": {"value": "crown", "anchor": "none", "note": "H in Li-Ingason; mean height gives ~5% lower u_c"}
   },
   "thermal": {
     "flame_length_coefficient": {"value": 4.3, "anchor": "none", "note": "C_f, Ingason & Li, Tunnel Fire Dynamics ch.11"},
     "ceiling_temp_cap_k": {"value": 1350.0, "anchor": "none"},
-    "ceiling_excess_coefficient": {"value": 0.6158471691096088, "anchor": "c4,c5,c6", "note": "scale on the Li & Ingason maximum ceiling excess, absorbing correlation magnitude error and the assumed fire-base height; 1.0 is the unscaled correlation"}
+    "ceiling_excess_coefficient": {"value": 0.5358088362545118, "anchor": "c4,c5,c6", "note": "scale on the Li & Ingason maximum ceiling excess, absorbing correlation magnitude error and the assumed fire-base height; 1.0 is the unscaled correlation"}
   },
   "mist": {
-    "eta_max": {"value": 0.9799922911806955, "anchor": "c4,c5", "note": "SOLIT2 held a 150 MW potential load to ~30 MW, so the ceiling is at least 0.80"},
-    "w_ref_mm_min": {"value": 0.3000064135952978, "anchor": "none", "note": "basis removed with c1-c3; refit required. Was set against reference cases c1, c2 and c3, none of which survive in validation/anchors, so this value currently rests on nothing and is carried unchanged only to avoid silently altering the physics."},
-    "chi_cool_max": {"value": 0.6997339789811925, "anchor": "none", "note": "basis removed with c3; refit required. This value has no surviving reference case and is carried unchanged pending a refit against c4-c6."},
-    "evaporation_k_ref_m2s": {"value": 1.0029183277758833e-08, "anchor": "none", "note": "basis removed with c3; refit required. d-squared law constant at the reference gas temperature rise; a 100 um drop evaporates in ~0.1 s at that rise and essentially not at all in cool air. The magnitude is physically reasonable but the specific value was set against c3, which no longer exists."},
+    "eta_max": {"value": 0.971700468127964, "anchor": "c4,c5", "note": "SOLIT2 held a 150 MW potential load to ~30 MW, so the ceiling is at least 0.80"},
+    "w_ref_mm_min": {"value": 0.30883699150971505, "anchor": "none", "note": "basis removed with c1-c3; refit required. Was set against reference cases c1, c2 and c3, none of which survive in validation/anchors, so this value currently rests on nothing and is carried unchanged only to avoid silently altering the physics."},
+    "chi_cool_max": {"value": 0.6995344825455589, "anchor": "none", "note": "basis removed with c3; refit required. This value has no surviving reference case and is carried unchanged pending a refit against c4-c6."},
+    "evaporation_k_ref_m2s": {"value": 1.0233647849295975e-08, "anchor": "none", "note": "basis removed with c3; refit required. d-squared law constant at the reference gas temperature rise; a 100 um drop evaporates in ~0.1 s at that rise and essentially not at all in cool air. The magnitude is physically reasonable but the specific value was set against c3, which no longer exists."},
     "evaporation_reference_delta_t_k": {"value": 600.0, "anchor": "none", "note": "basis removed with c3; refit required. Paired with evaporation_k_ref_m2s and set against the same deleted reference case."},
-    "flank_reach_factor": {"value": 0.5688959914985411, "anchor": "c4,c5", "note": "lateral band, as a multiple of fuel height, in which descending spray strikes the fuel's sides"},
-    "flank_efficiency": {"value": 0.9999956770641281, "anchor": "c4,c5", "note": "effectiveness of water striking a vertical face relative to water landing on the top face"},
-    "shielding_reference_loading_kgm3": {"value": 0.005002948243855543, "anchor": "c4,c5", "note": "water mass loading at which the droplet's local environment departs materially from the ambient plume; below it a droplet is effectively alone, above it the spray core is partly self-shielded. The starting value and the fitted bounds are an order-of-magnitude engineering guess, NOT a literature figure."},
+    "flank_reach_factor": {"value": 0.8562331792022675, "anchor": "c4,c5", "note": "lateral band, as a multiple of fuel height, in which descending spray strikes the fuel's sides"},
+    "flank_efficiency": {"value": 0.9962325950087512, "anchor": "c4,c5", "note": "effectiveness of water striking a vertical face relative to water landing on the top face"},
+    "shielding_reference_loading_kgm3": {"value": 0.009730747559601493, "anchor": "c4,c5", "note": "water mass loading at which the droplet's local environment departs materially from the ambient plume; below it a droplet is effectively alone, above it the spray core is partly self-shielded. The starting value and the fitted bounds are an order-of-magnitude engineering guess, NOT a literature figure."},
     "shielding_floor": {"value": 0.05, "anchor": "none", "note": "minimum shield factor at very high loading; the spray still entrains hot ambient gas so full insulation from it is not physical. Deliberately NOT fitted: it is a fixed modelling assumption, and adding it to the search space would grow it past what a twenty-minute budget can usefully explore for a constant this unlikely to be identifiable on its own."}
   }
 }
