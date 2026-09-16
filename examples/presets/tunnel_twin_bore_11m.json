@@ -1,13 +1,14 @@
 {
   "preset": "twin_bore_11m",
-  "note": "ILLUSTRATION ONLY, not a default and not measured data. A twin-bore road tunnel, 11.0 m internal diameter, carriageway 2.125 m below the bore centre, 5.5 m clearance. Replace every figure here with the geometry of the tunnel actually being assessed.",
+  "note": "ILLUSTRATION ONLY, not a default and not measured data. A twin-bore road tunnel, 11.0 m internal diameter, carriageway 2.125 m below the bore centre, 5.5 m clearance, each bore a round 4 km long. `tubes` is 2 because the system is installed in both bores, so cost quantities are priced for 2 x length_m; `tube` still names the single bore a run models. Replace every figure here with the geometry of the tunnel actually being assessed.",
   "tube": "LHS",
   "section": "bored",
   "shape": "circle",
   "internal_diameter_m": 11.0,
   "deck_below_centre_m": 2.125,
   "clearance_m": 5.5,
-  "length_m": 4240.0,
+  "length_m": 4000.0,
+  "tubes": 2,
   "gradient_pct": 0.3,
   "ambient_temp_c": 30.0,
   "ambient_rh_pct": 75.0

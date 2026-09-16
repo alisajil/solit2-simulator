@@ -7,6 +7,7 @@ engineering limits are judged separately from the standard's, and that the
 engine states in its own output what its constants rest on.
 """
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -19,6 +20,7 @@ from solit2.schema.presets import EXAMPLE_PRESET_DIR, PRESET_DIR, load_preset
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PACKAGE_DIR = REPO_ROOT / "solit2"
+EXAMPLES_DIR = REPO_ROOT / "examples"
 EXAMPLE_DESIGN = "examples/designs/road-tunnel-twin-bore.json"
 
 
@@ -250,3 +252,50 @@ def test_every_anchor_the_calibration_cites_still_exists():
     assert not dangling, (
         "the calibration basis and the validation basis disagree:\n  "
         + "\n  ".join(dangling))
+
+
+# --- test 8: retired project numbers must not creep back ---------------------
+
+# A vendor's or a project's NAME is caught by test 2. A number is not, and a
+# number is how the last project assumptions survived: two tube lengths priced
+# every design against one bore. They are read off the design now, so neither
+# literal may reappear anywhere the tool ships -- in code, in a comment, in a
+# shipped preset or in a worked example someone will copy.
+
+def _scanned_files() -> list[Path]:
+    return sorted(p for root in (PACKAGE_DIR, EXAMPLES_DIR) for p in root.rglob("*")
+                  if p.is_file() and not SKIP_DIRS & set(p.parts))
+
+
+def _lines_matching(pattern: str) -> list[str]:
+    hits = []
+    for path in _scanned_files():
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except (UnicodeDecodeError, OSError):
+            continue  # not text; nothing to read a number out of
+        for number, line in enumerate(lines, start=1):
+            if re.search(pattern, line):
+                hits.append(f"{path.relative_to(REPO_ROOT)}:{number}: {line.strip()!r}")
+    return hits
+
+
+# Not preceded by a digit or a decimal point, so 14240 and 0.4240 are not hits.
+RETIRED_TUBE_LENGTHS = r"(?<![\d.])42[46]0(?!\d)"
+
+
+def test_the_scan_covers_both_the_package_and_the_examples():
+    """A guard on the guard: an empty file list would make the tests below vacuous."""
+    scanned = _scanned_files()
+    assert len(scanned) > 20
+    assert any(EXAMPLES_DIR in p.parents for p in scanned)
+    assert any(PACKAGE_DIR in p.parents for p in scanned)
+
+
+def test_no_retired_tube_length_survives_in_the_package_or_the_examples():
+    offences = _lines_matching(RETIRED_TUBE_LENGTHS)
+    assert not offences, (
+        "4240 m and 4260 m were one project's two tube lengths, and they used to "
+        "decide the zone count and every pipe run of every design. Cost "
+        "quantities come from tunnel.length_m and tunnel.tubes now:\n  "
+        + "\n  ".join(offences))

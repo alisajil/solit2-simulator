@@ -1,14 +1,15 @@
 """Relative installed-cost index for a candidate design.
 
-Quantities cover both tubes. The index is normalised against a fixed reference
-installation so that reference scores 1.00; only ratios between designs are
-meaningful, and the absolute number carries no currency and no endorsement.
+Quantities cover `tunnel.length_m` in each of the design's `tunnel.tubes`
+bores. The index is normalised against a fixed reference installation so that
+reference scores 1.00; only ratios between designs are meaningful, and the
+absolute number carries no currency and no endorsement.
 
-NOTE ON SCOPE: the reference installation's tube lengths and total below are
-fixed constants inherited from the worked example this tool was first built
-around. They are a normalisation baseline, not an assessment input, but they
-are not derived from the design being evaluated either, so a cost index is
-comparable between designs and is NOT a statement about any real installation.
+NOTE ON SCOPE: every quantity below is derived from the design being
+evaluated, so it describes the tunnel the user actually described. The one
+fixed element left is BASELINE_TOTAL, the constant the totals are divided by.
+It sets the scale of the ratio and nothing else, so a cost index is comparable
+between designs and is still NOT a statement about any real installation.
 """
 from __future__ import annotations
 
@@ -20,10 +21,10 @@ from solit2.engines.reduced.hydraulics import HydraulicsResult
 from solit2.schema.design import Design
 
 _WEIGHTS = json.loads((Path(__file__).resolve().parents[2] / "presets" / "cost_weights.json").read_text())
-# The reference installation's two tubes. A fixed normalisation baseline, not
-# the geometry of the design under evaluation.
-TUBE_LENGTHS_M = (4240.0, 4260.0)
-# Cost of the reference installation in the units above; see the cost tests.
+# Cost of the reference installation in the units above: the denominator that
+# turns a total into an index. Any design, in any tunnel, is indexed against
+# this one number -- it sets the scale of the ratio and decides no quantity of
+# the design being evaluated. See the cost tests.
 BASELINE_TOTAL = 128_535.82945588144
 
 
@@ -43,12 +44,13 @@ class CostResult:
 
 def cost_index(design: Design, hyd: HydraulicsResult) -> CostResult:
     zone_len = design.zones.section_length_m
-    zones = sum(round(length / zone_len) for length in TUBE_LENGTHS_M)
+    tubes = design.tunnel.tubes
+    zones = tubes * round(design.tunnel.length_m / zone_len)
     heads = zones * design.heads_per_zone
     rows = design.nozzles.mounting.rows
-    total_length = sum(TUBE_LENGTHS_M)
+    total_length = design.tunnel.length_m * tubes
 
-    ring_main_m = 2.0 * total_length          # one main each side of both tubes
+    ring_main_m = 2.0 * total_length          # one main each side of every tube
     zone_header_m = zones * zone_len / rows   # header feeds the gridded rows
     row_pipe_m = rows * total_length
     pumps = hyd.pumps_duty + hyd.pumps_standby

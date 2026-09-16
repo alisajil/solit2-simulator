@@ -40,6 +40,11 @@ class Tunnel(Frozen):
     area_m2: float | None = None
     clearance_m: float = 5.5
     length_m: float
+    # How many bores of this length the system is installed in, so quantities
+    # can be priced for the whole tunnel: a twin-bore road tunnel is 2, a single
+    # bore or a test gallery is 1. `tube` names which bore a run models; `tubes`
+    # counts how many of them the installation covers.
+    tubes: int = Field(default=1, ge=1, le=4)
     gradient_pct: float = 0.0
     ambient_temp_c: float = 30.0
     ambient_rh_pct: float = 75.0
