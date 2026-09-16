@@ -1,4 +1,3 @@
-import math
 import pytest
 from solit2.schema.design import Design
 from solit2.engines.reduced.geometry import section_geometry

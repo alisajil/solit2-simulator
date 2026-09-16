@@ -457,9 +457,14 @@ def test_shielding_does_not_widen_the_geometry_cache_key():
 
     hit_rate = 100.0 * (counts["lookups"] - counts["misses"]) / counts["lookups"]
     assert counts["lookups"] > 1000, "the call must exercise the cache properly"
-    assert abs(hit_rate - TASK_16_CACHE_HIT_RATE_PCT) <= 1.0, (
-        f"hit rate {hit_rate:.2f}% against Task 16's "
-        f"{TASK_16_CACHE_HIT_RATE_PCT}%: shielding widened the cache key")
+    # One-sided on purpose. The claim is that the key did not get WIDER, so the
+    # hit rate must not FALL below what Task 16 measured. A higher rate means
+    # more sharing, which is the good direction -- the size distribution pushed
+    # it to ~99.6% by flying several bins through one cached geometry, and a
+    # two-sided band rejected that improvement as if it were a regression.
+    assert hit_rate >= TASK_16_CACHE_HIT_RATE_PCT - 1.0, (
+        f"hit rate {hit_rate:.2f}% fell below Task 16's "
+        f"{TASK_16_CACHE_HIT_RATE_PCT}% floor: something widened the cache key")
 
 
 # --- task 24: the suppression law's dependence on the fire it is fighting -----
@@ -604,8 +609,20 @@ def test_hardening_is_what_stops_the_law_collapsing_into_a_switch():
 # this change: the single 90 um drop, at the real calibration, over the gas
 # excess band where it collapsed. 275 -> 350 K is a 108x fall and everything
 # above it sits on the FULLY_EVAPORATED_UM floor of 0.013 mm/min.
+# Recorded on the engine as it stood BEFORE the size distribution, at the
+# calibration of that moment. Every one of these depends on constants the fit
+# moves -- `evaporation_k_ref_m2s` alone went 1.02e-8 -> 4.21e-8 at the refit
+# that followed -- so the table is a record of the OLD MODEL'S SHAPE, not of the
+# current engine's numbers, and the equivalence test below pins the calibration
+# it was taken at rather than comparing against whatever is live.
 SINGLE_DROP_W_FUEL_MM_MIN = {0.0: 9.56115, 275.0: 1.41918, 300.0: 0.13941,
                              325.0: 0.01274, 350.0: 0.01312}
+SINGLE_DROP_CALIBRATION = {"evaporation_k_ref_m2s": 1.0232541092292674e-08,
+                           "w_ref_mm_min": 0.3088315203989264,
+                           "eta_max": 0.971705608998945,
+                           "flank_efficiency": 0.9962348912482406,
+                           "flank_reach_factor": 0.8564404195793335,
+                           "shielding_reference_loading_kgm3": 0.009708329485589995}
 # No 25 K step of ceiling gas temperature may take more than this share of the
 # delivery with it. The single drop took 90% in one step twice over; a spray
 # whose coarse tail is still arriving after its fines have gone cannot.
@@ -628,11 +645,21 @@ def _c4_delivery(gas_excess_k, bin_count=None):
         mist._GEOMETRY_CACHE.clear()
 
 
-def test_one_size_bin_is_the_previous_single_drop_model_exactly():
+def test_one_size_bin_is_the_previous_single_drop_model_exactly(monkeypatch):
     """The change has to be a strict generalisation, so that any difference in
     an anchor is attributable to the SPECTRUM and to nothing else. Pinned
     against `w_fuel` measured on the engine as it stood before this task, not
     against a value this code produced."""
+    import copy as _copy
+    from solit2.schema.presets import load_calibration as _load
+    from solit2.engines.reduced import mist as _mist
+    cal = _copy.deepcopy(_load())
+    cal["mist"].update({k: {**cal["mist"][k], "value": v}
+                        for k, v in SINGLE_DROP_CALIBRATION.items()})
+    monkeypatch.setattr(_mist, "load_calibration", lambda: cal)
+    monkeypatch.setattr(droplet, "load_calibration", lambda: cal)
+    _mist._GEOMETRY_CACHE.clear()
+
     for gas_excess_k, expected in SINGLE_DROP_W_FUEL_MM_MIN.items():
         got = _c4_delivery(gas_excess_k, bin_count=1).w_fuel_mm_min
         # The recorded values carry five decimal places, so that is the tightest
