@@ -63,8 +63,33 @@ def test_envelope_completes_in_a_few_seconds():
 
 
 def test_thin_critical_velocity_margin_is_warned_about():
-    result = envelope.run(Design.load(BASELINE))
-    assert any("critical velocity" in w for w in result.warnings)
+    """`_critical_velocity_warnings` is the mechanism Annex 7 relies on to flag
+    a design running close to backlayering. Built from a synthetic trace
+    rather than the baseline design's calibrated margin: whether the baseline
+    actually runs within `CRITICAL_VELOCITY_WARNING_MARGIN` of critical
+    velocity depends on the ventilation/thermal calibration, so asserting on
+    it directly would make this test track a calibration snapshot instead of
+    the warning logic.
+    """
+    from solit2.engines.reduced.state import MistEffect, RunTrace, StepRecord
+
+    def _step(u_eff_ms, u_critical_ms):
+        return StepRecord(
+            t_s=0.0, hrr_mw=50.0, hrr_free_mw=50.0, ceiling_temp_c=400.0,
+            lining_temp_c=690.0, pipe_temp_c=120.0, target_flux_kwm2=0.0,
+            u_eff_ms=u_eff_ms, u_critical_ms=u_critical_ms, backlayer_m=0.0,
+            water_lpm=0.0, pools_remaining=0, mist=MistEffect.none(), stations={})
+
+    margin = envelope.CRITICAL_VELOCITY_WARNING_MARGIN
+    u_critical_ms = 10.0
+    thin = RunTrace((_step(u_critical_ms * (1.0 + margin / 2), u_critical_ms),),
+                    {}, "bored", 3.0)
+    comfortable = RunTrace((_step(u_critical_ms * (1.0 + margin * 3), u_critical_ms),),
+                           {}, "bored", 4.5)
+
+    thin_warnings = envelope._critical_velocity_warnings(thin)
+    assert any("critical velocity" in w for w in thin_warnings)
+    assert envelope._critical_velocity_warnings(comfortable) == []
 
 
 def test_a_scenario_that_never_trips_the_detector_raises():

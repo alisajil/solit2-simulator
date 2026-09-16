@@ -176,26 +176,32 @@ def test_shielding_only_lands_the_reference_droplet_at_a_low_evaporation_constan
     """Test 4, continued -- the claim that matters for whether shielding can
     close Task 16's gap at all.
 
-    At the CURRENT evaporation constant, shielding the 90 um reference drop all
-    the way to the floor still does not land it: it dies at about 1.6 s into a
-    ~3.2 s fall. Only the two together -- the floor shield AND the bottom of
-    `evaporation_k_ref_m2s`'s fitted range -- get it to the fuel. Both constants
-    are needed, so a fit has a gradient in both; that is the whole point of the
-    new structure, and if this ever passes on shielding alone the bound has
-    moved and the report's reasoning no longer holds.
+    Floor-shielding the 90 um reference drop to 30 K (600 K * the shielding
+    floor) is not sufficient on its own: whether it lands also depends on
+    where `evaporation_k_ref_m2s` sits in its fitted range (validation/fit.py
+    FITTED_KEYS: [1e-8, 1e-6]). Comparing the two ends of that fitted range
+    directly -- rather than "today's calibrated value" against one hardcoded
+    bound -- is what keeps this test meaningful after a fit moves the constant
+    anywhere inside the range, including onto the lower bound itself, which is
+    where the current fit already sits (see calibration.json's provenance
+    note: this constant "did not move at all"). Both constants are needed, so
+    a fit has a gradient in both; that is the whole point of the new
+    structure, and if this ever passes at an order of magnitude above the
+    lower bound the claim no longer holds.
     """
     hot_k = 600.0
     floor_shielded = hot_k * _shielding_floor()
 
-    at_current = droplet.integrate(C4_SMD_UM, C4_LAUNCH_MS, 0.0, C4_DROP_HEIGHT_M,
-                                   2.25, gas_excess_k=floor_shielded)
-    assert not at_current.reached_target
+    def _at(k_ref):
+        cal = copy.deepcopy(load_calibration())
+        cal["mist"]["evaporation_k_ref_m2s"]["value"] = k_ref
+        monkeypatch.setattr(droplet, "load_calibration", lambda: cal)
+        return droplet.integrate(C4_SMD_UM, C4_LAUNCH_MS, 0.0, C4_DROP_HEIGHT_M,
+                                 2.25, gas_excess_k=floor_shielded)
 
-    cal = copy.deepcopy(load_calibration())
-    cal["mist"]["evaporation_k_ref_m2s"]["value"] = 1.0e-8   # the fitted lower bound
-    monkeypatch.setattr(droplet, "load_calibration", lambda: cal)
+    at_lower_bound = _at(1.0e-8)     # the fitted lower bound
+    at_ten_x_higher = _at(1.0e-7)    # one order of magnitude up, still inside the range
 
-    at_lower_bound = droplet.integrate(C4_SMD_UM, C4_LAUNCH_MS, 0.0, C4_DROP_HEIGHT_M,
-                                       2.25, gas_excess_k=floor_shielded)
     assert at_lower_bound.reached_target
     assert at_lower_bound.surviving_fraction > 0.5
+    assert not at_ten_x_higher.reached_target
