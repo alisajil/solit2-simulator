@@ -98,6 +98,11 @@ class _RecordingField:
         self.gas_temp_calls: list[tuple[float, float]] = []
         self.flux_calls: list[tuple[float, float]] = []
 
+    def gas_temp_profile_c(self, x_m: float,
+                           heights_m: tuple[float, ...]) -> tuple[float, ...]:
+        self.gas_temp_calls.extend((x_m, height) for height in heights_m)
+        return self._inner.gas_temp_profile_c(x_m, heights_m)
+
     def gas_temp_c(self, x_m: float, height_m: float) -> float:
         self.gas_temp_calls.append((x_m, height_m))
         return self._inner.gas_temp_c(x_m, height_m)
@@ -122,7 +127,7 @@ def _sampled_heights() -> _RecordingField:
     recorder = _RecordingField(field)
     zero = {name: 0.0 for name in criteria_mod.STATIONS}
     sim_mod._sample_stations(scene, recorder, MistEffect.none(), vent,
-                             Species(50.0, 0.5, 0.02, 20.0), zero, dict(zero))
+                             Species(50.0, 0.5, 0.02, 20.0), 0.0, zero, dict(zero))
     return recorder
 
 
@@ -136,13 +141,26 @@ def test_heat_flux_is_sampled_at_the_annex7_height():
     assert criteria_mod.HEAT_FLUX_HEIGHT_M == 1.5
 
 
-def test_gas_temperature_stays_at_breathing_height():
-    """Annex 7 section 6.4.1 mandates 5-7 thermocouples per cross-section and no
-    single height, so the tenability choice of breathing height stands."""
+def test_gas_temperature_is_sampled_on_a_tree_that_reaches_breathing_height():
+    """Annex 7 section 6.4.1 mandates "a minimum grid of having 5 sensors in
+    cross-section" and no single height, so the sampler asks the field for a
+    tree per station and breathing height has to be one of its rungs -- that is
+    where the section 7.2.2 tenability criteria are evaluated.
+
+    The counts and the spacing rule are tests/test_annex7_instruments.py's; what
+    matters here is that the heights reaching the field really are a tree and
+    really include 1.8 m, rather than a constant claiming they do.
+    """
     recorder = _sampled_heights()
     assert recorder.gas_temp_calls, "no gas temperature was sampled at all"
-    assert {height for _, height in recorder.gas_temp_calls} == {1.8}
+    heights = {height for _, height in recorder.gas_temp_calls}
+    assert len(heights) > 1, "the cross-section was sampled at a single height"
     assert criteria_mod.BREATHING_HEIGHT_M == 1.8
+    by_station: dict[float, set[float]] = {}
+    for x_m, height in recorder.gas_temp_calls:
+        by_station.setdefault(x_m, set()).add(height)
+    for x_m, sampled in by_station.items():
+        assert 1.8 in sampled, x_m
 
 
 def test_the_flux_and_temperature_heights_are_genuinely_different():

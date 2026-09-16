@@ -62,6 +62,88 @@ STATIONS = {
     "D100": 100.0,    # 5 TC, visibility
     "D215": 215.0,    # 2 TC, 5 bidirectional, 2 air velocity, visibility
 }
+
+
+@dataclass(frozen=True)
+class Instruments:
+    """Which sensors Annex 7 Table 5 puts at one measurement location.
+
+    One record per station rather than one set per instrument type, so the map
+    below can be read off against the printed table row by row, and so a station
+    can never appear in one instrument's list and be forgotten from another's.
+
+    A station reports ONLY what it carries. A simulated reading at a location
+    the standard does not instrument is a number no real test would produce, so
+    the sampler leaves it absent and the criteria below skip it.
+    """
+    thermocouples: int
+    # Table 5 lists U45 and D45 with "1 thermocouple" on a line of its own,
+    # separately from that row's 7 and 5. Kept as its own field rather than
+    # folded into the count: it is the reference thermocouple beside the
+    # relative-humidity probe (an RH reading means nothing without the
+    # temperature it was taken at), and it is not part of the cross-section
+    # grid, so it gets no height on the ladder.
+    reference_thermocouple: bool = False
+    heat_flux: bool = False
+    bidirectional: int = 0
+    ultrasonic: int = 0
+    oxygen: int = 0
+    carbon_dioxide: int = 0
+    carbon_monoxide: int = 0
+    relative_humidity: int = 0
+    visibility: bool = False
+
+    @property
+    def air_velocity(self) -> bool:
+        """Annex 7 section 6.4.4: air velocity "shall be measured over whole
+        cross-section EITHER with ultrasonic sensors to get a mean value OR,
+        more commonly, using bidirectional probes", so either instrument is an
+        air-velocity measurement. The union is exactly the section's own list --
+        "at minimum in U340, U45, D45 and D215"."""
+        return self.bidirectional > 0 or self.ultrasonic > 0
+
+    @property
+    def toxic_gas(self) -> bool:
+        """The ISO 13571 asphyxiant dose needs CO and the CO2 that drives the
+        hyperventilation factor, so it exists only where both are measured."""
+        return self.carbon_monoxide > 0 and self.carbon_dioxide > 0
+
+    @property
+    def thermal_dose(self) -> bool:
+        """The ISO 13571 thermal dose sums a convective term from the gas
+        temperature and a radiant term from the incident flux. Every station has
+        thermocouples; only U15 and D15 have a flux gauge, and a dose carrying
+        only one of its two terms is a different quantity, not a weaker one."""
+        return self.heat_flux
+
+
+# Annex 7 Table 5 (section 6.4.10, p.15) transcribed instrument by instrument.
+# The narrative sections agree and are the cross-check: heat flux at U15 and D15
+# only (6.4.2); oxygen, carbon dioxide and carbon monoxide at U45 and D45, "it
+# is important to measure oxygen concentration on both sides of the fire"
+# (6.4.3); air velocity "on both sides of fire load, at minimum in U340, U45,
+# D45 and D215" (6.4.4); visibility "at minimum in U045, D045; D100, D215"
+# (6.4.5).
+_GAS_CROSS_SECTION = dict(bidirectional=5, oxygen=3, carbon_dioxide=3,
+                          carbon_monoxide=3, relative_humidity=1,
+                          reference_thermocouple=True, visibility=True)
+INSTRUMENTS = {
+    "U340": Instruments(thermocouples=2, ultrasonic=2),
+    "U100": Instruments(thermocouples=5),
+    "U45": Instruments(thermocouples=7, **_GAS_CROSS_SECTION),
+    "U25": Instruments(thermocouples=5),
+    "U15": Instruments(thermocouples=5, heat_flux=True),
+    "U05": Instruments(thermocouples=7),
+    "U03": Instruments(thermocouples=7),
+    "D03": Instruments(thermocouples=7),
+    "D05": Instruments(thermocouples=7),
+    "Target": Instruments(thermocouples=3),
+    "D15": Instruments(thermocouples=5, heat_flux=True),
+    "D25": Instruments(thermocouples=5),
+    "D45": Instruments(thermocouples=5, **_GAS_CROSS_SECTION),
+    "D100": Instruments(thermocouples=5, visibility=True),
+    "D215": Instruments(thermocouples=2, bidirectional=5, ultrasonic=2, visibility=True),
+}
 # Annex 7 section 6.4.1 (p.13) mandates 5-7 thermocouples per cross-section and
 # names no single height, so the gas temperature keeps the breathing height the
 # tenability criteria are written against.
@@ -76,6 +158,48 @@ HEAT_FLUX_HEIGHT_M = 1.5
 # height is documentary rather than arithmetic here -- see the visibility call in
 # `sim._sample_stations` and the test that asserts that flatness.
 VISIBILITY_HEIGHT_M = 1.5
+
+
+def thermocouple_heights_m(count: int, crown_height_m: float) -> tuple[float, ...]:
+    """The heights of one cross-section's thermocouple tree, floor upwards.
+
+    ANNEX 7 SPECIFIES NO HEIGHTS. Section 6.4.1 requires "a minimum grid of
+    having 5 sensors in cross-section" and Table 5 gives the count location by
+    location, but neither names a height for any of them, so the ladder below is
+    OUR ENGINEERING CHOICE and must be read as one.
+
+    The rule: divide the cross-section into `count` equal-height layers and put
+    one thermocouple in the middle of each, then shift the whole ladder -- by at
+    most half a layer, so it stays inside the section -- until
+    BREATHING_HEIGHT_M lands exactly on it. Breathing height is forced onto the
+    grid rather than interpolated after because the section 7.2.2 tenability
+    criteria are evaluated there; interpolating would make the criterion depend
+    on two heights neither of which is the one being judged.
+
+    Everything is derived from the section's own crown height, so the ladder
+    adapts to any tunnel instead of being fitted to this one. At a low count the
+    forced anchor dominates: two sensors in a 5.2 m section give 1.8 m and
+    4.4 m, a breathing-height reading and a smoke-layer reading, which is what
+    two thermocouples at a far-field station are for.
+    """
+    if count < 1:
+        raise ValueError(f"a cross-section needs at least one thermocouple, got {count}")
+    if crown_height_m <= BREATHING_HEIGHT_M:
+        raise ValueError(
+            f"crown height {crown_height_m} m is at or below the {BREATHING_HEIGHT_M} m "
+            "breathing height, so no thermocouple tree spans the section"
+        )
+    layer_m = crown_height_m / count
+    anchor = min(range(count),
+                 key=lambda i: abs((i + 0.5) * layer_m - BREATHING_HEIGHT_M))
+    return tuple(BREATHING_HEIGHT_M + (i - anchor) * layer_m for i in range(count))
+
+
+def stations_carrying(instrument: Callable[[Instruments], bool]) -> tuple[str, ...]:
+    """Every Table 5 location whose instrument list satisfies `instrument`."""
+    return tuple(name for name, kit in INSTRUMENTS.items() if instrument(kit))
+
+
 # Piloted ignition of wood, Babrauskas; the flux the target must stay under.
 WOOD_PILOTED_IGNITION_KWM2 = 12.5
 # Sustained exposure needed before piloted ignition is predicted.

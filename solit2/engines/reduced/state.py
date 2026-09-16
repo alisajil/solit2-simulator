@@ -37,15 +37,35 @@ class FireState:
 
 @dataclass(frozen=True)
 class StationSample:
+    """What the instruments at one Annex 7 Table 5 location read this step.
+
+    EVERY OPTIONAL FIELD IS `None` WHERE TABLE 5 PUTS NO SENSOR, never zero.
+    Zero is a reading; absence is not, and a zero would be silently averaged or
+    compared as though a gauge had produced it. `criteria.INSTRUMENTS` is the
+    single statement of which is which, and the worst-station searches in
+    `criteria` read that map rather than testing these fields for `None`.
+    """
+    # Breathing height (criteria.BREATHING_HEIGHT_M), the height the section
+    # 7.2.2 tenability criteria are evaluated at, and by construction the entry
+    # of `temps_c` at that height.
     temp_c: float
-    flux_kwm2: float
-    visibility_m: float
-    fed_tox: float      # cumulative to this instant
-    fed_heat: float     # cumulative to this instant
+    flux_kwm2: float | None
+    visibility_m: float | None
+    fed_tox: float | None       # cumulative to this instant
+    fed_heat: float | None      # cumulative to this instant
     # SOLIT2 Annex 7 section 7.2.2 names CO and CO2 as life-safety quantities in
     # their own right, so the concentration is carried per station rather than
     # only reaching the run through the FED dose it contributes to.
-    co_ppm: float = 0.0
+    co_ppm: float | None = None
+    co2_pct: float | None = None
+    o2_pct: float | None = None
+    relative_humidity_pct: float | None = None
+    air_velocity_ms: float | None = None
+    # Table 5 instruments 2 to 7 thermocouples per cross-section, not one. The
+    # two tuples are the same length and in the same order, floor upwards;
+    # `heights_m` is built once per run by `criteria.thermocouple_heights_m`.
+    temps_c: tuple[float, ...] = ()
+    heights_m: tuple[float, ...] = ()
 
 
 @dataclass(frozen=True)

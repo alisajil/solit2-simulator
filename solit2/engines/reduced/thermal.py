@@ -128,18 +128,31 @@ class ThermalField:
     def ceiling_temp_c(self, x_m: float) -> float:
         return self.ambient_c + self.ceiling_excess_k * longitudinal_decay(x_m, self.height_m)
 
-    def gas_temp_c(self, x_m: float, height_m: float) -> float:
-        """Breathing-height gas temperature; the ceiling value scaled by stratification."""
+    def gas_temp_profile_c(self, x_m: float,
+                           heights_m: tuple[float, ...]) -> tuple[float, ...]:
+        """A whole thermocouple tree at one cross-section, in `heights_m` order.
+
+        The longitudinal decay depends only on `x_m`, so an Annex 7 Table 5
+        cross-section of 5 or 7 thermocouples costs one decay evaluation and n
+        blends rather than n of each.
+        """
         excess = self.ceiling_excess_k * longitudinal_decay(x_m, self.height_m)
         # strat_factor is defined AT breathing height (Newman), so anchor the blend there
         # rather than at the floor: exactly strat_factor at BREATHING_HEIGHT_M, rising
         # linearly to 1.0 at the crown, flat at strat_factor below breathing height. A
         # floor-anchored blend dilutes strat_factor with a height-ratio term and hands back
         # far more heat at breathing height than the stratification factor says should arrive.
-        fraction = self.strat_factor + (1.0 - self.strat_factor) * max(
-            0.0, (height_m - BREATHING_HEIGHT_M) / (self.height_m - BREATHING_HEIGHT_M)
+        span = self.height_m - BREATHING_HEIGHT_M
+        head = 1.0 - self.strat_factor
+        return tuple(
+            self.ambient_c + excess * min(
+                self.strat_factor + head * max(0.0, (h - BREATHING_HEIGHT_M) / span), 1.0)
+            for h in heights_m
         )
-        return self.ambient_c + excess * min(fraction, 1.0)
+
+    def gas_temp_c(self, x_m: float, height_m: float) -> float:
+        """Gas temperature at one height; the ceiling value scaled by stratification."""
+        return self.gas_temp_profile_c(x_m, (height_m,))[0]
 
     def radiant_flux_kwm2(self, x_m: float, height_m: float, tau_mist: float) -> float:
         dx = abs(x_m)

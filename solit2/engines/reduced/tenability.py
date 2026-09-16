@@ -19,6 +19,15 @@ YIELDS = {
 }
 AIR_DENSITY_KGM3 = 1.2
 AMBIENT_O2_PCT = 20.9
+# Water of combustion, expressed per unit of CO2 rather than per unit of fuel so
+# that it inherits the same combustion completeness as the measured CO2 yields
+# above instead of being a second, independent number. The ratio is the fuel's
+# own formula: cellulose C6H10O5 burns to 6 CO2 + 5 H2O, diesel taken as C12H23
+# burns to 12 CO2 + 11.5 H2O.
+WATER_PER_CO2_MASS = {
+    "A": (5 * 18.02) / (6 * 44.01),
+    "B": (11.5 * 18.02) / (12 * 44.01),
+}
 # Oxygen consumed per unit of heat released (Huggett), and the energy per kg of O2.
 HUGGETT_KJ_PER_KG_O2 = 13_100.0
 MOLAR_MASS_AIR = 28.97
@@ -40,6 +49,19 @@ FED_HEAT_FLUX_THRESHOLD_KWM2 = 2.5
 JIN_LIGHT_EMITTING = 8.0
 SOOT_EXTINCTION_M2_PER_G = 8.7
 MAX_REPORTED_VISIBILITY_M = 1000.0
+# Psychrometry for the Annex 7 Table 5 relative-humidity probe at U45 and D45.
+# Saturation vapour pressure over water is the Magnus form with the Alduchov &
+# Eskridge (1996) coefficients, within 0.4 % over 0-100 C. Above 100 C it is an
+# extrapolation, which costs nothing here: any humidity it returns there is far
+# below saturation anyway.
+ATMOSPHERIC_PRESSURE_PA = 101_325.0
+MAGNUS_A_PA = 610.94
+MAGNUS_B = 17.625
+MAGNUS_C_C = 243.04
+MOLAR_MASS_WATER = 18.02
+# kg of water vapour per kg of dry air at equal partial pressures.
+WATER_AIR_MOLAR_RATIO = MOLAR_MASS_WATER / MOLAR_MASS_AIR
+MAX_REPORTED_HUMIDITY_PCT = 100.0
 
 
 @dataclass(frozen=True)
@@ -48,6 +70,11 @@ class Species:
     co2_pct: float
     soot_gm3: float
     o2_pct: float
+    # kg of water vapour of combustion per kg of air, the quantity relative
+    # humidity is built from. A ratio rather than a concentration because it is
+    # unchanged by the thermal expansion this one-dimensional model does not
+    # resolve, where a per-volume figure would not be.
+    h2o_ratio: float = 0.0
 
 
 def species_at(fire_model: FireModel, hrr_mw: float, air_volumetric_m3s: float,
@@ -71,7 +98,9 @@ def species_at(fire_model: FireModel, hrr_mw: float, air_volumetric_m3s: float,
 
     o2_consumed_kgs = hrr_mw * 1000.0 / HUGGETT_KJ_PER_KG_O2
     o2_depletion_pct = strat_factor * o2_consumed_kgs / mass_flow_air * 100.0
-    return Species(co_ppm, co2_pct, soot_gm3, max(AMBIENT_O2_PCT - o2_depletion_pct, 0.0))
+    return Species(co_ppm, co2_pct, soot_gm3,
+                   max(AMBIENT_O2_PCT - o2_depletion_pct, 0.0),
+                   h2o_ratio=co2_mass_fraction * WATER_PER_CO2_MASS[fire_model.fire_class])
 
 
 def fed_tox_increment(species: Species, dt_s: float) -> float:
@@ -94,6 +123,38 @@ def fed_heat_increment(temp_c: float, flux_kwm2: float, dt_s: float) -> float:
         dose += minutes / (FED_HEAT_RADIANT_COEFFICIENT
                            * flux_kwm2**FED_HEAT_RADIANT_EXPONENT)
     return dose
+
+
+def saturation_vapour_pressure_pa(temp_c: float) -> float:
+    """Magnus form, over water."""
+    return MAGNUS_A_PA * math.exp(MAGNUS_B * temp_c / (MAGNUS_C_C + temp_c))
+
+
+def humidity_ratio(vapour_pressure_pa: float) -> float:
+    """kg of water vapour per kg of dry air at a given partial pressure."""
+    return (WATER_AIR_MOLAR_RATIO * vapour_pressure_pa
+            / (ATMOSPHERIC_PRESSURE_PA - vapour_pressure_pa))
+
+
+def relative_humidity_pct(gas_temp_c: float, ambient_temp_c: float,
+                          ambient_rh_pct: float, added_water_ratio: float) -> float:
+    """RH at a station: the tunnel's own air plus the water the fire and the
+    mist put into it, read against saturation at the station's gas temperature.
+
+    Definitional, not correlated: relative humidity IS the vapour pressure over
+    the saturation pressure. The only fitted piece is the Magnus saturation
+    curve. `added_water_ratio` is kg of water vapour added per kg of air, which
+    is why the ambient state is converted to a ratio before the two are summed.
+
+    Capped at saturation, because water past that point leaves the vapour phase
+    as fog rather than being reported as a humidity above 100 %.
+    """
+    ambient_vapour_pa = (ambient_rh_pct / 100.0
+                         * saturation_vapour_pressure_pa(ambient_temp_c))
+    ratio = humidity_ratio(ambient_vapour_pa) + max(added_water_ratio, 0.0)
+    vapour_pa = ATMOSPHERIC_PRESSURE_PA * ratio / (WATER_AIR_MOLAR_RATIO + ratio)
+    saturated_pa = saturation_vapour_pressure_pa(gas_temp_c)
+    return min(100.0 * vapour_pa / saturated_pa, MAX_REPORTED_HUMIDITY_PCT)
 
 
 def visibility_m(soot_gm3: float, kappa_mist_per_m: float) -> float:
