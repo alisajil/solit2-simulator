@@ -156,24 +156,61 @@ def test_stratification_blend_is_anchored_at_breathing_height():
     assert f.gas_temp_c(x, f.height_m) == pytest.approx(f.ceiling_temp_c(x))
 
 
-def test_structure_exposure_length_is_zero_below_the_threshold_and_finite_above_it():
-    """Annex 7 7.2.4 asks how much tunnel got hot, not how hot the hottest point got."""
-    from solit2.engines.reduced.state import FireState, MistEffect
+def _bore_design():
+    """The twin-bore example, loaded once -- the JSON never changes between tests."""
+    from solit2.schema.design import Design
+    return Design.load("examples/designs/road-tunnel-twin-bore.json")
+
+
+def _bore_field(hrr_mw: float):
+    """The thermal field of a free-burning `hrr_mw` fire in the BORE fixture.
+
+    Deliberately NOT cached on hrr_mw: it reads the live calibration, and tests
+    in this file change that.
+    """
+    from solit2.engines.reduced.state import MistEffect
     from solit2.engines.reduced.ventilation import evaluate
     from solit2.engines.reduced import fire
-    from solit2.schema.design import Design
 
-    d = Design.load("examples/designs/road-tunnel-twin-bore.json")
-    model = fire.build_model(d)
+    model = fire.build_model(_bore_design())
+    st = fire.FireState(t_s=900.0, hrr_mw=hrr_mw, hrr_free_mw=hrr_mw,
+                        energy_released_mj=30_000.0, suppression=0.0,
+                        pools_remaining=0, wet_time_s=0.0)
+    vent = evaluate(BORE, 4.5, fire.convective_kw(model, hrr_mw))
+    return thermal.field(BORE, model, st, vent, MistEffect.none(), fire_top_m=4.0,
+                         fire_base_m=1.0, fire_length_m=8.4, fire_width_m=2.4,
+                         ambient_c=30.0)
 
-    def _field(hrr_mw):
-        st = fire.FireState(t_s=900.0, hrr_mw=hrr_mw, hrr_free_mw=hrr_mw,
-                            energy_released_mj=30_000.0, suppression=0.0,
-                            pools_remaining=0, wet_time_s=0.0)
-        vent = evaluate(BORE, 4.5, fire.convective_kw(model, hrr_mw))
-        return thermal.field(BORE, model, st, vent, MistEffect.none(), fire_top_m=4.0,
-                             fire_base_m=1.0, fire_length_m=8.4, fire_width_m=2.4,
-                             ambient_c=30.0)
+
+def _hrr_clearing_mw(threshold_c: float, x_m: float) -> float:
+    """The smallest fire holding the ceiling at or above `threshold_c` at `x_m`.
+
+    Found by bisecting the model under whatever calibration is live, rather than
+    written down as a number. The ceiling excess scales with the fitted
+    `thermal.ceiling_excess_coefficient`, so any fire size hardcoded here goes
+    stale at the next refit -- which is exactly what happened to the three tests
+    below, twice, each time needing a bigger magic number (30 -> 70 -> 110 MW).
+    Those tests now ask for a multiple of this figure and stay true whatever the
+    fit does to the coefficient. The Annex 7 7.2.4 threshold itself is never
+    derived: it is the real limit and stays written down.
+    """
+    lo_mw, hi_mw = 1.0, 2000.0
+    if _bore_field(hi_mw).ceiling_temp_c(x_m) < threshold_c:
+        raise AssertionError(
+            f"no fire up to {hi_mw} MW clears {threshold_c} C at x={x_m} m under the "
+            "current calibration -- the model or this fixture has changed shape, "
+            "which is a finding, not a tolerance to widen")
+    for _ in range(40):
+        mid = 0.5 * (lo_mw + hi_mw)
+        if _bore_field(mid).ceiling_temp_c(x_m) >= threshold_c:
+            hi_mw = mid
+        else:
+            lo_mw = mid
+    return hi_mw
+
+
+def test_structure_exposure_length_is_zero_below_the_threshold_and_finite_above_it():
+    """Annex 7 7.2.4 asks how much tunnel got hot, not how hot the hottest point got."""
 
     threshold = 500.0
     # The window the engine actually scans for Annex 7 7.2.4, read off sim
@@ -181,13 +218,11 @@ def test_structure_exposure_length_is_zero_below_the_threshold_and_finite_above_
     # silently measuring a span nothing uses.
     lo, hi = sim.STRUCTURE_SCAN_MIN_M, sim.STRUCTURE_SCAN_MAX_M
     span_m = hi - lo + thermal.STRUCTURE_SCAN_STEP_M
-    # 30 MW cleared this threshold pre-Task-18; Task 18's corrected (larger)
-    # h_ef needed 70 MW to do the same. Task 19's refit of
-    # ceiling_excess_coefficient (1.0 -> 0.615847) lowers the excess further,
-    # so 110 MW is what clears 500 C at x=0 now (565 C under the current fit).
-    # The threshold is untouched -- only the fire size needed to reach it
-    # moves with the fit.
-    cool, hot = _field(2.0), _field(110.0)
+    # A fifth of the fire that just clears the threshold cannot reach it; a fifth
+    # again above it must. Both are derived from the live calibration, so no refit
+    # can leave this test measuring the wrong side of its own threshold.
+    clears_at_origin = _hrr_clearing_mw(threshold, 0.0)
+    cool, hot = _bore_field(0.2 * clears_at_origin), _bore_field(1.2 * clears_at_origin)
     assert cool.ceiling_temp_c(0.0) < threshold < hot.ceiling_temp_c(0.0)
 
     assert thermal.exposure_length_m(cool, threshold, lo, hi) == 0.0
@@ -198,27 +233,17 @@ def test_structure_exposure_length_is_zero_below_the_threshold_and_finite_above_
 
 def test_structure_exposure_length_grows_with_the_fire():
     """A bigger fire holds more tunnel above the threshold, never less."""
-    from solit2.engines.reduced.state import MistEffect
-    from solit2.engines.reduced.ventilation import evaluate
-    from solit2.engines.reduced import fire
-    from solit2.schema.design import Design
 
-    d = Design.load("examples/designs/road-tunnel-twin-bore.json")
-    model = fire.build_model(d)
-    lengths = []
-    # Task 18's corrected h_ef needs a hotter range than 30/40/50 MW to clear
-    # the 500 C threshold at all for this tall-fuel fixture (see the previous
-    # test); 70/90/110 MW keeps this test's own point, that a bigger fire
-    # never holds less tunnel above threshold, meaningful again.
-    for hrr_mw in (70.0, 90.0, 110.0):
-        st = fire.FireState(t_s=900.0, hrr_mw=hrr_mw, hrr_free_mw=hrr_mw,
-                            energy_released_mj=30_000.0, suppression=0.0,
-                            pools_remaining=0, wet_time_s=0.0)
-        vent = evaluate(BORE, 4.5, fire.convective_kw(model, hrr_mw))
-        f = thermal.field(BORE, model, st, vent, MistEffect.none(), fire_top_m=4.0,
-                          fire_base_m=1.0, fire_length_m=8.4, fire_width_m=2.4,
-                          ambient_c=30.0)
-        lengths.append(thermal.exposure_length_m(f, 500.0, -35.0, 100.0))
+    lo, hi = sim.STRUCTURE_SCAN_MIN_M, sim.STRUCTURE_SCAN_MAX_M
+    # Growth is only observable between the fire that first shows any length at
+    # all (clears the threshold at the origin) and the one that saturates the
+    # window (clears it at the far edge). Outside that band every fire reads 0
+    # or reads the whole span, and the test would assert nothing. Both ends come
+    # from the live calibration, so the band tracks any refit.
+    first, full = _hrr_clearing_mw(500.0, 0.0), _hrr_clearing_mw(500.0, hi)
+    lengths = [thermal.exposure_length_m(_bore_field(first + f * (full - first)),
+                                         500.0, lo, hi)
+               for f in (0.25, 0.55, 0.85)]
     assert lengths == sorted(lengths)
     assert lengths[0] < lengths[-1]
 
@@ -228,27 +253,14 @@ def test_exposure_length_saturates_at_the_instrumented_span():
     window (sim.STRUCTURE_SCAN_MIN_M..MAX_M), so a big enough fire reads as the
     whole window rather than its true physical extent. The reported figure is a
     measurement, not a horizon."""
-    from solit2.engines.reduced.state import MistEffect
-    from solit2.engines.reduced.ventilation import evaluate
-    from solit2.engines.reduced import fire
-    from solit2.schema.design import Design
 
-    d = Design.load("examples/designs/road-tunnel-twin-bore.json")
-    model = fire.build_model(d)
-    # 150 MW saturated the window pre-Task-19; the refit ceiling_excess_coefficient
-    # (1.0 -> 0.615847) lowers the excess enough that 150 MW no longer keeps the
-    # farthest station (x=100) above 500 C. 220 MW does, comfortably (560 C at
-    # x=100) -- the span and threshold below are unchanged; only the fire size
-    # needed to saturate the window moves with the fit.
-    st = fire.FireState(t_s=900.0, hrr_mw=220.0, hrr_free_mw=220.0,
-                        energy_released_mj=30_000.0, suppression=0.0,
-                        pools_remaining=0, wet_time_s=0.0)
-    vent = evaluate(BORE, 4.5, fire.convective_kw(model, 220.0))
-    f = thermal.field(BORE, model, st, vent, MistEffect.none(), fire_top_m=4.0,
-                      fire_base_m=1.0, fire_length_m=8.4, fire_width_m=2.4,
-                      ambient_c=30.0)
     lo, hi = sim.STRUCTURE_SCAN_MIN_M, sim.STRUCTURE_SCAN_MAX_M
     span_m = hi - lo + thermal.STRUCTURE_SCAN_STEP_M
+    # The window saturates once the FAR edge is above the threshold, so the fire
+    # that does it is derived at x=hi, with a fifth again for margin. Deriving it
+    # is the point: the size needed moved 150 -> 220 MW at the last refit and
+    # would have moved again at this one.
+    f = _bore_field(1.2 * _hrr_clearing_mw(500.0, hi))
     assert thermal.exposure_length_m(f, 500.0, lo, hi) == pytest.approx(span_m)
 
 
