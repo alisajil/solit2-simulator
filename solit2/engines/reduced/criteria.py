@@ -29,12 +29,53 @@ from solit2.engines.reduced.state import RunTrace
 from solit2.schema.design import Design
 from solit2.schema.result import Criterion
 
-# Station chainage relative to the fire centre; negative is upstream. Annex 7
-# section 7.2.2 asks for life safety upstream AND downstream, so the life-safety
-# criteria below take their worst value across all of these, not upstream only.
-STATIONS = {"U35": -35.0, "U15": -15.0, "U5": -5.0,
-            "D5": 5.0, "D15": 15.0, "D20": 20.0, "D35": 35.0, "D100": 100.0}
+# Annex 7 Table 5 (section 6.4.10, p.15), the minimum set of longitudinal
+# measurement locations, in the section 6.3 naming convention: virtual zero point
+# 00 longitudinally in the middle of the mock-up, Uxx upstream (negative here),
+# Dxx downstream (positive), xx the distance in metres. Section 6.3 states the
+# geometric identity these rest on -- "the ends of the HGV Class A mock-up are
+# located in U5 and D5. Correspondingly the fire target is located at D10" --
+# which holds only for the 10.0 m mock-up of section 5.2.2.
+#
+# `Target` is Table 5's own name for the D10 row (3 thermocouples), kept in
+# preference to "D10" so the key matches the table a user is reading from. It is
+# a temperature-reporting location: section 7.2.1's pass/fail rule on target
+# ignition is separate, and is `_target_ignited` below.
+#
+# Annex 7 section 7.2.2 asks for life safety upstream AND downstream, so the
+# life-safety criteria take their worst value across all of these, not upstream
+# only.
+STATIONS = {
+    "U340": -340.0,   # 2 TC, 2 air velocity
+    "U100": -100.0,   # 5 TC
+    "U45": -45.0,     # 7 TC, 5 bidirectional, 3 O2, 3 CO2, 3 CO, RH, visibility
+    "U25": -25.0,     # 5 TC
+    "U15": -15.0,     # 5 TC, 1 heat flux
+    "U05": -5.0,      # 7 TC -- upstream end of the mock-up
+    "U03": -3.0,      # 7 TC
+    "D03": 3.0,       # 7 TC
+    "D05": 5.0,       # 7 TC -- downstream end of the mock-up
+    "Target": 10.0,   # 3 TC -- the fire target, 5 m behind the mock-up
+    "D15": 15.0,      # 5 TC, 1 heat flux
+    "D25": 25.0,      # 5 TC
+    "D45": 45.0,      # 5 TC, 5 bidirectional, 3 O2, 3 CO2, 3 CO, RH, visibility
+    "D100": 100.0,    # 5 TC, visibility
+    "D215": 215.0,    # 2 TC, 5 bidirectional, 2 air velocity, visibility
+}
+# Annex 7 section 6.4.1 (p.13) mandates 5-7 thermocouples per cross-section and
+# names no single height, so the gas temperature keeps the breathing height the
+# tenability criteria are written against.
 BREATHING_HEIGHT_M = 1.8
+# Annex 7 section 6.4.2 (p.13): "Heat flux sensors of type Gordon (Medtherm)
+# shall be installed with a minimum of having 2 sensors at 1.5 m height in the
+# locations of U15 and D15."
+HEAT_FLUX_HEIGHT_M = 1.5
+# Annex 7 section 6.4.5 (p.14): visibility opacimeters "in different positions
+# and at a height of 1.5 m". This engine's visibility reads the stratified soot
+# concentration, whose profile is flat below BREATHING_HEIGHT_M, so the gauge
+# height is documentary rather than arithmetic here -- see the visibility call in
+# `sim._sample_stations` and the test that asserts that flatness.
+VISIBILITY_HEIGHT_M = 1.5
 # Piloted ignition of wood, Babrauskas; the flux the target must stay under.
 WOOD_PILOTED_IGNITION_KWM2 = 12.5
 # Sustained exposure needed before piloted ignition is predicted.

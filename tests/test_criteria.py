@@ -61,12 +61,12 @@ def _trace(steps=None):
         steps=steps or (
             _step(0.0, hrr_mw=150.0, target_flux_kwm2=9.0, stations={}),
             _step(120.0, hrr_mw=46.0, target_flux_kwm2=9.8, stations={
-                "U35": _station(temp_c=31.0, flux_kwm2=0.3, visibility_m=60.0,
+                "U45": _station(temp_c=31.0, flux_kwm2=0.3, visibility_m=60.0,
                                 fed_tox=0.02, co_ppm=10.0),
-                "U5": _station(flux_kwm2=2.0),
-                "D5": _station(flux_kwm2=4.0),
+                "U05": _station(flux_kwm2=2.0),
+                "D05": _station(flux_kwm2=4.0),
                 "D15": _station(temp_c=52.0, visibility_m=12.0, co_ppm=120.0),
-                "D35": _station(temp_c=58.0, fed_tox=0.05),
+                "D45": _station(temp_c=58.0, fed_tox=0.05),
             }, structure_exposure_length_m=7.0),
         ),
         events={"t_full_pressure_s": 90.0},
@@ -182,9 +182,12 @@ def test_the_project_and_vendor_limits_are_gone_from_the_criteria():
 
 
 def test_stations_cover_every_criterion_location():
-    assert criteria_mod.STATIONS["U35"] == -35.0
+    """The full Annex 7 Table 5 set is asserted, both directions, in
+    tests/test_annex7_conformance.py; what matters here is only that the
+    life-safety criteria have an upstream and a downstream station to compare."""
+    assert criteria_mod.STATIONS["U45"] == -45.0
     assert criteria_mod.STATIONS["D100"] == 100.0
-    assert set(criteria_mod.STATIONS) == {"U35", "U15", "U5", "D5", "D15", "D20", "D35", "D100"}
+    assert min(criteria_mod.STATIONS.values()) < 0.0 < max(criteria_mod.STATIONS.values())
 
 
 # --- test 1: an AHJ that has set nothing ------------------------------------
@@ -286,12 +289,12 @@ def test_the_exposure_clock_resets_the_moment_the_flux_drops_back():
 def test_life_safety_criteria_take_the_worst_of_upstream_and_downstream():
     out = _evaluate(Design.load(BASELINE))
     # Every one of these worst values sits at a DOWNSTREAM station in `_trace`;
-    # the old upstream-only criteria would have reported the U35 figure instead.
-    assert out["max_air_temp_c"].value == pytest.approx(58.0)     # D35, not U35's 31.0
-    assert out["max_heat_flux_kwm2"].value == pytest.approx(4.0)  # D5, not U5's 2.0
-    assert out["min_visibility_m"].value == pytest.approx(12.0)   # D15, not U35's 60.0
-    assert out["max_fed"].value == pytest.approx(0.05)            # D35, not U35's 0.02
-    assert out["max_co_ppm"].value == pytest.approx(120.0)        # D15, not U35's 10.0
+    # the old upstream-only criteria would have reported the U45 figure instead.
+    assert out["max_air_temp_c"].value == pytest.approx(58.0)     # D45, not U45's 31.0
+    assert out["max_heat_flux_kwm2"].value == pytest.approx(4.0)  # D05, not U05's 2.0
+    assert out["min_visibility_m"].value == pytest.approx(12.0)   # D15, not U45's 60.0
+    assert out["max_fed"].value == pytest.approx(0.05)            # D45, not U45's 0.02
+    assert out["max_co_ppm"].value == pytest.approx(120.0)        # D15, not U45's 10.0
 
 
 def test_life_safety_criteria_compare_against_the_ahj_limits():

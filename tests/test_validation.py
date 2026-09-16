@@ -17,7 +17,7 @@ def _trace_with_distinct_stations() -> _FakeResult:
     series cannot accidentally return the right number."""
     return _FakeResult(
         timeseries={
-            "u35_temp_c": [10.0, 35.0],
+            "u45_temp_c": [10.0, 45.0],
             "u15_temp_c": [10.0, 15.0],
             "d15_temp_c": [10.0, 75.0],
             "d100_temp_c": [10.0, 100.0],
@@ -67,8 +67,8 @@ def test_the_result_timeseries_carries_every_station_an_extractor_needs():
     assert series["d100_temp_c"] == [s.stations["D100"].temp_c for s in sampled]
     assert series["hf_u15_kwm2"] == [s.stations["U15"].flux_kwm2 for s in sampled]
     assert series["hf_d15_kwm2"] == [s.stations["D15"].flux_kwm2 for s in sampled]
-    assert series["u15_temp_c"] != series["u35_temp_c"], (
-        "the 15 m and 35 m upstream stations must not report the same series")
+    assert series["u15_temp_c"] != series["u45_temp_c"], (
+        "the 15 m and 45 m upstream stations must not report the same series")
 
 
 def test_the_anchor_set_is_exactly_the_solit2_guidance_tests():

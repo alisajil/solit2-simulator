@@ -42,7 +42,7 @@ def test_every_station_is_sampled_at_every_step():
 
 def test_fed_accumulates_monotonically():
     trace = sim.run_once(Design.load(BASELINE), "bored", 5.08)
-    fed = [s.stations["D35"].fed_tox for s in trace.steps]
+    fed = [s.stations["D45"].fed_tox for s in trace.steps]
     assert all(b >= a for a, b in zip(fed, fed[1:]))
 
 

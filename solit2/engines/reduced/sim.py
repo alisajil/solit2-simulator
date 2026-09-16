@@ -12,7 +12,8 @@ from solit2.engines.reduced import fire as fire_mod
 from solit2.engines.reduced import mist as mist_mod
 from solit2.engines.reduced import tenability, thermal, ventilation
 from solit2.engines.reduced.criteria import (BREATHING_HEIGHT_M, FLAME_CONTACT_FLUX_KWM2,
-                                             STATIONS, WOOD_PILOTED_IGNITION_KWM2)
+                                             HEAT_FLUX_HEIGHT_M, STATIONS,
+                                             WOOD_PILOTED_IGNITION_KWM2)
 from solit2.engines.reduced.geometry import (NozzlePosition, SectionGeometry,
                                              nozzle_positions, section_geometry)
 from solit2.engines.reduced.state import (FireState, MistEffect, RunTrace, StationSample,
@@ -24,9 +25,26 @@ from solit2.schema.design import Design, Zones
 DT_S = 1.0
 PIPE_WATER_FILLED_CAP_C = 100.0
 PIPE_TIME_CONSTANT_S = 300.0
-# The instrumented span the ceiling is walked over for Annex 7 section 7.2.4.
-STRUCTURE_SCAN_MIN_M = min(STATIONS.values())
-STRUCTURE_SCAN_MAX_M = max(STATIONS.values())
+# The span of ceiling walked for Annex 7 section 7.2.4, whose minimum criterion
+# is "that high temperature exposure areas will be limited to a small area,
+# directly above fire loads or slightly downstream".
+#
+# Stated explicitly rather than taken from the extremes of STATIONS. Table 5's
+# outermost locations are U340 and D215 -- far-field air-velocity and smoke
+# stations, 555 m apart -- and a 7.2.4 criterion swept over them would be
+# measuring something the section does not ask about, at four times the cost of
+# a per-timestep 1 m scan.
+#
+# The window is deliberately asymmetric, because 7.2.4's own wording is: the hot
+# ceiling sits above the fire and is carried DOWNSTREAM by the longitudinal
+# flow. Downstream it runs to D100, Table 5's furthest routinely-instrumented
+# temperature station short of the far-field D215, so the reported length is a
+# measurement and not a clip. Upstream it runs to U45, the furthest upstream
+# full cross-section in Table 5 and the section where 5.2.7 has the ventilation
+# velocity measured; the ceiling can only be hot upstream of the fire inside the
+# backlayer, which is far shorter than that at every anchor geometry.
+STRUCTURE_SCAN_MIN_M = -45.0
+STRUCTURE_SCAN_MAX_M = 100.0
 # Upstream of the backlayering front the air is still tunnel air.
 AMBIENT_SPECIES = tenability.Species(0.0, 0.0, 0.0, tenability.AMBIENT_O2_PCT)
 
@@ -124,13 +142,29 @@ def _sample_stations(scene: _Scene, field: ThermalField, mist: MistEffect,
     for name, x_m in STATIONS.items():
         upstream_clear = x_m < 0 and abs(x_m) > vent.backlayer_m
         temp = scene.ambient_c if upstream_clear else field.gas_temp_c(x_m, BREATHING_HEIGHT_M)
-        flux = field.radiant_flux_kwm2(x_m, BREATHING_HEIGHT_M, mist.tau_mist)
+        flux = field.radiant_flux_kwm2(x_m, HEAT_FLUX_HEIGHT_M, mist.tau_mist)
         local = AMBIENT_SPECIES if upstream_clear else species
         fed_tox[name] += tenability.fed_tox_increment(local, DT_S)
+        # ISO 13571's thermal dose sums a convective term driven by gas
+        # temperature and a radiant term driven by incident flux, and names no
+        # single measurement height for either. The two terms therefore take
+        # their own instrument's Annex 7 height: the temperature from the
+        # cross-section thermocouples at BREATHING_HEIGHT_M, the flux from the
+        # section 6.4.2 gauge at HEAT_FLUX_HEIGHT_M. Doing it this way keeps the
+        # dose reproducible from the station values this run reports -- a FED
+        # computed from a flux that appears nowhere in the output could not be
+        # checked by anyone reading it -- and costs no second field evaluation.
         fed_heat[name] += tenability.fed_heat_increment(temp, flux, DT_S)
         in_zone = abs(x_m) <= scene.half_active_length_m
         samples[name] = StationSample(
             temp_c=temp, flux_kwm2=flux,
+            # The opacimeter height is criteria.VISIBILITY_HEIGHT_M (Annex 7
+            # section 6.4.5, 1.5 m). `local.soot_gm3` already carries the
+            # stratification factor, which `thermal` defines AT breathing height
+            # and holds flat below it, so a gauge at 1.5 m reads the same layer
+            # as one at 1.8 m and no height argument would change this number.
+            # tests/test_annex7_conformance.py asserts that flatness rather than
+            # leaving it to be taken on trust from this comment.
             visibility_m=tenability.visibility_m(local.soot_gm3,
                                                  kappa_mist if in_zone else 0.0),
             fed_tox=fed_tox[name], fed_heat=fed_heat[name], co_ppm=local.co_ppm)

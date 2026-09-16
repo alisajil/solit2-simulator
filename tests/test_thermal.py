@@ -2,7 +2,7 @@ import copy
 import math
 import pytest
 from solit2.engines.reduced.geometry import SectionGeometry
-from solit2.engines.reduced import thermal
+from solit2.engines.reduced import sim, thermal
 
 BORE = SectionGeometry("bored", 10.146, 7.625, 70.29, "circle", 5.5, 2.125)
 # HGV load 8.4 x 2.4 m, top 4.0 m above the carriageway
@@ -168,7 +168,11 @@ def test_structure_exposure_length_is_zero_below_the_threshold_and_finite_above_
                              ambient_c=30.0)
 
     threshold = 500.0
-    span_m = 100.0 - -35.0 + thermal.STRUCTURE_SCAN_STEP_M
+    # The window the engine actually scans for Annex 7 7.2.4, read off sim
+    # rather than restated, so widening or narrowing it cannot leave this test
+    # silently measuring a span nothing uses.
+    lo, hi = sim.STRUCTURE_SCAN_MIN_M, sim.STRUCTURE_SCAN_MAX_M
+    span_m = hi - lo + thermal.STRUCTURE_SCAN_STEP_M
     # 30 MW cleared this threshold pre-Task-18; Task 18's corrected (larger)
     # h_ef needed 70 MW to do the same. Task 19's refit of
     # ceiling_excess_coefficient (1.0 -> 0.615847) lowers the excess further,
@@ -178,8 +182,8 @@ def test_structure_exposure_length_is_zero_below_the_threshold_and_finite_above_
     cool, hot = _field(2.0), _field(110.0)
     assert cool.ceiling_temp_c(0.0) < threshold < hot.ceiling_temp_c(0.0)
 
-    assert thermal.exposure_length_m(cool, threshold, -35.0, 100.0) == 0.0
-    length = thermal.exposure_length_m(hot, threshold, -35.0, 100.0)
+    assert thermal.exposure_length_m(cool, threshold, lo, hi) == 0.0
+    length = thermal.exposure_length_m(hot, threshold, lo, hi)
     assert 0.0 < length < span_m
     assert math.isfinite(length)
 
@@ -212,9 +216,10 @@ def test_structure_exposure_length_grows_with_the_fire():
 
 
 def test_exposure_length_saturates_at_the_instrumented_span():
-    """A known limit of the measure: the scan only walks between the outermost
-    stations, so a big enough fire reads as the whole window rather than its
-    true physical extent. The reported figure is a measurement, not a horizon."""
+    """A known limit of the measure: the scan only walks the section 7.2.4
+    window (sim.STRUCTURE_SCAN_MIN_M..MAX_M), so a big enough fire reads as the
+    whole window rather than its true physical extent. The reported figure is a
+    measurement, not a horizon."""
     from solit2.engines.reduced.state import MistEffect
     from solit2.engines.reduced.ventilation import evaluate
     from solit2.engines.reduced import fire
@@ -234,8 +239,9 @@ def test_exposure_length_saturates_at_the_instrumented_span():
     f = thermal.field(BORE, model, st, vent, MistEffect.none(), fire_top_m=4.0,
                       fire_base_m=1.0, fire_length_m=8.4, fire_width_m=2.4,
                       ambient_c=30.0)
-    span_m = 100.0 - -35.0 + thermal.STRUCTURE_SCAN_STEP_M
-    assert thermal.exposure_length_m(f, 500.0, -35.0, 100.0) == pytest.approx(span_m)
+    lo, hi = sim.STRUCTURE_SCAN_MIN_M, sim.STRUCTURE_SCAN_MAX_M
+    span_m = hi - lo + thermal.STRUCTURE_SCAN_STEP_M
+    assert thermal.exposure_length_m(f, 500.0, lo, hi) == pytest.approx(span_m)
 
 
 def test_exposure_length_rejects_a_non_positive_scan_step():

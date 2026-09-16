@@ -1,0 +1,180 @@
+"""The test setup itself, checked against SOLIT2 Engineering Guidance Annex 7.
+
+Every assertion here quotes the Annex 7 section it comes from. Where Annex 7
+states an inequality ("minimum 2,5m height for the fuel part") this file asserts
+the inequality and not the number the preset happens to carry, so a preset may
+be made more conservative without a test having to be rewritten to allow it.
+Where Annex 7 states an exact figure (Table 5's station chainages, the 10,0 m
+mock-up length, the 1,5 m instrument heights) the figure is asserted literally,
+because that IS the requirement.
+"""
+import json
+from pathlib import Path
+
+import pytest
+
+from solit2.engines.reduced import criteria as criteria_mod
+from solit2.engines.reduced import fire as fire_mod
+from solit2.engines.reduced import sim as sim_mod
+from solit2.engines.reduced import thermal, ventilation
+from solit2.engines.reduced.state import MistEffect
+from solit2.engines.reduced.tenability import Species
+from solit2.schema.design import Design
+from solit2.schema.presets import load_preset
+
+BASELINE = "examples/designs/road-tunnel-twin-bore.json"
+DESIGN_DIR = Path("examples/designs")
+
+# Annex 7 Table 5 (section 6.4.10, p.15), transcribed in full. Chainage follows
+# section 6.3: virtual zero point 00 longitudinally in the middle of the mock-up,
+# upstream Uxx negative, downstream Dxx positive, xx in metres.
+ANNEX7_TABLE_5 = {
+    "U340": -340.0, "U100": -100.0, "U45": -45.0, "U25": -25.0, "U15": -15.0,
+    "U05": -5.0, "U03": -3.0, "D03": 3.0, "D05": 5.0, "Target": 10.0,
+    "D15": 15.0, "D25": 25.0, "D45": 45.0, "D100": 100.0, "D215": 215.0,
+}
+# Annex 7 section 5.2.3 and 5.3.3, and Figure 13's dimension arrow, which runs
+# from the NEAR FACE of the mock-up to the tunnel wall: "The distance from the
+# side wall shall be less than 1,5 m."
+MAX_WALL_TO_NEAR_FACE_M = 1.5
+
+
+# --- Phase 1: measurement stations (Table 5, section 6.4.10) -----------------
+
+def test_stations_are_exactly_the_annex7_table_5_locations():
+    """Asserted both ways, so neither a stray station nor a missing one survives.
+
+    U35, D20 and D35 were in this map and are not Annex 7 locations at all;
+    U340, U100, U45, U25, U03, D03, Target, D25, D45 and D215 are and were not.
+    """
+    assert set(criteria_mod.STATIONS) == set(ANNEX7_TABLE_5)
+    assert criteria_mod.STATIONS == ANNEX7_TABLE_5
+
+
+def test_the_target_station_is_ten_metres_downstream():
+    """Annex 7 section 7.2.1: the target is 5 m downstream behind the mock-up,
+    "(D10)". Section 6.3 names the same location, and Table 5 calls the row
+    `Target` rather than D10, which is why that is the station key."""
+    assert criteria_mod.STATIONS["Target"] == 10.0
+
+
+def test_station_names_follow_the_section_6_3_sign_convention():
+    """Uxx upstream is negative, Dxx downstream is positive, and the number in
+    the name is the distance in metres from the zero point."""
+    for name, x_m in criteria_mod.STATIONS.items():
+        if name == "Target":
+            continue
+        assert name[0] in "UD", name
+        assert abs(x_m) == float(name[1:]), name
+        assert (x_m < 0) == (name[0] == "U"), name
+
+
+def test_the_structure_scan_span_is_not_the_station_extremes():
+    """Annex 7 section 7.2.4 is about ceiling exposure "directly above fire loads
+    or slightly downstream". Table 5's extremes are U340 and D215, which are
+    far-field smoke and air-velocity stations; inheriting them would turn a
+    localised exposure measurement into a 555 m sweep at every timestep."""
+    extremes = (min(criteria_mod.STATIONS.values()), max(criteria_mod.STATIONS.values()))
+    assert (sim_mod.STRUCTURE_SCAN_MIN_M, sim_mod.STRUCTURE_SCAN_MAX_M) != extremes
+    # the fire and the ceiling downstream of it must still be inside the window
+    assert sim_mod.STRUCTURE_SCAN_MIN_M < 0.0 < sim_mod.STRUCTURE_SCAN_MAX_M
+    assert sim_mod.STRUCTURE_SCAN_MAX_M >= abs(sim_mod.STRUCTURE_SCAN_MIN_M), (
+        "section 7.2.4 puts the hot area above the fire or SLIGHTLY DOWNSTREAM, "
+        "so the window must not reach further upstream than downstream")
+
+
+# --- Phase 2: measurement heights (sections 6.4.2 and 6.4.5) -----------------
+
+class _RecordingField:
+    """Forwards to a real `ThermalField`, recording the height of every call.
+
+    `_sample_stations` reaches the field only through these two methods, so this
+    records the heights that actually arrive rather than the heights a constant
+    claims.
+    """
+
+    def __init__(self, inner: thermal.ThermalField) -> None:
+        self._inner = inner
+        self.gas_temp_calls: list[tuple[float, float]] = []
+        self.flux_calls: list[tuple[float, float]] = []
+
+    def gas_temp_c(self, x_m: float, height_m: float) -> float:
+        self.gas_temp_calls.append((x_m, height_m))
+        return self._inner.gas_temp_c(x_m, height_m)
+
+    def radiant_flux_kwm2(self, x_m: float, height_m: float, tau_mist: float) -> float:
+        self.flux_calls.append((x_m, height_m))
+        return self._inner.radiant_flux_kwm2(x_m, height_m, tau_mist)
+
+
+def _sampled_heights() -> _RecordingField:
+    """Run one real station sample and hand back what the field was asked for."""
+    design = Design.load(BASELINE)
+    scene = sim_mod._build_scene(design, "bored", 4.5)
+    state = fire_mod.FireState(t_s=600.0, hrr_mw=40.0, hrr_free_mw=40.0,
+                               energy_released_mj=20_000.0, suppression=1.0,
+                               pools_remaining=0, wet_time_s=0.0)
+    vent = ventilation.evaluate(scene.geom, 4.5, fire_mod.convective_kw(scene.model, 40.0))
+    field = thermal.field(scene.geom, scene.model, state, vent, MistEffect.none(),
+                          scene.fire_top_m, scene.fire_base_m,
+                          design.fire.footprint.length_m, design.fire.footprint.width_m,
+                          scene.ambient_c)
+    recorder = _RecordingField(field)
+    zero = {name: 0.0 for name in criteria_mod.STATIONS}
+    sim_mod._sample_stations(scene, recorder, MistEffect.none(), vent,
+                             Species(50.0, 0.5, 0.02, 20.0), zero, dict(zero))
+    return recorder
+
+
+def test_heat_flux_is_sampled_at_the_annex7_height():
+    """Annex 7 section 6.4.2 (p.13): "Heat flux sensors of type Gordon
+    (Medtherm) shall be installed with a minimum of having 2 sensors at 1.5 m
+    height in the locations of U15 and D15." """
+    recorder = _sampled_heights()
+    assert recorder.flux_calls, "no flux was sampled at all"
+    assert {height for _, height in recorder.flux_calls} == {1.5}
+    assert criteria_mod.HEAT_FLUX_HEIGHT_M == 1.5
+
+
+def test_gas_temperature_stays_at_breathing_height():
+    """Annex 7 section 6.4.1 mandates 5-7 thermocouples per cross-section and no
+    single height, so the tenability choice of breathing height stands."""
+    recorder = _sampled_heights()
+    assert recorder.gas_temp_calls, "no gas temperature was sampled at all"
+    assert {height for _, height in recorder.gas_temp_calls} == {1.8}
+    assert criteria_mod.BREATHING_HEIGHT_M == 1.8
+
+
+def test_the_flux_and_temperature_heights_are_genuinely_different():
+    """A sampler that passed one height to both calls would satisfy the two
+    tests above only by accident of them agreeing; they must not agree."""
+    recorder = _sampled_heights()
+    assert ({height for _, height in recorder.flux_calls}
+            != {height for _, height in recorder.gas_temp_calls})
+
+
+def test_moving_the_opacimeter_to_the_annex7_height_cannot_change_visibility():
+    """Annex 7 section 6.4.5 (p.14) puts opacimeters "at a height of 1.5 m".
+
+    This engine's visibility reads the stratified soot concentration, which
+    `tenability.species_at` scales by the Newman stratification factor that
+    `thermal` defines AT breathing height. That profile is flat below breathing
+    height, so an opacimeter at 1.5 m and one at 1.8 m sit in the same layer.
+    Asserted here as a property of the profile, so a later change to the
+    stratification blend that made the two heights differ would fail this test
+    rather than silently leave the opacimeter at the wrong height.
+    """
+    assert criteria_mod.VISIBILITY_HEIGHT_M == 1.5
+    design = Design.load(BASELINE)
+    scene = sim_mod._build_scene(design, "bored", 4.5)
+    state = fire_mod.FireState(t_s=600.0, hrr_mw=40.0, hrr_free_mw=40.0,
+                               energy_released_mj=20_000.0, suppression=1.0,
+                               pools_remaining=0, wet_time_s=0.0)
+    vent = ventilation.evaluate(scene.geom, 4.5, fire_mod.convective_kw(scene.model, 40.0))
+    field = thermal.field(scene.geom, scene.model, state, vent, MistEffect.none(),
+                          scene.fire_top_m, scene.fire_base_m,
+                          design.fire.footprint.length_m, design.fire.footprint.width_m,
+                          scene.ambient_c)
+    for x_m in criteria_mod.STATIONS.values():
+        assert field.gas_temp_c(x_m, criteria_mod.VISIBILITY_HEIGHT_M) == pytest.approx(
+            field.gas_temp_c(x_m, criteria_mod.BREATHING_HEIGHT_M))

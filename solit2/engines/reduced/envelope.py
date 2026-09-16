@@ -151,13 +151,17 @@ def _timeseries(sampled: tuple[StepRecord, ...]) -> dict[str, list[float]]:
         "t_s": [s.t_s for s in sampled],
         "hrr_mw": [s.hrr_mw for s in sampled],
         "ceiling_temp_c": [s.ceiling_temp_c for s in sampled],
-        "u35_temp_c": [s.stations["U35"].temp_c for s in sampled],
+        # U45 and D45 replace the retired U35/D35: Annex 7 Table 5 has no station
+        # at 35 m, and puts the O2/CO2/CO, humidity and visibility instruments
+        # that the section 7.2.2 life-safety evidence rests on at U45 and D45.
+        # Section 5.2.7 measures the ventilation velocity at U45 as well.
+        "u45_temp_c": [s.stations["U45"].temp_c for s in sampled],
         "u15_temp_c": [s.stations["U15"].temp_c for s in sampled],
         "d15_temp_c": [s.stations["D15"].temp_c for s in sampled],
         "d100_temp_c": [s.stations["D100"].temp_c for s in sampled],
         "hf_u15_kwm2": [s.stations["U15"].flux_kwm2 for s in sampled],
         "hf_d15_kwm2": [s.stations["D15"].flux_kwm2 for s in sampled],
-        "fed_d35": [s.stations["D35"].fed_tox for s in sampled],
+        "fed_d45": [s.stations["D45"].fed_tox for s in sampled],
         "backlayering_m": [s.backlayer_m for s in sampled],
         "velocity_ms": [s.u_eff_ms for s in sampled],
         "water_lpm": [s.water_lpm for s in sampled],
