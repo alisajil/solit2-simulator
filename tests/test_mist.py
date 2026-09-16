@@ -75,13 +75,15 @@ def test_the_envelope_is_the_footprint_plus_a_height_scaled_flank_band():
     geom = section_geometry(d)
     env = _envelope(d, geom, reach_m=2.0)
 
-    assert env.top.x1_m - env.top.x0_m == pytest.approx(8.4)
+    # the Annex 7 section 5.2.2 mock-up: 10,0 m long by 2,4 m wide
+    assert env.top.x1_m - env.top.x0_m == pytest.approx(10.0)
     assert env.top.y1_m - env.top.y0_m == pytest.approx(2.4)
-    assert env.top.area_m2 == pytest.approx(20.16, rel=0.01)
+    assert env.top.area_m2 == pytest.approx(24.0, rel=0.01)
 
-    assert env.outer.x1_m - env.outer.x0_m == pytest.approx(12.4)
+    # and the band, 2.0 m of reach added on all four sides
+    assert env.outer.x1_m - env.outer.x0_m == pytest.approx(14.0)
     assert env.outer.y1_m - env.outer.y0_m == pytest.approx(6.4)
-    assert env.flank_area_m2 == pytest.approx(79.36 - 20.16, rel=0.01)
+    assert env.flank_area_m2 == pytest.approx(89.6 - 24.0, rel=0.01)
 
 
 def test_the_flank_reach_scales_with_the_fuel_height():

@@ -178,3 +178,118 @@ def test_moving_the_opacimeter_to_the_annex7_height_cannot_change_visibility():
     for x_m in criteria_mod.STATIONS.values():
         assert field.gas_temp_c(x_m, criteria_mod.VISIBILITY_HEIGHT_M) == pytest.approx(
             field.gas_temp_c(x_m, criteria_mod.BREATHING_HEIGHT_M))
+
+
+# --- Phase 3: mock-up geometry and position (sections 5.2.2/3, 5.3.2/3) ------
+
+def _fire_preset(name: str) -> dict:
+    return load_preset("fire", name)
+
+
+def _near_face_to_wall_m(preset: dict) -> float:
+    """Wall-to-near-face distance, from the preset's own offset and width.
+
+    Annex 7 Figure 13 ("Eccentric position of mock-up in cross-section") draws
+    its "max 1.5m" dimension arrow from the NEAR FACE of the mock-up to the
+    tunnel wall, not from its centreline, and sections 5.2.3 and 5.3.3 carry
+    identical wording, so the same reading governs both classes.
+    """
+    return preset["lane_centre_offset_from_wall_m"] - preset["footprint"]["width_m"] / 2.0
+
+
+def test_the_mock_up_ends_fall_on_the_u05_and_d05_stations():
+    """Annex 7 section 6.3: "the ends of the HGV Class A mock-up are located in
+    U5 and D5. Correspondingly the fire target is located at D10."
+
+    That identity holds only for the 10,0 m mock-up of section 5.2.2, centred on
+    the virtual zero point. It ties the station map to the mock-up length: an
+    8.4 m mock-up puts its ends at -4.2 and +4.2 and fails here.
+    """
+    footprint = _fire_preset("hgv_150mw")["footprint"]
+    half_length_m = footprint["length_m"] / 2.0
+    assert criteria_mod.STATIONS["U05"] == pytest.approx(-half_length_m)
+    assert criteria_mod.STATIONS["D05"] == pytest.approx(half_length_m)
+    target_m = half_length_m + _fire_preset("hgv_150mw")["target_distance_m"]
+    assert criteria_mod.STATIONS["Target"] == pytest.approx(target_m)
+
+
+def test_class_a_mock_up_matches_the_section_5_2_2_dimensions():
+    """Annex 7 section 5.2.2 (p.10): "Height: Minimum 4,0m (having minimum 2,5m
+    height for the fuel part) / Width: 2,4m / Length: 10,0m"."""
+    footprint = _fire_preset("hgv_150mw")["footprint"]
+    assert footprint["length_m"] == 10.0
+    assert footprint["width_m"] == 2.4
+    assert footprint["top_height_m"] >= 4.0
+    # 4.0 m minimum total with a minimum 2.5 m fuel part puts the trailer
+    # platform at 1.5 m. Asserted as Annex 7's own inequality as well as the
+    # figure, so a taller mock-up may raise the platform without failing here.
+    assert footprint["base_height_m"] == 1.5
+    assert footprint["top_height_m"] - footprint["base_height_m"] >= 2.5
+
+
+def test_the_class_a_platform_height_is_no_longer_marked_as_an_assumption():
+    """Annex 7 section 5.2.2 supplies the number Task 18 had to guess, so the
+    `provenance: assumed` marker on the footprint must be gone."""
+    footprint = _fire_preset("hgv_150mw")["footprint"]
+    assert footprint.get("provenance") is None
+    assert "5.2.2" in _fire_preset("hgv_150mw")["note"]
+
+
+def test_class_b_mock_up_meets_the_section_5_3_2_minimums():
+    """Annex 7 section 5.3.2 (p.11): "Width: minimum 2,5 m / Length: minimum
+    6,5 m", the pool no more than 0,5 m above the road, and "The minimum size
+    for one pool is 4 m2". Section 5.3.1: minimum 50 MW.
+
+    Asserted as the inequalities Annex 7 states, not as the preset's figures.
+    """
+    preset = _fire_preset("pool_60mw")
+    footprint, pools = preset["footprint"], preset["pools"]
+    assert footprint["width_m"] >= 2.5
+    assert footprint["length_m"] >= 6.5
+    assert footprint["top_height_m"] <= 0.5
+    assert pools["length_m"] * pools["width_m"] >= 4.0
+    # the pools in a row have to be the mock-up they add up to
+    assert pools["count"] * pools["length_m"] == pytest.approx(footprint["length_m"])
+    assert pools["width_m"] == pytest.approx(footprint["width_m"])
+
+
+def test_the_class_b_pool_geometry_still_produces_a_fifty_megawatt_fire():
+    """Annex 7 section 5.3.1 (p.11): "The minimum size should be 50MW".
+
+    The free-burn HRR is computed from the pool geometry by Babrauskas' law, so
+    this asserts what the re-oriented mock-up actually produces rather than the
+    `design_hrr_mw` label the preset carries.
+    """
+    design = Design.load("tests/fixtures/pool_design.json")
+    model = fire_mod.build_model(design)
+    free_burn_mw = model.pool_count * model.pool_hrr_each_kw / 1000.0
+    assert free_burn_mw >= 50.0
+
+
+@pytest.mark.parametrize("preset_name", ["hgv_150mw", "pool_60mw"])
+def test_the_mock_up_sits_within_1_5_m_of_the_side_wall(preset_name):
+    """Annex 7 sections 5.2.3 and 5.3.3 (p.11): "The mock-up shall be eccentric
+    to the centre line of the test tunnel. The distance from the side wall shall
+    be less than 1,5 m."
+
+    Annex 7 rejects the centred position explicitly, and rejects it because it
+    flatters the system: "such a position is often most effective for FFFS since
+    the fire fighting medium is properly delivered on both sides."
+    """
+    preset = _fire_preset(preset_name)
+    near_face_m = _near_face_to_wall_m(preset)
+    assert 0.0 < near_face_m < MAX_WALL_TO_NEAR_FACE_M
+
+
+@pytest.mark.parametrize("preset_name", ["hgv_150mw", "pool_60mw"])
+def test_the_mock_up_is_off_the_centre_line_of_the_test_tunnel(preset_name):
+    """The same sections: eccentric, not centred. Checked against the as-tested
+    7.50 m section rather than against the offset alone, because "eccentric" is
+    a statement about where the mock-up sits in the tunnel."""
+    preset = _fire_preset(preset_name)
+    road_width_m = load_preset("tunnel", "solit2_test")["width_m"]
+    centreline_m = road_width_m / 2.0
+    assert preset["lane_centre_offset_from_wall_m"] < centreline_m
+    # and the far face still fits inside the carriageway
+    assert preset["lane_centre_offset_from_wall_m"] + preset["footprint"]["width_m"] / 2.0 \
+        < road_width_m

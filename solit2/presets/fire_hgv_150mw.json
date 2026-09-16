@@ -1,5 +1,6 @@
 {
   "preset": "hgv_150mw",
+  "note": "The Annex 7 Class A HGV mock-up. Section 5.2.1 sets a minimum potential HRR of 150 MW unsuppressed, and section 5.2.2 the geometry: 'Height: Minimum 4,0m (having minimum 2,5m height for the fuel part) / Width: 2,4m / Length: 10,0m', with 'A minimum of 400 pallets corresponding to a minimum HGV design fire size of approximately 110-140 GJ'. base_height_m 1.5 is that section's own arithmetic, not an assumption: a minimum 4.0 m total height carrying a minimum 2.5 m fuel part puts the trailer platform at 4.0 - 2.5 = 1.5 m. The 10.0 m length is what makes section 6.3's station identity hold -- 'the ends of the HGV Class A mock-up are located in U5 and D5. Correspondingly the fire target is located at D10'. lane_centre_offset_from_wall_m follows section 5.2.3: 'The mock-up shall be eccentric to the centre line of the test tunnel. The distance from the side wall shall be less than 1,5 m', measured by Figure 8/Figure 13 from the near face, so 2.5 - 2.4/2 = 1.3 m of wall clearance. Annex 7 rejects the centred position because it flatters the system: 'such a position is often most effective for FFFS since the fire fighting medium is properly delivered on both sides'.",
   "class": "A",
   "design_hrr_mw": 150.0,
   "growth": "ultrafast",
@@ -7,8 +8,8 @@
   "pallets": 408,
   "energy_mj_per_pallet": 343.0,
   "covered": false,
-  "footprint": {"length_m": 8.4, "width_m": 2.4, "top_height_m": 4.0,
-                "base_height_m": 1.0, "provenance": "assumed"},
-  "lane_centre_offset_from_wall_m": 3.4,
+  "footprint": {"length_m": 10.0, "width_m": 2.4, "top_height_m": 4.0,
+                "base_height_m": 1.5},
+  "lane_centre_offset_from_wall_m": 2.5,
   "target_distance_m": 5.0
 }

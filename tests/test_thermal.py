@@ -5,7 +5,12 @@ from solit2.engines.reduced.geometry import SectionGeometry
 from solit2.engines.reduced import sim, thermal
 
 BORE = SectionGeometry("bored", 10.146, 7.625, 70.29, "circle", 5.5, 2.125)
-# HGV load 8.4 x 2.4 m, top 4.0 m above the carriageway
+# A fixed fuel footprint for the correlation tests below: 8.4 x 2.4 m, top 4.0 m
+# above the carriageway, base 1.0 m. These are INPUTS to thermal.field and
+# max_ceiling_excess_k, not the Annex 7 mock-up -- that is 10.0 x 2.4 m with a
+# 1.5 m base (section 5.2.2), and lives in solit2/presets/fire_hgv_150mw.json,
+# where tests/test_annex7_conformance.py asserts it. Held fixed here so the
+# tuned expectations below keep testing the correlations and not the preset.
 B_FO = thermal.equivalent_radius_m(8.4, 2.4)
 H_EF = 7.625 - 4.0
 # The SOLIT2 Annex 7 test tunnel: 5.2 m crown, the geometry the c4/c5/c6

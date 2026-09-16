@@ -1,12 +1,13 @@
 {
   "preset": "pool_60mw",
+  "note": "The Annex 7 Class B diesel pool mock-up. Section 5.3.1 sets the minimum size at 50 MW; section 5.3.2 the geometry: 'Width: minimum 2,5 m / Length: minimum 6,5 m', the pool 'placed on the road level so that the maximum height of the pool is 0,5m above it', and 'The minimum size for one pool is 4 m2'. The seven 4.0 m2 pools are laid across the tunnel rather than along it -- each 1.6 m of chainage by 2.5 m of width -- so the mock-up is 11.2 x 2.5 m and clears the 2.5 m width minimum. Per-pool area, total wetted area (28 m2) and therefore the design HRR are unchanged by that re-orientation; only the aspect ratio moves. lane_centre_offset_from_wall_m follows section 5.3.3, whose wording is identical to 5.2.3 and whose Figure 13 measures 'max 1.5m' from the near face of the mock-up to the tunnel wall: 2.5 - 2.5/2 = 1.25 m of wall clearance.",
   "class": "B",
   "design_hrr_mw": 60.0,
   "growth": "fast",
   "incubation_s": 0.0,
   "covered": false,
-  "pools": {"count": 7, "length_m": 2.5, "width_m": 1.6, "fuel": "diesel"},
-  "footprint": {"length_m": 17.5, "width_m": 1.6, "top_height_m": 0.4, "base_height_m": 0.0},
-  "lane_centre_offset_from_wall_m": 3.4,
+  "pools": {"count": 7, "length_m": 1.6, "width_m": 2.5, "fuel": "diesel"},
+  "footprint": {"length_m": 11.2, "width_m": 2.5, "top_height_m": 0.4, "base_height_m": 0.0},
+  "lane_centre_offset_from_wall_m": 2.5,
   "target_distance_m": 5.0
 }
