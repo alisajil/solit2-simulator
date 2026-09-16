@@ -92,38 +92,43 @@ def test_fitted_keys_includes_the_ceiling_excess_coefficient(restored_calibratio
     assert fit.current_vector() == pytest.approx(vector)
 
 
-def test_fitted_keys_has_fifteen_entries_including_the_flame_length_coefficient(
-        restored_calibration):
-    """Task 22 adds thermal.flame_length_coefficient, the fifteenth fitted
-    constant. It decides how far a flame that cannot rise into the headroom
-    reaches downstream, and so whether the Annex 7 section 7.2.1 target is in
-    flame contact; it was a fixed 4.3 carrying a citation that cannot be checked
-    against anything in this repo. It must round-trip like every other one."""
-    assert len(fit.FITTED_KEYS) == 15
-    assert ("thermal", "flame_length_coefficient", 0.5, 5.0) in fit.FITTED_KEYS
+def test_the_flame_length_coefficient_is_constrained_not_fitted(restored_calibration):
+    """thermal.flame_length_coefficient is deliberately NOT in FITTED_KEYS.
 
-    index = [(g, n) for g, n, _, _ in fit.FITTED_KEYS].index(
-        ("thermal", "flame_length_coefficient"))
-    before = fit.current_vector()
-    assert before[index] == pytest.approx(
-        load_calibration()["thermal"]["flame_length_coefficient"]["value"])
+    It decides how far a flame that cannot rise into the headroom reaches
+    downstream, and so whether the Annex 7 section 7.2.1 target is in flame
+    contact. That outcome is a BOOLEAN, so its residual is a step function of
+    this constant and least_squares sees exactly zero gradient between steps -- a
+    run with it in FITTED_KEYS left it at 4.3, untouched, while every other
+    constant moved. It is set by bisection against the c4 measured target
+    outcome instead, so listing it as fitted would be a claim the fit cannot
+    honour.
 
-    moved = list(before)
-    moved[index] = 1.25
-    fit.apply_vector(moved)
+    The guard is the pairing: the constant exists and is calibratable by hand,
+    and it is absent from the fitted set."""
+    names = [(group, name) for group, name, _, _ in fit.FITTED_KEYS]
+    assert ("thermal", "flame_length_coefficient") not in names
+    assert "flame_length_coefficient" in load_calibration()["thermal"]
 
-    assert fit.current_vector() == pytest.approx(moved)
-    assert load_calibration()["thermal"]["flame_length_coefficient"]["value"] == (
-        pytest.approx(1.25))
+    # and the value honours the constraint it was set from: above 1.1666 the c4
+    # target ignites, which contradicts the measured outcome that anchor carries.
+    assert load_calibration()["thermal"]["flame_length_coefficient"]["value"] < 1.1666
 
 
-def test_the_flame_length_coefficient_is_marked_as_fitted_in_the_calibration():
-    """A constant that a fit moves must not still claim a literature provenance:
-    `anchor` says what a value was calibrated against, and "none" would tell a
-    reader it was read off a correlation and left alone."""
+def test_the_flame_length_coefficient_records_what_calibrated_it():
+    """A constant that was calibrated must not still claim a literature
+    provenance: `anchor` says what a value was set against, and "none" would tell
+    a reader it was read off a correlation and left alone. This one was set by
+    bisection against c4's measured target outcome, not by the fit, and the
+    entry has to say so -- naming the anchor without naming the method would
+    imply it moves with every refit, and it does not."""
     entry = load_calibration()["thermal"]["flame_length_coefficient"]
     assert entry["anchor"] != "none"
-    assert set(entry["anchor"].split(",")) <= {"c4", "c5", "c6"}
+    # `anchor` is machine-parsed as a comma-separated list of anchor ids, so the
+    # METHOD cannot live there -- putting prose in it breaks the independence
+    # checks that read it. It goes in the note.
+    assert entry["anchor"] == "c4"
+    assert "CONSTRAINT" in entry["note"]
 
 
 def test_apply_vector_is_visible_to_the_memoised_loader(restored_calibration):

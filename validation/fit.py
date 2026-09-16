@@ -56,7 +56,6 @@ FITTED_KEYS = (
     # criterion can ever pass; at its former fixed 4.3 a 10 m mock-up threw a
     # 34 m horizontal flame at 32 MW and the criterion failed everywhere. The
     # range spans a tip from half the unclipped excess to five times it.
-    ("thermal", "flame_length_coefficient", 0.5, 5.0),
 )
 
 # Relative finite-difference step for the numerical Jacobian.
