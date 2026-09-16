@@ -19,7 +19,7 @@
     "critical_velocity_height": {"value": "crown", "anchor": "none", "note": "H in Li-Ingason; mean height gives ~5% lower u_c"}
   },
   "thermal": {
-    "flame_length_coefficient": {"value": 4.3, "anchor": "none", "note": "C_f, Ingason & Li, Tunnel Fire Dynamics ch.11"},
+    "flame_length_coefficient": {"value": 4.3, "anchor": "c4,c5", "note": "C_f, the multiplier on the part of the flame that cannot rise into the headroom and is deflected downstream. FITTED against the c4/c5 Annex 7 section 7.2.1 target outcomes; value here is the pre-fit 4.3 and is NOT yet a fitted value. The previous citation (Ingason & Li, Tunnel Fire Dynamics ch.11) is retained for traceability only and cannot be verified against any source in this repository."},
     "ceiling_temp_cap_k": {"value": 1350.0, "anchor": "none"},
     "ceiling_excess_coefficient": {"value": 0.5358088362545118, "anchor": "c4,c5,c6", "note": "scale on the Li & Ingason maximum ceiling excess, absorbing correlation magnitude error and the assumed fire-base height; 1.0 is the unscaled correlation"}
   },

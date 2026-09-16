@@ -22,7 +22,8 @@
     "d15_temp_c": 55.0,
     "d100_temp_c": 50.0,
     "hf_d15_kwm2": 0.45,
-    "backlayering": false
+    "backlayering": false,
+    "target_ignited": false
   },
   "tolerances": {
     "peak_hrr_mw": {"kind": "relative", "value": 0.25},
@@ -31,6 +32,10 @@
     "d15_temp_c": {"kind": "relative", "value": 0.40},
     "d100_temp_c": {"kind": "relative", "value": 0.40},
     "hf_d15_kwm2": {"kind": "factor", "value": 2.0},
-    "backlayering": {"kind": "exact"}
+    "backlayering": {"kind": "exact"},
+    "target_ignited": {"kind": "exact"}
+  },
+  "measured_notes": {
+    "target_ignited": "Annex 7 section 7.2.1's pass condition, inferred rather than read off a measurement. Annex 2 section 6.2 does not state a per-test target outcome. The basis is: section 5.2.6 requires a fire target in every Class A test and Annex 7 Figure 12 captions one as an \"Example of undamaged target after a fire test\"; section 7.2.1 makes non-ignition the pass condition, \"Prevention of fire spread is essential in every case\"; and Annex 2 section 6.2 reports this test as a successful suppressed test -- the same, with \"The radiation was blocked by the water mist\", and its Figure 16 shows the \"Target object after a fire test with a SOLIT truck fire load\". Treat as an inference, not a published datum."
   }
 }

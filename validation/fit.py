@@ -50,6 +50,13 @@ FITTED_KEYS = (
     # symmetric in log space (0.05/0.005 == 0.50/0.05 == 10).
     ("mist", "shielding_reference_loading_kgm3", 0.005, 0.50),
     ("thermal", "ceiling_excess_coefficient", 0.3, 2.0),
+    # C_f, the multiplier on the flame that cannot rise into the headroom and is
+    # deflected downstream instead. It decides whether the Annex 7 section 7.2.1
+    # target is in flame contact, and so whether the standard's one absolute
+    # criterion can ever pass; at its former fixed 4.3 a 10 m mock-up threw a
+    # 34 m horizontal flame at 32 MW and the criterion failed everywhere. The
+    # range spans a tip from half the unclipped excess to five times it.
+    ("thermal", "flame_length_coefficient", 0.5, 5.0),
 )
 
 # Relative finite-difference step for the numerical Jacobian.

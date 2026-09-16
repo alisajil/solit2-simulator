@@ -82,17 +82,48 @@ def test_apply_vector_keeps_the_rest_of_the_calibration_intact(restored_calibrat
                 assert after[group][name] == entry, f"{group}.{name} was not being fitted"
 
 
-def test_fitted_keys_has_fourteen_entries_including_the_ceiling_excess_coefficient(
-        restored_calibration):
-    """Task 18 adds thermal.ceiling_excess_coefficient, the fourteenth fitted
-    constant, and it must round-trip through current_vector/apply_vector like
-    every other one."""
-    assert len(fit.FITTED_KEYS) == 14
+def test_fitted_keys_includes_the_ceiling_excess_coefficient(restored_calibration):
+    """Task 18 adds thermal.ceiling_excess_coefficient, and it must round-trip
+    through current_vector/apply_vector like every other one."""
     assert ("thermal", "ceiling_excess_coefficient", 0.3, 2.0) in fit.FITTED_KEYS
 
     vector = fit.current_vector()
     fit.apply_vector(vector)
     assert fit.current_vector() == pytest.approx(vector)
+
+
+def test_fitted_keys_has_fifteen_entries_including_the_flame_length_coefficient(
+        restored_calibration):
+    """Task 22 adds thermal.flame_length_coefficient, the fifteenth fitted
+    constant. It decides how far a flame that cannot rise into the headroom
+    reaches downstream, and so whether the Annex 7 section 7.2.1 target is in
+    flame contact; it was a fixed 4.3 carrying a citation that cannot be checked
+    against anything in this repo. It must round-trip like every other one."""
+    assert len(fit.FITTED_KEYS) == 15
+    assert ("thermal", "flame_length_coefficient", 0.5, 5.0) in fit.FITTED_KEYS
+
+    index = [(g, n) for g, n, _, _ in fit.FITTED_KEYS].index(
+        ("thermal", "flame_length_coefficient"))
+    before = fit.current_vector()
+    assert before[index] == pytest.approx(
+        load_calibration()["thermal"]["flame_length_coefficient"]["value"])
+
+    moved = list(before)
+    moved[index] = 1.25
+    fit.apply_vector(moved)
+
+    assert fit.current_vector() == pytest.approx(moved)
+    assert load_calibration()["thermal"]["flame_length_coefficient"]["value"] == (
+        pytest.approx(1.25))
+
+
+def test_the_flame_length_coefficient_is_marked_as_fitted_in_the_calibration():
+    """A constant that a fit moves must not still claim a literature provenance:
+    `anchor` says what a value was calibrated against, and "none" would tell a
+    reader it was read off a correlation and left alone."""
+    entry = load_calibration()["thermal"]["flame_length_coefficient"]
+    assert entry["anchor"] != "none"
+    assert set(entry["anchor"].split(",")) <= {"c4", "c5", "c6"}
 
 
 def test_apply_vector_is_visible_to_the_memoised_loader(restored_calibration):

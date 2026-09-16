@@ -123,3 +123,52 @@ def test_tolerance_kinds():
     assert compare.within(10.0, 14.0, {"kind": "absolute", "value": 5.0})
     assert compare.within(True, True, {"kind": "exact"})
     assert not compare.within(True, False, {"kind": "exact"})
+
+
+# --- Annex 7 section 7.2.1: the target outcome as an anchored quantity -------
+
+def test_the_target_ignited_extractor_reads_the_trace_not_a_criterion():
+    """Every extractor reads the trace or the peaks, never a criterion -- an
+    authority can switch a criterion off, and an anchor must not stop working
+    when it does. `target_ignited` is reconstructed from the two peaks the run
+    already records, against the same two thresholds `criteria` uses."""
+    from solit2.engines.reduced.criteria import (FLAME_CONTACT_FLUX_KWM2,
+                                                 IGNITION_EXPOSURE_S)
+
+    quiet = _FakeResult(timeseries={}, peaks={
+        "target_peak_flux_kwm2": FLAME_CONTACT_FLUX_KWM2 - 1.0,
+        "target_max_exposure_s": IGNITION_EXPOSURE_S - 1.0})
+    contact = _FakeResult(timeseries={}, peaks={
+        "target_peak_flux_kwm2": FLAME_CONTACT_FLUX_KWM2,
+        "target_max_exposure_s": 0.0})
+    sustained = _FakeResult(timeseries={}, peaks={
+        "target_peak_flux_kwm2": 13.0,
+        "target_max_exposure_s": IGNITION_EXPOSURE_S})
+
+    assert compare.EXTRACTORS["target_ignited"](quiet) is False
+    assert compare.EXTRACTORS["target_ignited"](contact) is True
+    assert compare.EXTRACTORS["target_ignited"](sustained) is True
+
+
+def test_a_boolean_target_ignited_compares_and_scores_both_ways():
+    """A measured `false` matches a modelled `false` and fails against a modelled
+    `true`, and the residual is 0 or the anchor weight accordingly -- the same
+    path `backlayering` already takes."""
+    exact = {"kind": "exact"}
+    assert compare.within(False, False, exact)
+    assert not compare.within(False, True, exact)
+    assert compare.within(True, True, exact)
+    assert not compare.within(True, False, exact)
+
+
+def test_the_class_a_anchors_carry_a_target_outcome_and_the_class_b_one_does_not():
+    """Annex 7 section 5.2.6: "Fire target shall be used with Class A fires."
+    There is no target in a Class B pool-fire test, so c6 must not claim one.
+    c4 and c5 are the Class A tests and carry the section 7.2.1 pass condition.
+    """
+    by_id = {a.id: a for a in compare.load_anchors()}
+    for anchor_id in ("c4", "c5"):
+        assert by_id[anchor_id].measured["target_ignited"] is False
+        assert by_id[anchor_id].tolerances["target_ignited"] == {"kind": "exact"}
+    assert "target_ignited" not in by_id["c6"].measured
+    assert by_id["c6"].design.fire.fire_class == "B"

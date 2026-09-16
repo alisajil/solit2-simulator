@@ -392,3 +392,57 @@ def test_ceiling_excess_coefficient_scales_linearly_below_the_cap_and_still_caps
     capped = thermal.max_ceiling_excess_k(hrr_kw=150_000, q_conv_kw=97_500,
                                           u_ms=4.5, b_fo_m=B_FO, h_ef_m=H_EF)
     assert capped == pytest.approx(base_cal["thermal"]["ceiling_temp_cap_k"]["value"])
+
+
+def test_flame_length_coefficient_scales_the_deflected_tip_linearly(monkeypatch):
+    """`flame_length_coefficient` is a plain multiplier on the flame length that
+    cannot rise into the headroom, so halving it halves the tip. It is a fitted
+    constant now, not a literature value, and a fit can only move a constant that
+    the output depends on smoothly."""
+    from solit2.engines.reduced.ventilation import evaluate
+    from solit2.engines.reduced import fire
+    from solit2.engines.reduced.state import MistEffect
+    from solit2.schema.design import Design
+    d = Design.load("examples/designs/road-tunnel-twin-bore.json")
+    model = fire.build_model(d)
+    st = fire.FireState(t_s=600.0, hrr_mw=32.0, hrr_free_mw=32.0,
+                        energy_released_mj=10_000.0, suppression=0.0,
+                        pools_remaining=0, wet_time_s=0.0)
+    vent = evaluate(TEST_TUNNEL, 2.25, fire.convective_kw(model, 32.0))
+    base_cal = copy.deepcopy(thermal.load_calibration())
+
+    def _tip_at(coefficient):
+        cal = copy.deepcopy(base_cal)
+        cal["thermal"]["flame_length_coefficient"]["value"] = coefficient
+        monkeypatch.setattr(thermal, "load_calibration", lambda: cal)
+        return thermal.field(TEST_TUNNEL, model, st, vent, MistEffect.none(),
+                             fire_top_m=4.0, fire_base_m=1.5, fire_length_m=10.0,
+                             fire_width_m=2.4, ambient_c=20.0).flame_tip_x_m
+
+    unit = _tip_at(1.0)
+    assert unit > 0.0, "a 32 MW mock-up flame is taller than the headroom above it"
+    assert _tip_at(2.0) == pytest.approx(2.0 * unit)
+    assert _tip_at(0.5) == pytest.approx(0.5 * unit)
+    assert _tip_at(0.0) == pytest.approx(0.0)
+
+
+def test_a_flame_that_fits_under_the_ceiling_is_not_deflected_at_any_coefficient(monkeypatch):
+    """The max(..., 0.0) clip survives: a small fire whose flame clears neither
+    the fuel top nor the crown has no deflected tip however large the constant."""
+    from solit2.engines.reduced.ventilation import evaluate
+    from solit2.engines.reduced import fire
+    from solit2.engines.reduced.state import MistEffect
+    from solit2.schema.design import Design
+    d = Design.load("examples/designs/road-tunnel-twin-bore.json")
+    model = fire.build_model(d)
+    st = fire.FireState(t_s=60.0, hrr_mw=0.5, hrr_free_mw=0.5,
+                        energy_released_mj=30.0, suppression=0.0,
+                        pools_remaining=0, wet_time_s=0.0)
+    vent = evaluate(TEST_TUNNEL, 2.25, fire.convective_kw(model, 0.5))
+    cal = copy.deepcopy(thermal.load_calibration())
+    cal["thermal"]["flame_length_coefficient"]["value"] = 5.0
+    monkeypatch.setattr(thermal, "load_calibration", lambda: cal)
+    field = thermal.field(TEST_TUNNEL, model, st, vent, MistEffect.none(),
+                          fire_top_m=4.0, fire_base_m=1.5, fire_length_m=10.0,
+                          fire_width_m=2.4, ambient_c=20.0)
+    assert field.flame_tip_x_m == pytest.approx(0.0)

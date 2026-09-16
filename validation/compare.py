@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from solit2.engines.reduced import envelope
+from solit2.engines.reduced.criteria import FLAME_CONTACT_FLUX_KWM2, IGNITION_EXPOSURE_S
 from solit2.schema.design import Design
 
 ANCHOR_DIR = Path(__file__).resolve().parent / "anchors"
@@ -84,6 +85,23 @@ def within(measured, modelled, tolerance: dict) -> bool:
     raise ValueError(f"unknown tolerance kind {kind!r}")
 
 
+def _target_ignited(result) -> bool:
+    """SOLIT2 Annex 7 section 7.2.1's outcome, rebuilt from the run's own peaks.
+
+    `criteria._target_ignited` asks the same question of the same two thresholds,
+    but it is a CRITERION, and the rule below is that no anchor may depend on one
+    existing: an authority can replace the criteria list, and an anchor that read
+    it would then compare against nothing. `target_peak_flux_kwm2` and
+    `target_max_exposure_s` are maxima over the whole trace, and
+    `any(flux_i >= F or exposure_i >= E)` is exactly `max(flux) >= F or
+    max(exposure) >= E`, so this is the same predicate on data the run always
+    records.
+    """
+    peaks = result.peaks
+    return bool(peaks["target_peak_flux_kwm2"] >= FLAME_CONTACT_FLUX_KWM2
+                or peaks["target_max_exposure_s"] >= IGNITION_EXPOSURE_S)
+
+
 # How each comparable quantity is pulled out of a result. Every entry reads the
 # trace or the peaks, never a criterion: the acceptance criteria are what an
 # authority sets, not what a fire test measured, so an anchor must not depend on
@@ -98,7 +116,9 @@ EXTRACTORS = {
     "hf_d15_kwm2": lambda r: max(r.timeseries["hf_d15_kwm2"]),
     "backlayering": lambda r: bool(r.events["backlayering"]["occurred"]),
     "pools_extinguished": lambda r: r.events["pools_extinguished_at_s"] is not None,
+    "target_ignited": _target_ignited,
 }
+
 
 
 def _modelled(result, quantity: str):
