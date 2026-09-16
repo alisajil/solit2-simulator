@@ -50,6 +50,11 @@ FITTED_KEYS = (
     # symmetric in log space (0.05/0.005 == 0.50/0.05 == 10).
     ("mist", "shielding_reference_loading_kgm3", 0.005, 0.50),
     ("thermal", "ceiling_excess_coefficient", 0.3, 2.0),
+    # Reachable only since the droplet size distribution removed the delivery
+    # cliff: peak HRR is now a CONTINUOUS function of this exponent (c5 peak
+    # 12.0 -> 15.4 -> 23.3 MW across 0.0 -> 0.5 -> 0.7), so least_squares has a
+    # gradient to work with where before it had a step.
+    ("mist", "suppression_hardening_exponent", 0.0, 1.5),
     # C_f, the multiplier on the flame that cannot rise into the headroom and is
     # deflected downstream instead. It decides whether the Annex 7 section 7.2.1
     # target is in flame contact, and so whether the standard's one absolute
