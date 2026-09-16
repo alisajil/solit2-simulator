@@ -33,13 +33,24 @@ over, so the split is what makes the run tractable at all.
 measured from vertical, 0 being straight down, so the tilt passes straight
 through with no conversion.
 
-Each mode's droplets are not treated as falling alone. `_compute_geometry` asks
-`droplet.spray_shielding_factor` how dense that mode's spray core is and scales
-the gas temperature rise handed to `integrate` by the answer, because a droplet
-inside a dense cloud of others feels a locally cooled, locally humidified
-environment rather than the full plume. Everything the shield depends on is
-fixed by the design, and the gas temperature it scales is already bucketed, so
-it composes with the R4 cache without adding a dimension to the key.
+A mode is a POPULATION of droplet sizes, not one droplet. Its `smd_um` is a
+Sauter mean, so `_mode_geometry` expands it into equal-volume size bins with
+`droplet.size_distribution` and flies each of them, then sums the bins back into
+one delivery weighted by the water each actually lands. This is what stops the
+delivery being effectively binary in gas temperature: one diameter either
+survives the fall or does not, whereas a spectrum's coarse tail keeps arriving
+after its fines have evaporated. The trajectory, drag and evaporation physics
+are untouched -- the same `integrate` is simply called once per bin.
+
+Each mode's droplets are not treated as falling alone either. `_mode_geometry`
+asks `droplet.spray_shielding_factor` how dense that mode's spray core is and
+scales the gas temperature rise handed to `integrate` by the answer, because a
+droplet inside a dense cloud of others feels a locally cooled, locally
+humidified environment rather than the full plume. Everything the shield depends
+on is fixed by the design, and the gas temperature it scales is already
+bucketed, so it composes with the R4 cache without adding a dimension to the
+key; so does the spectrum, which depends on nothing the key does not already
+carry.
 """
 from __future__ import annotations
 
@@ -48,10 +59,16 @@ from dataclasses import dataclass
 
 import numpy as np
 
-from solit2.engines.reduced.droplet import integrate, spray_shielding_factor
+from solit2.engines.reduced.droplet import (
+    SizeBin,
+    StillAirborne,
+    integrate,
+    size_distribution,
+    spray_shielding_factor,
+)
 from solit2.engines.reduced.geometry import NozzlePosition, SectionGeometry
 from solit2.engines.reduced.state import MistEffect
-from solit2.schema.design import Design
+from solit2.schema.design import Design, Mode
 from solit2.schema.presets import load_calibration, register_cache_invalidation_hook
 
 WATER_DENSITY_KGM3 = 1000.0
@@ -123,7 +140,7 @@ class ModeDelivery:
 
 @dataclass(frozen=True, eq=False)
 class _ModeGeometry:
-    """The flow-independent half of a mode's delivery.
+    """The flow-independent half of a mode's delivery, summed over its spectrum.
 
     `unit_top_per_lpm` and `unit_flank_per_lpm` are the shares of each head's
     cone landing on the two surfaces, summed over every head, for one litre per
@@ -131,6 +148,12 @@ class _ModeGeometry:
     envelope grid. All three scale linearly with flow, so none needs recomputing
     when only the pump ramp moves. The mask is read-only because it is shared by
     every caller that hits the same cache entry.
+
+    One of these still stands for one MODE, not one droplet size: the mode's
+    size bins are summed into it by `_sum_over_bins`, so `drift_m` and the two
+    unit overlaps are averages over the spectrum weighted by the water each bin
+    lands, and `surviving_fraction` is the share of the mode's whole volume that
+    is still liquid at the end of the fall.
     """
     mode_id: str
     drift_m: float
@@ -146,13 +169,15 @@ class _ModeGeometry:
 # thousands of designs makes the footprint matter.
 _GEOMETRY_CACHE: dict[tuple, tuple[_ModeGeometry, ...]] = {}
 
-# `_compute_geometry` calls `spray_shielding_factor`, which reads its own
-# calibration constants internally -- values `_geometry_key` cannot see because
-# they never pass through its arguments. A fit that changes them would
-# otherwise go on being served trajectories computed under whatever value
-# happened to populate a cache entry first. Registering unconditionally, at
-# import time, means that discipline does not depend on `_geometry_key` (or
-# whoever edits it next) knowing every constant every callee reads.
+# `_compute_geometry` calls `spray_shielding_factor` and `size_distribution`,
+# both of which read their own calibration constants internally -- values
+# `_geometry_key` cannot see because they never pass through its arguments. A
+# fit that changes them would otherwise go on being served trajectories computed
+# under whatever value happened to populate a cache entry first. Registering
+# unconditionally, at import time, means that discipline does not depend on
+# `_geometry_key` (or whoever edits it next) knowing every constant every callee
+# reads -- `droplet_size_spread` is the second constant to arrive this way and
+# needed no change here at all.
 register_cache_invalidation_hook(_GEOMETRY_CACHE.clear)
 
 
@@ -244,49 +269,169 @@ def _capped(on_top: float, on_flank: float) -> tuple[float, float]:
     return on_top / total, on_flank / total
 
 
+@dataclass(frozen=True, eq=False)
+class _BinFlight:
+    """What one size bin of one mode did on the way down.
+
+    `surviving_fraction` is how much of the bin is still liquid when its flight
+    ends, which is what the gas cooling is owed; `arrived` says whether that
+    liquid reached this fuel at all. The two part company only for a bin the
+    airflow carries out of the zone -- see `_carried_away` -- which is still
+    water but is water somewhere else.
+    """
+    volume_fraction: float
+    surviving_fraction: float
+    arrived: bool
+    drift_m: float
+    unit_top_per_lpm: float
+    unit_flank_per_lpm: float
+    coverage_mask: np.ndarray
+
+
 def _compute_geometry(design: Design, positions: tuple[NozzlePosition, ...],
                       envelope: FuelEnvelope, drop_height_m: float, u_eff_ms: float,
                       gas_excess_k: float) -> tuple[_ModeGeometry, ...]:
-    """The expensive half: one trajectory and one footprint sweep per mode."""
-    tilt_deg = design.nozzles.mounting.tilt_deg
+    """The expensive half: one trajectory and one footprint sweep per size bin."""
     gx, gy = _grid(envelope.outer)
     top_mask = _top_face_mask(envelope.top, gx, gy)
-    out = []
-    for mode in design.nozzles.modes:
-        # A droplet falls inside a cloud of others from the same spray, which
-        # locally cools and humidifies its gas, so it feels only part of the
-        # plume's temperature rise. This changes what thermal environment the
-        # droplet experiences, not its ballistics: `integrate` is unchanged and
-        # only its `gas_excess_k` argument is scaled. The coupling that follows
-        # is real -- less evaporation keeps the droplet larger, which changes its
-        # drag and so its drift -- and is not fought.
-        # ponytail: shielding computed at full rated flow, not scaled by the ramp
-        # fraction -- the differential effect during the ~30 s ramp is
-        # second-order against exposure over the full run; revisit if a design
-        # with an unusually long ramp is ever evaluated. Ruling R4 also requires
-        # it: a shield that depended on `flow_fraction` would put the pump ramp
-        # into the geometry cache key and the whole run's tractability with it.
-        shield = spray_shielding_factor(
-            mode_flow_lpm=design.nozzles.mode_flow_lpm(mode.id),
-            cone_half_angle_deg=mode.cone_half_angle_deg,
-            launch_velocity_ms=mode.launch_velocity_ms,
-            diameter_um=design.nozzles.smd_um(mode.id),
-            drop_height_m=drop_height_m,
-        )
-        traj = integrate(
-            diameter_um=design.nozzles.smd_um(mode.id),
-            launch_velocity_ms=mode.launch_velocity_ms,
-            launch_angle_deg=tilt_deg,
-            drop_height_m=drop_height_m,
-            air_velocity_ms=u_eff_ms,
-            gas_excess_k=gas_excess_k * shield,
-        )
-        radius = drop_height_m * math.tan(math.radians(mode.cone_half_angle_deg))
+    return tuple(_mode_geometry(design, mode, positions, gx, gy, top_mask,
+                                drop_height_m, u_eff_ms, gas_excess_k)
+                 for mode in design.nozzles.modes)
+
+
+def _mode_geometry(design: Design, mode: Mode, positions: tuple[NozzlePosition, ...],
+                   gx: np.ndarray, gy: np.ndarray, top_mask: np.ndarray,
+                   drop_height_m: float, u_eff_ms: float,
+                   gas_excess_k: float) -> _ModeGeometry:
+    """Fly one mode's whole droplet spectrum and sum it back into one delivery.
+
+    A mode's `smd_um` is a Sauter MEAN, so the mode is a population spread about
+    it, not a single diameter. Each bin makes the same flight through the same
+    unchanged `integrate`, and lands its own footprint at its own drift -- a
+    coarse bin keeps its momentum and lands near its head, a fine one is carried
+    downstream and is fed by a head further upstream. Summing over the bins is
+    what stops the delivery being binary in gas temperature: the coarse tail is
+    still arriving after the fines have evaporated.
+
+    The spray-core shield (module docstring) is computed ONCE per mode, from the
+    mode's own SMD and its whole flow, exactly as before the spectrum existed,
+    and scales only the `gas_excess_k` every bin is handed. The loading it
+    measures is the mode's water packed into the mode's cone -- a property of
+    the cloud, not of the droplet being tracked -- so splitting it per bin would
+    divide the same water by itself and is not what the model says.
+
+    ponytail: shielding computed at full rated flow, not scaled by the ramp
+    fraction -- the differential effect during the ~30 s ramp is second-order
+    against exposure over the full run; revisit if a design with an unusually
+    long ramp is ever evaluated. Ruling R4 also requires it: a shield that
+    depended on `flow_fraction` would put the pump ramp into the geometry cache
+    key and the whole run's tractability with it.
+    """
+    smd_um = design.nozzles.smd_um(mode.id)
+    shield = spray_shielding_factor(
+        mode_flow_lpm=design.nozzles.mode_flow_lpm(mode.id),
+        cone_half_angle_deg=mode.cone_half_angle_deg,
+        launch_velocity_ms=mode.launch_velocity_ms,
+        diameter_um=smd_um,
+        drop_height_m=drop_height_m,
+    )
+    radius_m = drop_height_m * math.tan(math.radians(mode.cone_half_angle_deg))
+    flights = []
+    for size_bin in size_distribution(smd_um):
+        try:
+            traj = integrate(
+                diameter_um=size_bin.diameter_um,
+                launch_velocity_ms=mode.launch_velocity_ms,
+                launch_angle_deg=design.nozzles.mounting.tilt_deg,
+                drop_height_m=drop_height_m,
+                air_velocity_ms=u_eff_ms,
+                gas_excess_k=gas_excess_k * shield,
+            )
+        except StillAirborne:
+            flights.append(_carried_away(size_bin, gx.shape))
+            continue
         unit_top, unit_flank, mask = _sweep(positions, gx, gy, top_mask,
-                                            traj.drift_m, radius)
-        out.append(_ModeGeometry(mode.id, traj.drift_m, traj.surviving_fraction,
-                                 radius, unit_top, unit_flank, mask))
-    return tuple(out)
+                                            traj.drift_m, radius_m)
+        flights.append(_BinFlight(size_bin.volume_fraction, traj.surviving_fraction,
+                                  True, traj.drift_m, unit_top, unit_flank, mask))
+    return _sum_over_bins(mode.id, radius_m, tuple(flights))
+
+
+def _carried_away(size_bin: SizeBin, grid_shape: tuple[int, ...]) -> _BinFlight:
+    """A size bin still airborne when the flight clock runs out.
+
+    This is what the fine tail of a real spectrum does under a long throw: a
+    sub-40 um droplet falls at a few centimetres a second, so it is still in the
+    air a minute later and the tunnel airflow has taken it hundreds of metres
+    downstream, far beyond the last head of the zone. It delivers nothing to
+    this fuel, and its footprint is nowhere on this envelope.
+
+    It is booked as having evaporated NOTHING, which is not a convenience: the
+    branch is only reachable in near-cold gas. Evaporation is a d-squared law, so
+    a droplet small enough to still be falling after `max_time_s` is also small
+    enough to have crossed `FULLY_EVAPORATED_UM` and returned long before that
+    -- at anything above a couple of kelvin of gas excess, the reference
+    constants put a 36 um drop's whole lifetime under a second. Reaching the
+    clock instead of the evaporation cut-off is therefore itself the proof that
+    the gas was too cold to take any measurable water off this bin.
+    """
+    return _BinFlight(volume_fraction=size_bin.volume_fraction,
+                      surviving_fraction=1.0, arrived=False, drift_m=0.0,
+                      unit_top_per_lpm=0.0, unit_flank_per_lpm=0.0,
+                      coverage_mask=np.zeros(grid_shape, dtype=bool))
+
+
+def _sum_over_bins(mode_id: str, radius_m: float,
+                   flights: tuple[_BinFlight, ...]) -> _ModeGeometry:
+    """Collapse a mode's size bins back into the one delivery the rest reads.
+
+    `surviving_fraction` is the share of the mode's water volume still liquid at
+    the fuel plane: each bin's volume share times the share of that bin that
+    survived. The two unit overlaps and the drift are then averaged over the
+    bins weighted by ARRIVING water -- volume share times survival -- so that
+    `_deliveries` multiplying flow by `surviving_fraction` and by the overlap
+    reproduces the per-bin sum exactly. A bin that evaporated on the way down
+    therefore cannot pull the mode's footprint toward wherever it was heading.
+
+    The coverage mask is the union over bins, which is the mode's real
+    footprint: the spray lands wherever any part of its spectrum lands, and the
+    spread of drifts across the spectrum is precisely what widens it.
+    """
+    liquid = tuple(f.volume_fraction * f.surviving_fraction for f in flights)
+    surviving_fraction = sum(liquid)
+    # A spectrum that lost every last drop delivers nothing whatever the shares
+    # are; fall back to volume weights so the mode is still described rather
+    # than collapsing to zero.
+    weights = (tuple(q / surviving_fraction for q in liquid) if surviving_fraction > 0
+               else tuple(f.volume_fraction for f in flights))
+    covered = flights[0].coverage_mask.copy()
+    for f in flights[1:]:
+        covered |= f.coverage_mask
+    covered.flags.writeable = False
+    return _ModeGeometry(
+        mode_id=mode_id,
+        drift_m=_mean_drift_m(weights, flights),
+        surviving_fraction=surviving_fraction,
+        footprint_radius_m=radius_m,
+        unit_top_per_lpm=sum(w * f.unit_top_per_lpm for w, f in zip(weights, flights)),
+        unit_flank_per_lpm=sum(w * f.unit_flank_per_lpm for w, f in zip(weights, flights)),
+        coverage_mask=covered,
+    )
+
+
+def _mean_drift_m(weights: tuple[float, ...], flights: tuple[_BinFlight, ...]) -> float:
+    """How far downstream the mode's water lands, over the bins that land.
+
+    A bin the airflow carried out of the zone has no landing point on this
+    envelope to average in -- its drift is not zero, it is unbounded -- so it is
+    left out rather than counted as landing under its own nozzle. The zero
+    returned when NOTHING lands says exactly that: there is no footprint.
+    """
+    landing = tuple(w for w, f in zip(weights, flights) if f.arrived)
+    total = sum(landing)
+    if total <= 0.0:
+        return 0.0
+    return sum(w * f.drift_m for w, f in zip(weights, flights) if f.arrived) / total
 
 
 def _geometry_key(design: Design, positions: tuple[NozzlePosition, ...],
@@ -392,7 +537,15 @@ def _cooling_fraction(design: Design, geometries: tuple[_ModeGeometry, ...], hea
 def _curtain_transmissivity(design: Design, geom: SectionGeometry,
                             geometries: tuple[_ModeGeometry, ...], head_count: int,
                             flow_fraction: float, u_eff_ms: float) -> float:
-    """Beer-Lambert through the water suspended in the active zone."""
+    """Beer-Lambert through the water suspended in the active zone.
+
+    Reads the mode's Sauter mean and not its spectrum, and is exactly right to
+    do so. Geometric-optics extinction is proportional to surface area per unit
+    volume, the bin sum `sum(v_i / d_i)` is that quantity, and
+    `droplet.size_distribution` scales the spectrum so it equals `1 / smd_um` --
+    which is the definition of a Sauter mean. Summing over the bins here would
+    compute the same number the long way round.
+    """
     active_volume = design.active_length_m * geom.free_area_m2
     kappa = 0.0
     for g in geometries:

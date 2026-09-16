@@ -10,8 +10,15 @@ drag and d-squared-law evaporation driven by the local gas temperature rise.
 off vertical therefore both cuts the downward velocity component and adds a
 downstream one, so it lengthens the drift rather than shortening it.
 
-ponytail: one representative droplet per mode, two-dimensional - replace with a
-size distribution if the FDS tier shows the tail of the spectrum matters.
+`integrate` flies ONE diameter, and a mode's `smd_um` is a Sauter MEAN, so a
+mode is not one diameter. `size_distribution` expands it into the population it
+stands for; the caller flies each bin through the same `integrate` and sums the
+result over the bins' volume shares. That is the whole of the population model:
+the trajectory, drag and evaporation physics below are untouched by it.
+
+ponytail: two-dimensional flight, one representative droplet per SIZE BIN -
+promote to a three-dimensional trajectory if the FDS tier shows the lateral
+spread matters.
 """
 from __future__ import annotations
 
@@ -28,6 +35,20 @@ STOKES_REYNOLDS_LIMIT = 1000.0
 NEWTON_DRAG_COEFFICIENT = 0.44
 FULLY_EVAPORATED_UM = 10.0
 LPM_PER_M3S = 60_000.0
+
+# How many equal-volume size bins one mode's spectrum is discretised into.
+# A FIXED MODELLING CONSTANT, chosen by convergence and NOT FITTED. Swept 1 to
+# 48 on the c4 reference case (task-25 report): every anchor output is converged
+# by 8 bins -- c4 peak HRR moves 29.75 -> 29.70 MW between 8 and 48, c5 0.01 MW,
+# c6 and every temperature not at all -- while the raw delivery at the hot end
+# is still creeping about 1.5% per doubling at 48, because Rosin-Rammler has an
+# unbounded tail and the coarsest bin's representative diameter grows slowly
+# with the bin count. Twelve is past the knee on both measures and costs 1.19 s
+# on a cold `compare.residuals()` call against 0.53 s for a single drop -- 2.2x,
+# where 24 bins is 1.89 s and 3.6x. Every bin multiplies the trajectory work, and
+# a fit runs that call hundreds of times, always cold: writing calibration clears
+# the geometry cache.
+SIZE_DISTRIBUTION_BINS = 12
 
 # Where down the fall the spray's water loading is sampled: the midpoint.
 # ponytail: one sample point for the whole flight. The cone widens and the
@@ -109,6 +130,84 @@ def spray_shielding_factor(mode_flow_lpm: float, cone_half_angle_deg: float,
     return floor + (1.0 - floor) / (1.0 + loading_kgm3 / reference_loading)
 
 
+class StillAirborne(RuntimeError):
+    """The droplet had not reached the plane when the flight clock ran out.
+
+    A `RuntimeError` subclass, so anything that caught the plain `RuntimeError`
+    `integrate` used to raise still catches this; the flight itself is unchanged.
+    It is named because a caller flying a whole SIZE SPECTRUM meets it as an
+    ordinary outcome rather than as a mis-specified design: the fine tail of a
+    real spray genuinely does not reach the fuel, it is carried away, and the
+    caller has to be able to tell that apart from any other runtime failure.
+    """
+
+
+@dataclass(frozen=True)
+class SizeBin:
+    """One slice of a mode's droplet spectrum, and its share of the WATER VOLUME.
+
+    Volume, not droplet count. Everything downstream of the spray is a volume
+    flow -- litres per minute onto the fuel, millimetres per minute of
+    application -- so these weights have to be volume shares for the sum over
+    bins to be the mode's flow. Number shares would be the same spectrum read
+    the other way round and would put nearly all the weight on the fines, which
+    carry cubically less water each; see `size_distribution`.
+    """
+    diameter_um: float
+    volume_fraction: float
+
+
+def size_distribution(smd_um: float,
+                      bin_count: int | None = None) -> tuple[SizeBin, ...]:
+    """A mode's Sauter mean diameter expanded into the spectrum it stands for.
+
+    Rosin-Rammler, the standard form for pressure-atomised sprays: the volume
+    fraction of the spray held in droplets coarser than `d` is
+    `exp(-(d / X) ** n)`, with `n` the spread exponent (`droplet_size_spread` in
+    calibration.json; lower is wider) and `X` a characteristic diameter. Its
+    spread parameter is a quantity nozzle datasheets actually quote, which is
+    why it is the right form here rather than a log-normal.
+
+    The spectrum is cut into `bin_count` slices of EQUAL VOLUME and each is
+    represented by the diameter at its own mid-quantile. Equal volume is what
+    makes the weighting impossible to get backwards -- every weight is
+    `1 / bin_count` by construction -- and it puts the bins where the water is
+    rather than where the droplets are.
+
+    `X` is then set so that the discrete set's own Sauter mean,
+    `1 / sum(v_i / d_i)` (volume over surface, which is what a Sauter mean is),
+    equals `smd_um` exactly, at any bin count. Two things follow. At
+    `bin_count == 1` this returns the single representative drop unchanged, so
+    the population model is a strict generalisation of the one it replaces. And
+    the spray's total surface area per unit volume is preserved, so the
+    radiation extinction computed from the mode's SMD in `mist` stays exactly
+    right without knowing the spectrum exists.
+    """
+    if smd_um <= 0:
+        raise ValueError(f"a spray's Sauter mean diameter must be positive, got {smd_um} um")
+    # Read at call time, not bound as a default, so the convergence sweep that
+    # chose it can be re-run against the shipped code by setting one name.
+    bin_count = SIZE_DISTRIBUTION_BINS if bin_count is None else bin_count
+    if bin_count < 1:
+        raise ValueError(f"a spectrum needs at least one size bin, got {bin_count}")
+
+    spread = load_calibration()["mist"]["droplet_size_spread"]["value"]
+    if spread <= 1.0:
+        raise ValueError(
+            f"droplet_size_spread={spread} is not a spray: the Rosin-Rammler Sauter "
+            f"mean is X * gamma(1 - 1/n), which diverges at n = 1 and is negative "
+            f"below it, so such a spectrum has unbounded surface area per unit volume"
+        )
+
+    volume_fraction = 1.0 / bin_count
+    # Inverse Rosin-Rammler at the mid-quantile of each equal-volume slice, in
+    # units of the characteristic diameter X, which is still to be determined.
+    shape = tuple((-math.log(1.0 - (i + 0.5) / bin_count)) ** (1.0 / spread)
+                  for i in range(bin_count))
+    scale_um = smd_um * sum(volume_fraction / u for u in shape)
+    return tuple(SizeBin(u * scale_um, volume_fraction) for u in shape)
+
+
 @dataclass(frozen=True)
 class Trajectory:
     drift_m: float
@@ -163,7 +262,7 @@ def integrate(diameter_um: float, launch_velocity_ms: float, launch_angle_deg: f
             d_squared = max(d**2 - k_evap * dt_s, 0.0)
             d = math.sqrt(d_squared)
 
-    raise RuntimeError(
+    raise StillAirborne(
         f"droplet of {diameter_um} um did not reach the plane {drop_height_m} m below "
         f"the nozzle within {max_time_s} s; check the launch conditions"
     )

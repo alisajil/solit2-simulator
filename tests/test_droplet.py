@@ -205,3 +205,126 @@ def test_shielding_only_lands_the_reference_droplet_at_a_low_evaporation_constan
     assert at_lower_bound.reached_target
     assert at_lower_bound.surviving_fraction > 0.5
     assert not at_ten_x_higher.reached_target
+
+
+# --- task 25: the spray is a population, not one representative drop ---------
+#
+# `integrate` flies one diameter. A mode's `smd_um` is a Sauter MEAN, so a real
+# spray carries droplets spread around it, and it is that spread -- not the mean
+# -- that decides how the delivery decays with gas temperature. These tests pin
+# the SHAPE of the spectrum and the volume bookkeeping, never the fitted spread
+# value, which lives in calibration.json as `droplet_size_spread`.
+
+REFERENCE_SMD_UM = 90.0
+
+
+def _spread() -> float:
+    return load_calibration()["mist"]["droplet_size_spread"]["value"]
+
+
+def _number_fractions(bins) -> list[float]:
+    """Convert volume shares to number shares: n_i is proportional to v_i / d_i**3."""
+    raw = [b.volume_fraction / b.diameter_um ** 3 for b in bins]
+    total = sum(raw)
+    return [r / total for r in raw]
+
+
+def test_the_bins_carry_the_whole_spray_and_nothing_more():
+    """Test 1. Delivery is a volume flow, so the weights are volume shares and
+    they must sum to exactly one -- no water invented, none lost."""
+    bins = droplet.size_distribution(REFERENCE_SMD_UM)
+    assert len(bins) == droplet.SIZE_DISTRIBUTION_BINS
+    assert sum(b.volume_fraction for b in bins) == pytest.approx(1.0)
+    assert all(b.diameter_um > 0 for b in bins)
+    assert [b.diameter_um for b in bins] == sorted(b.diameter_um for b in bins)
+
+
+def test_the_bin_set_reproduces_the_modes_sauter_mean_diameter():
+    """Test 2. The Sauter mean is volume over surface, so for a volume-weighted
+    bin set it is `1 / sum(v_i / d_i)`. `size_distribution` scales the whole
+    spectrum so this is the declared SMD exactly, at any bin count and any
+    spread. That is what keeps the spray's total surface area -- and so its
+    evaporation rate and its radiation extinction -- the same as the single
+    representative drop the model used before.
+    """
+    for bin_count in (1, 2, 5, 12, 40):
+        bins = droplet.size_distribution(REFERENCE_SMD_UM, bin_count)
+        sauter = 1.0 / sum(b.volume_fraction / b.diameter_um for b in bins)
+        assert sauter == pytest.approx(REFERENCE_SMD_UM, rel=1e-9)
+
+
+def test_one_bin_is_the_single_representative_drop_exactly():
+    """Test 3. The change must be a strict generalisation: at one bin the model
+    is the previous one, to the last bit, not merely close to it."""
+    bins = droplet.size_distribution(REFERENCE_SMD_UM, 1)
+    assert bins == (droplet.SizeBin(REFERENCE_SMD_UM, 1.0),)
+
+
+def test_volume_shares_are_not_number_shares():
+    """Test 4. The classic error here is weighting the bins by droplet COUNT.
+    A spray's number distribution is overwhelmingly fines -- they are cheap by
+    volume and there are cubically more of them -- so using number shares as
+    volume shares would put most of the delivered water in droplets that carry
+    almost none of it. The two must be far apart, and in this direction.
+    """
+    bins = droplet.size_distribution(REFERENCE_SMD_UM)
+    number = _number_fractions(bins)
+
+    assert number[0] > 0.4, "the finest bin must dominate by count"
+    assert bins[0].volume_fraction < 0.15, "and carry little of the volume"
+    assert number[0] > 5.0 * bins[0].volume_fraction
+
+    volume_mean = sum(b.volume_fraction * b.diameter_um for b in bins)
+    number_mean = sum(n * b.diameter_um for n, b in zip(number, bins))
+    assert number_mean < 0.8 * volume_mean
+    # Over half the spray's VOLUME sits in droplets coarser than its SMD, even
+    # though the great majority of its droplets are finer. Both at once is the
+    # signature of a correctly volume-weighted spectrum.
+    coarser = sum(b.volume_fraction for b in bins if b.diameter_um > REFERENCE_SMD_UM)
+    assert coarser > 0.5
+    assert sum(n for n, b in zip(number, bins) if b.diameter_um > REFERENCE_SMD_UM) < 0.2
+
+
+def test_a_wider_spectrum_keeps_more_water_alive_through_hot_gas(monkeypatch):
+    """Test 5. Why this task exists. One diameter either survives the fall or it
+    does not; a population degrades smoothly, because its coarse tail is still
+    arriving after its fines have gone. A lower Rosin-Rammler n is a wider
+    spectrum, so it must leave more water on the fuel in gas hot enough to kill
+    the mean drop -- and every spectrum must beat the single drop outright.
+    """
+    hot_k = 400.0
+
+    def surviving(bin_count, spread):
+        cal = copy.deepcopy(load_calibration())
+        cal["mist"]["droplet_size_spread"]["value"] = spread
+        monkeypatch.setattr(droplet, "load_calibration", lambda: cal)
+        bins = droplet.size_distribution(REFERENCE_SMD_UM, bin_count)
+        return sum(b.volume_fraction * droplet.integrate(
+            b.diameter_um, C4_LAUNCH_MS, 0.0, C4_DROP_HEIGHT_M, 2.25,
+            gas_excess_k=hot_k).surviving_fraction for b in bins)
+
+    single = surviving(1, _spread())
+    assert single < 0.01, "the single 90 um drop is on the fully-evaporated floor"
+
+    wide, mid, narrow = (surviving(droplet.SIZE_DISTRIBUTION_BINS, n)
+                         for n in (1.8, 2.5, 4.0))
+    assert wide > mid > narrow > 20.0 * single
+
+
+def test_the_spectrum_is_rejected_when_it_cannot_be_a_spray():
+    with pytest.raises(ValueError, match="Sauter mean"):
+        droplet.size_distribution(0.0)
+    with pytest.raises(ValueError, match="at least one"):
+        droplet.size_distribution(REFERENCE_SMD_UM, 0)
+
+
+def test_a_spread_at_or_below_one_has_no_sauter_mean(monkeypatch):
+    """The Rosin-Rammler Sauter mean is `X * gamma(1 - 1/n)`, which diverges at
+    n = 1 and is negative below it: such a spectrum has infinite surface area
+    per unit volume and is not a spray. Rejected rather than silently rescaled.
+    """
+    cal = copy.deepcopy(load_calibration())
+    cal["mist"]["droplet_size_spread"]["value"] = 1.0
+    monkeypatch.setattr(droplet, "load_calibration", lambda: cal)
+    with pytest.raises(ValueError, match="droplet_size_spread"):
+        droplet.size_distribution(REFERENCE_SMD_UM)

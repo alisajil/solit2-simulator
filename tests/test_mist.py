@@ -6,7 +6,7 @@ import pytest
 from solit2.schema.design import Design
 from solit2.schema.presets import PRESET_DIR, load_calibration, reload_calibration
 from solit2.engines.reduced.geometry import section_geometry, nozzle_positions
-from solit2.engines.reduced import mist
+from solit2.engines.reduced import droplet, mist
 
 BASELINE = "examples/designs/road-tunnel-twin-bore.json"
 FIRE_TOP_M = 4.0
@@ -20,6 +20,19 @@ HRR_MW = 50.0
 # Pinned here so the structural change has something concrete to be judged
 # against rather than an assertion that only says "bigger than zero".
 OLD_TOP_PLANE_W_FUEL_MM_MIN = 1.639
+
+# Task 25 moved this ratio. The envelope model's margin over twice the old
+# top-plane figure was never large -- 3.362 mm/min against 3.278, i.e. 2.5% --
+# and expanding each mode into a droplet SPECTRUM takes a further 9% off, because
+# the finest bin of a 90 um spray drifts 53 m in 2.25 m/s of tunnel air and is
+# carried clean out of the 60 m zone before it has fallen the 0.9 m to the fuel.
+# That water genuinely does not wet this fuel. The ratio is now 1.86, measured
+# stable across 12 to 48 size bins (1.86, 1.86, 1.88), so the bound is set below
+# it with room rather than re-pinned on the nose. The claim the test is named for
+# is untouched and is asserted directly below: whole envelope over top face alone
+# was 1.74 before the spectrum and is 1.72 after.
+ENVELOPE_OVER_OLD_TOP_PLANE = 1.75
+ENVELOPE_OVER_ITS_OWN_TOP_FACE = 1.5
 
 # The brief's starting estimates for the two new constants. The envelope tests
 # pin them rather than reading the live calibration, because they are about the
@@ -110,10 +123,17 @@ def test_a_tall_fuel_at_a_short_throw_intercepts_far_more_than_the_top_face_alon
                           flank_reach_factor=REFERENCE_FLANK_REACH_FACTOR,
                           flank_efficiency=REFERENCE_FLANK_EFFICIENCY)
     d = _solit2_reference_design()
-    _, _, _, _, effect = _setup(d, u_ms=2.25, gas_excess_k=0.0)
+    _, _, pos, env, effect = _setup(d, u_ms=2.25, gas_excess_k=0.0)
 
     assert effect.w_fuel_mm_min > 0.0
-    assert effect.w_fuel_mm_min > 2.0 * OLD_TOP_PLANE_W_FUEL_MM_MIN
+    assert effect.w_fuel_mm_min > ENVELOPE_OVER_OLD_TOP_PLANE * OLD_TOP_PLANE_W_FUEL_MM_MIN
+
+    # The structural claim, against this same run rather than a historical
+    # number: the stack's flanks are most of what it intercepts, so counting
+    # only its top face reports a small fraction of the real delivery.
+    deliveries = mist.mode_deliveries(d, pos, env, FIRE_TOP_M, 2.25, 0.0, 1.0)
+    top_only = sum(m.flow_to_top_lpm for m in deliveries) / env.top.area_m2
+    assert effect.w_fuel_mm_min > ENVELOPE_OVER_ITS_OWN_TOP_FACE * top_only
 
 
 def test_zero_flank_efficiency_reduces_to_top_face_only_delivery(monkeypatch):
@@ -569,3 +589,147 @@ def test_hardening_is_what_stops_the_law_collapsing_into_a_switch():
     assert hardened_spread < plain_spread / 1.5, (
         f"hardened steps {_step_ratios(hardened)} are no more even than "
         f"unhardened {_step_ratios(plain)}")
+
+
+# --- task 25: the spray is a size distribution, not one representative drop ---
+#
+# `droplet.integrate` flies ONE diameter, and a mode's `smd_um` is a Sauter MEAN,
+# so the engine was modelling a 90 um spray as a population all at exactly 90 um.
+# That made the delivery effectively binary in gas temperature: one diameter
+# either survives the fall or it does not. `_mode_geometry` now flies the whole
+# spectrum and sums it. The trajectory, drag, evaporation and shielding physics
+# are untouched; only the population they are applied to changed.
+
+# c4's delivery on the model as it stood at commit cd80021, immediately before
+# this change: the single 90 um drop, at the real calibration, over the gas
+# excess band where it collapsed. 275 -> 350 K is a 108x fall and everything
+# above it sits on the FULLY_EVAPORATED_UM floor of 0.013 mm/min.
+SINGLE_DROP_W_FUEL_MM_MIN = {0.0: 9.56115, 275.0: 1.41918, 300.0: 0.13941,
+                             325.0: 0.01274, 350.0: 0.01312}
+# No 25 K step of ceiling gas temperature may take more than this share of the
+# delivery with it. The single drop took 90% in one step twice over; a spray
+# whose coarse tail is still arriving after its fines have gone cannot.
+MAX_DELIVERY_LOSS_PER_25K_STEP = 0.10
+C4_GAS_BAND_K = (275.0, 300.0, 325.0, 350.0)
+
+
+def _c4_delivery(gas_excess_k, bin_count=None):
+    """c4's spray delivery at one ceiling gas excess, at a chosen bin count."""
+    real = droplet.SIZE_DISTRIBUTION_BINS
+    if bin_count is not None:
+        droplet.SIZE_DISTRIBUTION_BINS = bin_count
+    mist._GEOMETRY_CACHE.clear()
+    try:
+        _, _, _, _, effect = _setup(_solit2_reference_design(), u_ms=2.25,
+                                    gas_excess_k=gas_excess_k)
+        return effect
+    finally:
+        droplet.SIZE_DISTRIBUTION_BINS = real
+        mist._GEOMETRY_CACHE.clear()
+
+
+def test_one_size_bin_is_the_previous_single_drop_model_exactly():
+    """The change has to be a strict generalisation, so that any difference in
+    an anchor is attributable to the SPECTRUM and to nothing else. Pinned
+    against `w_fuel` measured on the engine as it stood before this task, not
+    against a value this code produced."""
+    for gas_excess_k, expected in SINGLE_DROP_W_FUEL_MM_MIN.items():
+        got = _c4_delivery(gas_excess_k, bin_count=1).w_fuel_mm_min
+        # The recorded values carry five decimal places, so that is the tightest
+        # the comparison can honestly be.
+        assert got == pytest.approx(expected, rel=1e-4), (
+            f"at {gas_excess_k} K of gas excess one bin gave {got:.5f} mm/min "
+            f"against the single drop's {expected}")
+
+
+def test_the_delivery_cliff_becomes_a_slope():
+    """The defect this task exists for. Across 275-350 K of ceiling gas excess
+    the single-drop delivery fell by 108x and then sat on the fully-evaporated
+    floor. A spectrum must degrade, not collapse: still monotone, but no step
+    may cost more than a tenth of what is arriving."""
+    got = [_c4_delivery(g).w_fuel_mm_min for g in C4_GAS_BAND_K]
+
+    assert got == sorted(got, reverse=True), f"delivery must still fall: {got}"
+    for before, after, gas in zip(got, got[1:], C4_GAS_BAND_K[1:]):
+        assert after > (1.0 - MAX_DELIVERY_LOSS_PER_25K_STEP) * before, (
+            f"the 25 K step up to {gas} K took {100*(1-after/before):.0f}% of the "
+            f"delivery: {before:.4f} -> {after:.4f} mm/min")
+    assert got[-1] > 0.5 * got[0], f"the whole 75 K band must not halve it: {got}"
+
+
+def test_it_is_the_spectrum_and_not_something_else_that_does_it():
+    """Same code, same constants, same physics: only the bin count differs."""
+    single = _c4_delivery(350.0, bin_count=1).w_fuel_mm_min
+    spread = _c4_delivery(350.0).w_fuel_mm_min
+    assert single < 0.02, "the single drop is on the fully-evaporated floor"
+    assert spread > 100.0 * single
+
+
+def test_a_mode_survives_by_volume_share_and_not_by_droplet_count():
+    """The weighting, verified against an independent recomputation.
+
+    The bin weights have to be shares of the spray's VOLUME, because everything
+    downstream is a volume flow. A spray's droplets are overwhelmingly fines --
+    they carry cubically less water each -- so weighting by count instead would
+    put most of the delivered water on the bins that evaporate first and would
+    quietly restore most of the cliff. Both are computed here from the same
+    trajectories; only the weights differ, and the model must match the first.
+    """
+    gas_excess_k = 350.0
+    d = _solit2_reference_design()
+    mode = d.nozzles.modes[0]
+    smd = d.nozzles.smd_um(mode.id)
+    drop_height_m = d.nozzles.mounting.height_above_carriageway_m - FIRE_TOP_M
+    shield = droplet.spray_shielding_factor(
+        mode_flow_lpm=d.nozzles.mode_flow_lpm(mode.id),
+        cone_half_angle_deg=mode.cone_half_angle_deg,
+        launch_velocity_ms=mode.launch_velocity_ms,
+        diameter_um=smd, drop_height_m=drop_height_m)
+
+    bins = droplet.size_distribution(smd)
+    survival = [droplet.integrate(b.diameter_um, mode.launch_velocity_ms, 0.0,
+                                  drop_height_m, 2.25,
+                                  gas_excess_k=gas_excess_k * shield).surviving_fraction
+                for b in bins]
+    by_volume = sum(b.volume_fraction * s for b, s in zip(bins, survival))
+    counts = [b.volume_fraction / b.diameter_um ** 3 for b in bins]
+    by_number = sum(c * s for c, s in zip(counts, survival)) / sum(counts)
+
+    mist._GEOMETRY_CACHE.clear()
+    geom = section_geometry(d)
+    pos = nozzle_positions(d, geom, fire_x_m=0.0)
+    got = mist._geometry(d, pos, _envelope(d, geom), FIRE_TOP_M, 2.25, gas_excess_k)
+
+    assert got[0].surviving_fraction == pytest.approx(by_volume, rel=1e-9)
+    assert by_number < 0.5 * by_volume, (
+        f"number weighting {by_number:.4f} must be far below volume weighting "
+        f"{by_volume:.4f}, or this test cannot tell them apart")
+
+
+def test_the_delivery_never_exceeds_the_water_the_heads_are_flowing():
+    """A spectrum sums twelve sweeps where there was one, so the cap that stops
+    a head delivering more than it is given has twelve chances to be wrong."""
+    d, _, pos, env, _ = _setup(_solit2_reference_design(), u_ms=2.25)
+    delivered = sum(m.flow_to_fuel_lpm for m in
+                    mist.mode_deliveries(d, pos, env, FIRE_TOP_M, 2.25, 0.0, 1.0))
+    assert 0.0 < delivered <= d.nozzles.flow_per_head_lpm * len(pos)
+
+
+def test_reloading_calibration_busts_the_geometry_cache_for_the_spectrum_too(
+        real_calibration_file):
+    """`droplet_size_spread` is the second constant to reach `_compute_geometry`
+    without passing through `_geometry_key` -- `size_distribution` reads it
+    internally, exactly as `spray_shielding_factor` reads its own. The
+    unconditional invalidation hook is what covers it; this proves it does."""
+    d, _, pos, env, _ = _setup()
+    mist._GEOMETRY_CACHE.clear()
+
+    _write_mist_constants(droplet_size_spread=1.5)
+    wide = _coarse_survival(d, pos, env)
+
+    _write_mist_constants(droplet_size_spread=4.0)
+    narrow = _coarse_survival(d, pos, env)
+
+    assert wide != narrow, (
+        "the second call was served trajectories computed under the FIRST "
+        "droplet_size_spread, not the value just reloaded")
