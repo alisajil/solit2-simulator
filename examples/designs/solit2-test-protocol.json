@@ -1,17 +1,17 @@
 {
   "meta": {
     "name": "solit2-test-protocol",
-    "notes": "The SOLIT2 Annex 7 full-scale test, as a runnable design. Annex 7 5.2.7 mandates that BOTH 1.5 m/s and 3.0 m/s longitudinal velocity be tested, measured 45 m upstream of the fire, so both are carried in `ventilation.velocity_range_ms` and the envelope runs the pair. A velocity range is a property of the test being run, not of the tunnel, which is why it lives here and not in the tunnel preset. Replace the `nozzles` and `hydraulics` blocks with the system actually under test; everything else is the standard's own test condition."
+    "notes": "The SOLIT2 Annex 7 full-scale test, as a runnable design. Annex 7 5.2.7 mandates that BOTH 1.5 m/s and 3.0 m/s longitudinal velocity be tested, measured 45 m upstream of the fire, so both are carried in `ventilation.velocity_range_ms` and the envelope runs the pair. A velocity range is a property of the test being run, not of the tunnel, which is why it lives here and not in the tunnel preset. Table 4 (section 5.4) makes this the mandatory pair, rows 1 and 2, BOTH OF WHICH ARE 'With tarpaulin cover', which is why `fire.covered` is set true here: the `hgv_150mw` preset defaults it to false, and without the override this file ran Table 4's OPTIONAL uncovered rows and the mandatory pair was not runnable at all. Section 5.2.2 is emphatic about why the cover is the case that counts: 'If a cover is not used, water has immediate access to seat of fire which is normally not a realistic scenario with most real HGVs.' the same mock-up without the cover is the optional pair and is in solit2-test-protocol-nocover.json, and the mandatory Class B pair is in solit2-test-protocol-class-b.json. Section 5.2.8: the activation area must be at least 3x the mock-up length, so 3 x 10.0 = 30 m minimum against the 3 x 20 = 60 m here; and the system must discharge for a minimum of 30 minutes AFTER activation, so duration_min 35 against an activation at about 2.5 minutes leaves about 32.5 minutes of discharge -- at duration_min 30 it was 27.5 minutes and short of the standard. Replace the `nozzles` and `hydraulics` blocks with the system actually under test; everything else is the standard's own test condition."
   },
   "tunnel": {"preset": "solit2_test", "section": "test"},
-  "fire": {"preset": "hgv_150mw"},
+  "fire": {"preset": "hgv_150mw", "covered": true},
   "nozzles": {"preset": "template"},
   "zones": {
     "section_length_m": 20.0,
     "sections_simultaneous": 3,
     "activation_delay_s": 60.0,
     "pump_ramp_s": 30.0,
-    "duration_min": 30.0
+    "duration_min": 35.0
   },
   "ventilation": {"mode": "longitudinal", "velocity_range_ms": [1.5, 3.0]},
   "detection": {"type": "linear_heat", "threshold_c": 60.0, "sensor_spacing_m": 12.0},

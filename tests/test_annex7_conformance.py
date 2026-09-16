@@ -293,3 +293,87 @@ def test_the_mock_up_is_off_the_centre_line_of_the_test_tunnel(preset_name):
     # and the far face still fits inside the carriageway
     assert preset["lane_centre_offset_from_wall_m"] + preset["footprint"]["width_m"] / 2.0 \
         < road_width_m
+
+
+# --- Phase 4: the Table 4 standard test series (section 5.4) ----------------
+
+def _solit2_test_designs() -> list[Design]:
+    """Every shipped design that runs on the SOLIT2 test gallery.
+
+    Filtered on the tunnel preset, because Table 4 is a series of TESTS: a
+    project illustration on some other tunnel is not one of its rows.
+    """
+    designs = []
+    for path in sorted(DESIGN_DIR.glob("*.json")):
+        if json.loads(path.read_text())["tunnel"]["preset"] != "solit2_test":
+            continue
+        designs.append(Design.load(path))
+    return designs
+
+
+def _runnable_rows() -> set[tuple[str, bool, float]]:
+    """(fire class, covered, velocity) every shipped test design can actually run."""
+    from solit2.engines.reduced import envelope
+
+    return {(d.fire.fire_class, d.fire.covered, velocity)
+            for d in _solit2_test_designs()
+            for velocity in envelope._velocities(d)}
+
+
+def test_the_annex7_table_4_mandatory_series_is_runnable():
+    """Annex 7 Table 4 (section 5.4, p.14), "The following tests shall be
+    carried out for FFFS as a minimum requirement": Class A with tarpaulin at
+    1,5 m/s and at 3,0 m/s, and Class B at minimum 50 MW at 1,5 m/s and at
+    3,0 m/s. No 3.0 m/s case existed anywhere before this."""
+    mandatory = {("A", True, 1.5), ("A", True, 3.0), ("B", False, 1.5), ("B", False, 3.0)}
+    assert mandatory <= _runnable_rows()
+
+
+def test_the_annex7_table_4_optional_class_a_series_is_runnable():
+    """The same table's two rows marked "Optional": the Class A mock-up without
+    the tarpaulin cover, at both velocities. Section 5.2.2 offers it as a
+    comparison and warns that it is "normally not a realistic scenario"."""
+    optional = {("A", False, 1.5), ("A", False, 3.0)}
+    assert optional <= _runnable_rows()
+
+
+def test_every_class_a_test_design_discharges_for_the_section_5_2_8_minimum():
+    """Annex 7 section 5.2.8 (p.11): "The System shall discharge continuously
+    for a minimum of 30 minutes after activation". The Class B rule is section
+    5.3.7 instead -- "until the fire is extinguished or the fuel is consumed
+    completely" -- and carries no 30-minute floor, so only Class A is checked.
+    """
+    from solit2.engines.reduced import sim as sim_module
+
+    for design in _solit2_test_designs():
+        if design.fire.fire_class != "A":
+            continue
+        trace = sim_module.run_once(design, "test", 1.5)
+        activated_s = trace.events["t_activate_s"]
+        discharge_s = design.zones.duration_min * 60.0 - activated_s
+        assert discharge_s >= 30.0 * 60.0, (
+            f"{design.meta.name} discharges for {discharge_s / 60.0:.1f} min "
+            f"after activation at {activated_s:.0f} s")
+
+
+def test_every_test_design_activates_at_least_three_mock_up_lengths(  # noqa: E501
+):
+    """Annex 7 sections 5.2.8 and 5.3.7 (p.11): "The activation area shall be
+    defined by the manufacturer, but it shall be minimum 3 times the length of
+    the mock-up"."""
+    for design in _solit2_test_designs():
+        assert design.active_length_m >= 3.0 * design.fire.footprint.length_m, (
+            design.meta.name)
+
+
+def test_the_class_b_test_design_triggers_within_two_minutes():
+    """Annex 7 section 5.3.7 (p.11): "Triggering of FFFS shall happen within 2
+    minutes after ignition." Class A has no such cap -- section 5.2.8 puts a
+    FLOOR under it instead ("Minimum 1 minutes after ignition")."""
+    from solit2.engines.reduced import sim as sim_module
+
+    for design in _solit2_test_designs():
+        if design.fire.fire_class != "B":
+            continue
+        trace = sim_module.run_once(design, "test", 1.5)
+        assert trace.events["t_activate_s"] <= 120.0, design.meta.name

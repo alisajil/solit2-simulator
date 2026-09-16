@@ -90,7 +90,7 @@ appears in `gates_failed`.
 | Preset | What it is |
 |---|---|
 | `tunnel_template`, `nozzle_template`, `hydraulics_template` | Placeholders. Replace before any result means anything. |
-| `tunnel_solit2_test` | The Annex 7 test tunnel — the standard, not a project. |
+| `tunnel_solit2_test` | The SOLIT² test gallery **as tested** (7.50 × 5.20 m, 39.0 m²) — the standard, not a project. Annex 2 §2 is quoted in the preset's own note, including that the 5.20 m is a suspended ceiling and the 7.50 m comes from walls added around the fire area. |
 | `fire_hgv_150mw`, `fire_pool_60mw` | The Annex 7 Class A and Class B fire loads. |
 | `nozzle_solit2_reference` | Assumed values, used only to reproduce the published reference cases. |
 | `calibration.json` | The engine's constants and what each one rests on. |
@@ -103,7 +103,9 @@ recommendations, and safe to ignore.
 | File | What it illustrates |
 |---|---|
 | `designs/road-tunnel-twin-bore.json` | A complete twin-bore assessment, with site constraints declared |
-| `designs/solit2-test-protocol.json` | The Annex 7 test itself: §5.2.7 mandates **both** 1.5 m/s and 3.0 m/s, so both are run |
+| `designs/solit2-test-protocol.json` | Annex 7 Table 4 rows 1–2 (**mandatory**): Class A HGV **with** tarpaulin, at both 1.5 m/s and 3.0 m/s (§5.2.7 mandates both) |
+| `designs/solit2-test-protocol-nocover.json` | Table 4's two **optional** rows: the same mock-up without the tarpaulin, at both velocities |
+| `designs/solit2-test-protocol-class-b.json` | Table 4 rows 3–4 (**mandatory**): Class B liquid fire, min 50 MW, at both velocities |
 | `presets/tunnel_twin_bore_11m.json` | An 11 m bored section |
 | `presets/nozzle_bimodal_example.json` | A two-mode head |
 | `presets/nozzle_single_mode_example.json` | A single-mode head |

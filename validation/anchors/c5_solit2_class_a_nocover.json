@@ -4,8 +4,7 @@
   "source": "SOLIT2 Engineering Guidance Annex 2 section 6.2 (Class A without cover)",
   "design": {
     "meta": {"name": "c5-solit2-class-a-nocover", "notes": "150 MW potential, no tarpaulin, 1.25 m/s"},
-    "tunnel": {"preset": "san_pedro_de_anes", "section": "test", "ambient_temp_c": 20.0,
-               "width_m": 7.5, "height_m": 5.2, "area_m2": 39.0},
+    "tunnel": {"preset": "solit2_test", "section": "test", "ambient_temp_c": 20.0},
     "fire": {"preset": "hgv_150mw", "covered": false},
     "nozzles": {"preset": "solit2_reference"},
     "zones": {"section_length_m": 60.0, "sections_simultaneous": 1,

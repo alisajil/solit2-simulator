@@ -1,0 +1,22 @@
+{
+  "meta": {
+    "name": "solit2-test-protocol-nocover",
+    "notes": "Annex 7 Table 4 (section 5.4, p.14), the OPTIONAL Class A rows: the HGV mock-up WITHOUT a tarpaulin cover, at 1.5 m/s and at 3.0 m/s. Table 4 marks these two rows 'Optional' where rows 1 and 2 (the same mock-up with the cover, in examples/designs/solit2-test-protocol.json) are mandatory; section 5.2.2 offers it as a comparison -- 'Additionally, a comparison test with uncovered mock-up can be done. The dimensions of the mock-up shall be similar otherwise' -- and warns why the covered case is the one that counts: 'If a cover is not used, water has immediate access to seat of fire which is normally not a realistic scenario with most real HGVs.' This file differs from the covered protocol in `fire.covered` and in nothing else. Annex 7 5.2.7 mandates BOTH 1.5 and 3.0 m/s, measured 45 m upstream of the fire, so both are carried in `ventilation.velocity_range_ms` and the envelope runs the pair. Section 5.2.8: the activation area must be at least 3x the mock-up length, so 3 x 10.0 = 30 m minimum against the 3 x 20 = 60 m here; and the system must discharge for a minimum of 30 minutes AFTER activation, so duration_min 35 against an activation at about 2.5 minutes leaves about 32.5 minutes of discharge. Replace the `nozzles` and `hydraulics` blocks with the system actually under test; everything else is the standard's own test condition."
+  },
+  "tunnel": {"preset": "solit2_test", "section": "test"},
+  "fire": {"preset": "hgv_150mw", "covered": false},
+  "nozzles": {"preset": "template"},
+  "zones": {
+    "section_length_m": 20.0,
+    "sections_simultaneous": 3,
+    "activation_delay_s": 60.0,
+    "pump_ramp_s": 30.0,
+    "duration_min": 35.0
+  },
+  "ventilation": {"mode": "longitudinal", "velocity_range_ms": [1.5, 3.0]},
+  "detection": {"type": "linear_heat", "threshold_c": 60.0, "sensor_spacing_m": 12.0},
+  "hydraulics": {"preset": "template"},
+  "ahj": {},
+  "constraints": {},
+  "criteria": {}
+}

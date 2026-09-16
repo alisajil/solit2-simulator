@@ -1,6 +1,6 @@
 {
   "meta": {"name": "solit2-class-b-60mw", "notes": "SOLIT2 Annex 2 diesel pool test"},
-  "tunnel": {"preset": "san_pedro_de_anes", "section": "test"},
+  "tunnel": {"preset": "solit2_test", "section": "test"},
   "fire": {"preset": "pool_60mw"},
   "nozzles": {"preset": "single_mode_example"},
   "zones": {

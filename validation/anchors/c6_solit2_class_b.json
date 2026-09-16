@@ -4,8 +4,7 @@
   "source": "SOLIT2 Engineering Guidance Annex 2 section 6.3 (Class B, longitudinal)",
   "design": {
     "meta": {"name": "c6-solit2-class-b", "notes": "60 MW diesel pools, longitudinal"},
-    "tunnel": {"preset": "san_pedro_de_anes", "section": "test", "ambient_temp_c": 20.0,
-               "width_m": 7.5, "height_m": 5.2, "area_m2": 39.0},
+    "tunnel": {"preset": "solit2_test", "section": "test", "ambient_temp_c": 20.0},
     "fire": {"preset": "pool_60mw"},
     "nozzles": {"preset": "solit2_reference"},
     "zones": {"section_length_m": 60.0, "sections_simultaneous": 1,

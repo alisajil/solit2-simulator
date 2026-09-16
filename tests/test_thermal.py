@@ -13,9 +13,12 @@ BORE = SectionGeometry("bored", 10.146, 7.625, 70.29, "circle", 5.5, 2.125)
 # tuned expectations below keep testing the correlations and not the preset.
 B_FO = thermal.equivalent_radius_m(8.4, 2.4)
 H_EF = 7.625 - 4.0
-# The SOLIT2 Annex 7 test tunnel: 5.2 m crown, the geometry the c4/c5/c6
-# anchors and Task 18's own worked examples are stated against.
-TEST_TUNNEL = SectionGeometry("test", 9.5, 5.2, 48.0, "box")
+# The SOLIT2 test gallery as tested, the geometry the c4/c5/c6 anchors and
+# Task 18's own worked examples are stated against: 7.50 m wide by 5.20 m high,
+# 39.0 m2, per Annex 2 section 2 (p.5). The 9.5 m width this fixture used to
+# carry is the ORIGINAL unmodified bore, before the walls that made the test
+# section 7.50 m -- see solit2/presets/tunnel_solit2_test.json.
+TEST_TUNNEL = SectionGeometry("test", 7.5, 5.2, 39.0, "box")
 
 
 def test_equivalent_radius_of_the_hgv_footprint():
