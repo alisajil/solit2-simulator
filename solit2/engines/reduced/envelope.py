@@ -228,13 +228,18 @@ def run(design: Design, sections: tuple[str, ...] | None = None,
 
     merged, criteria_cases = _worst_per_id(cases, "criteria")
     # Judged alongside the criteria, reported apart from them, and never passed
-    # to `score.compute` -- a local limit must not read as a SOLIT2 failure.
+    # to `score.compute` as criteria -- a local limit must not read as a SOLIT2
+    # failure.
     constraints, _ = _worst_per_id(cases, "constraints")
     worst = _worst_case(cases)
     trace, hyd, cost = worst.trace, worst.hydraulics, worst.cost
 
     peak_lining = max(s.lining_temp_c for s in trace.steps)
-    scored = score_mod.compute(merged, hyd, cost, trace, peak_lining)
+    # The declared density limit's VALUE does reach the score, for a penalty.
+    # A penalty deducts from the total; only a hard criterion can zero it, so
+    # this still cannot turn a local limit into a SOLIT2 failure.
+    scored = score_mod.compute(merged, hyd, cost, trace, peak_lining,
+                               design.constraints.max_application_density_mm_min)
     warnings = (_placeholder_warnings(design)
                 + _critical_velocity_warnings(trace)
                 + _constraint_warnings(constraints)

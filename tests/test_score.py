@@ -89,12 +89,45 @@ def test_hotter_lining_scores_lower():
     assert cool.total > hot.total
 
 
-def test_penalty_for_exceeding_the_density_headroom():
-    # score.compute() reads the penalty threshold from `hyd.density_mm_min`
-    # directly (see score.py), not from the criteria dict.
-    dense = type("H", (), {"flow_lpm": 2174.3, "power_kw": 375.0, "density_mm_min": 4.5})()
-    s = score_mod.compute(_criteria(), dense, _Cost(), _Trace(), peak_lining_c=690.0)
-    assert any("density" in p for p in s.penalties)
+# --- the density penalty keys off the user's own declared limit --------------
+
+def _hyd(density_mm_min):
+    return type("H", (), {"flow_lpm": 2174.3, "power_kw": 375.0,
+                          "density_mm_min": density_mm_min})()
+
+
+def _density_penalties(score):
+    return [p for p in score.penalties if "density" in p]
+
+
+def test_an_undeclared_density_limit_penalises_nothing_at_any_density():
+    """An undeclared limit is not a limit, however extreme the density gets."""
+    absurd = score_mod.compute(_criteria(), _hyd(500.0), _Cost(), _Trace(),
+                               peak_lining_c=690.0)
+    assert _density_penalties(absurd) == []
+    # ...and the total is the undeducted one: same flow, same cost, same lining.
+    modest = score_mod.compute(_criteria(), _hyd(2.4), _Cost(), _Trace(),
+                               peak_lining_c=690.0)
+    assert absurd.total == pytest.approx(modest.total)
+
+
+def test_the_density_penalty_applies_above_the_declared_limit_and_not_below():
+    over = score_mod.compute(_criteria(), _hyd(4.5), _Cost(), _Trace(),
+                             peak_lining_c=690.0, density_limit_mm_min=4.0)
+    under = score_mod.compute(_criteria(), _hyd(4.5), _Cost(), _Trace(),
+                              peak_lining_c=690.0, density_limit_mm_min=5.0)
+
+    assert _density_penalties(over)
+    assert _density_penalties(under) == []
+    assert over.total == pytest.approx(under.total - score_mod.DENSITY_PENALTY)
+
+
+def test_the_density_penalty_message_quotes_the_users_own_limit():
+    s = score_mod.compute(_criteria(), _hyd(4.5), _Cost(), _Trace(),
+                          peak_lining_c=690.0, density_limit_mm_min=4.2)
+    message = _density_penalties(s)[0]
+    assert "4.2" in message, "the declared limit, not a constant of ours"
+    assert "4.50" in message, "and the density that breached it"
 
 
 def test_weights_sum_to_one():

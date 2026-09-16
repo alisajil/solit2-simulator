@@ -258,7 +258,8 @@ def test_every_anchor_the_calibration_cites_still_exists():
 
 # A vendor's or a project's NAME is caught by test 2. A number is not, and a
 # number is how the last project assumptions survived: two tube lengths priced
-# every design against one bore. They are read off the design now, so neither
+# every design against one bore, and one supplier's preferred discharge density
+# marked every other design down. Both are read off the design now, so neither
 # literal may reappear anywhere the tool ships -- in code, in a comment, in a
 # shipped preset or in a worked example someone will copy.
 
@@ -280,8 +281,11 @@ def _lines_matching(pattern: str) -> list[str]:
     return hits
 
 
-# Not preceded by a digit or a decimal point, so 14240 and 0.4240 are not hits.
+# Not preceded by a digit or a decimal point, so 14240 and 0.4240 are not hits;
+# and not followed by one, so 3.88 m/s (a ventilation velocity) is not a hit for
+# the density pattern either.
 RETIRED_TUBE_LENGTHS = r"(?<![\d.])42[46]0(?!\d)"
+RETIRED_DENSITY = r"(?<![\d.])3\.8(?!\d)"
 
 
 def test_the_scan_covers_both_the_package_and_the_examples():
@@ -299,3 +303,35 @@ def test_no_retired_tube_length_survives_in_the_package_or_the_examples():
         "decide the zone count and every pipe run of every design. Cost "
         "quantities come from tunnel.length_m and tunnel.tubes now:\n  "
         + "\n  ".join(offences))
+
+
+def test_no_vendor_density_headroom_survives_in_the_package_or_the_examples():
+    offences = [hit for hit in _lines_matching(RETIRED_DENSITY)
+                if "density" in hit.lower()]
+    assert not offences, (
+        "3.8 mm/min was one supplier's preferred discharge density, and it used "
+        "to deduct a point from every design that exceeded it. The score penalty "
+        "reads the user's own constraints.max_application_density_mm_min now, "
+        "and an undeclared limit is not a limit:\n  " + "\n  ".join(offences))
+
+
+def test_a_declared_density_limit_costs_score_points_and_never_a_gate():
+    """The one constraint whose VALUE reaches `score.compute`, and its ceiling.
+
+    A penalty deducts from the total. Only a hard SOLIT2 criterion may zero it,
+    so a local limit still cannot read as a failure against the standard.
+    """
+    design = Design.load(REPO_ROOT / EXAMPLE_DESIGN)
+    undeclared = envelope.run(design.model_copy(update={"constraints": Constraints()}))
+    declared = envelope.run(design.model_copy(update={"constraints": Constraints(
+        max_application_density_mm_min=0.01)}))
+
+    assert [p for p in undeclared.score["penalties"] if "density" in p] == [], (
+        "no limit declared, so no density penalty at the density this design runs")
+    breached = [p for p in declared.score["penalties"] if "density" in p]
+    assert breached, "a declared limit the design exceeds must show in the score"
+    assert "0.01" in breached[0], "the message must quote the user's own number"
+
+    assert declared.score["total"] < undeclared.score["total"], "it costs points"
+    assert declared.score["gates_passed"] == undeclared.score["gates_passed"]
+    assert declared.score["gates_failed"] == undeclared.score["gates_failed"]

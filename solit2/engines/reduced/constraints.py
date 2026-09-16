@@ -3,8 +3,14 @@
 SOLIT2 Annex 7 is a standard; a feeder capacity, a tank volume and a
 procurement pressure band are not. Both get judged, but a reader must be able
 to tell at a glance which verdict is which, so these are evaluated here, keyed
-by their own ids, and reported in the result's `constraints` block. They never
-reach `score.compute`, so a breached constraint cannot fail a SOLIT2 gate.
+by their own ids, and reported in the result's `constraints` block. No verdict
+from here reaches `score.compute`, so a breached constraint cannot fail a
+SOLIT2 gate.
+
+One declared limit does reach the score, as a number rather than a verdict:
+`max_application_density_mm_min` is what the score's density penalty keys off
+(see `score.compute`). A penalty deducts from the total and never zeroes it, so
+that remains a local limit costing a design points, not failing it.
 """
 from __future__ import annotations
 

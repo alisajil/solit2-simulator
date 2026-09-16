@@ -2,6 +2,11 @@
 
 A design that fails any hard gate scores zero, but every component is still
 reported so the optimiser can see how far off it is and in which direction.
+
+Penalties deduct from the total without zeroing it, so they are neither gates
+nor acceptance criteria. The density penalty keys off the user's OWN declared
+`constraints.max_application_density_mm_min`; an undeclared limit is not a
+limit and earns no penalty at any density.
 """
 from __future__ import annotations
 
@@ -16,7 +21,9 @@ WEIGHTS = {"water": 0.30, "margin": 0.30, "cost": 0.20, "structural": 0.20}
 BASELINE_FLOW_LPM = 2174.3
 SCORE_CLIP = 1.5
 CEILING_TEMP_CAP_C = 1350.0
-DENSITY_HEADROOM_MM_MIN = 3.8
+# How much a breach of the user's declared density limit deducts. A scoring
+# choice -- how heavily the score weighs a breach -- and deliberately not a
+# threshold: the threshold is the user's own number and has no default.
 DENSITY_PENALTY = 1.0
 BACKLAYERING_PENALTY = 1.0
 BACKLAYERING_TOLERANCE_S = 120.0
@@ -43,7 +50,13 @@ def _clipped_ratio(reference: float, actual: float) -> float:
 
 
 def compute(criteria: dict[str, Criterion], hyd, cost, trace,
-            peak_lining_c: float) -> Score:
+            peak_lining_c: float,
+            density_limit_mm_min: float | None = None) -> Score:
+    """`density_limit_mm_min` is the user's `constraints.max_application_density_mm_min`.
+
+    It defaults to `None` for the same reason the schema field does: until the
+    user declares a limit there is no limit to breach, so no penalty applies.
+    """
     failed = [cid for cid, c in criteria.items() if c.hard and not c.passed]
     unset = [cid for cid, c in criteria.items() if c.status == "unset"]
     # An unset limit has no margin to average -- its 0.0 is an absence, not a
@@ -61,10 +74,10 @@ def compute(criteria: dict[str, Criterion], hyd, cost, trace,
 
     penalties: list[str] = []
     deductions = 0.0
-    if hyd.density_mm_min > DENSITY_HEADROOM_MM_MIN:
+    if density_limit_mm_min is not None and hyd.density_mm_min > density_limit_mm_min:
         penalties.append(
-            f"density {hyd.density_mm_min:.2f} mm/min exceeds the {DENSITY_HEADROOM_MM_MIN} "
-            f"mm/min pump-power headroom"
+            f"density {hyd.density_mm_min:.2f} mm/min exceeds the declared limit "
+            f"of {density_limit_mm_min:g} mm/min"
         )
         deductions += DENSITY_PENALTY
 
