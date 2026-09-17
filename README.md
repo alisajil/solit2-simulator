@@ -121,6 +121,17 @@ recommendations, and safe to ignore.
 | `score` | `gates_passed` / `gates_failed` reflect the SOLIT² criteria only; `criteria_unset` lists what nobody has ruled on. |
 | `warnings` | Placeholder data in use, breached constraints, thin critical-velocity margin |
 
+## Running the app
+
+    uv run streamlit run app/streamlit_app.py
+
+Opens the Streamlit UI: Design (build a configuration), Run (execute the
+engine), Tunnel (thermal-field visualization), Leaderboard (run history),
+Verify (stub -- FDS/CFD tier is a separate, unstarted plan).
+
+Views call the engine in-process -- the same Python functions the CLI
+(`solit2 run`, `solit2 validate`) uses. There is no separate API server.
+
 ## Development
 
 ```bash
