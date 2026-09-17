@@ -27,3 +27,18 @@ def test_the_design_page_is_selected_by_default_and_shows_a_preset_picker():
     assert any("tunnel" in sb.label.lower() for sb in at.selectbox)
     assert any("fire" in sb.label.lower() for sb in at.selectbox)
     assert any("nozzle" in sb.label.lower() for sb in at.selectbox)
+
+
+def test_building_a_design_clears_a_stale_result():
+    """`state.set_design` pops any previous run's `result` from session
+    state (a new design invalidates the last run) -- guard this contract
+    since Task 2 depends on it holding."""
+    at = AppTest.from_file("../app/streamlit_app.py")
+    at.run()
+    at.session_state["result"] = "sentinel"
+
+    build_button = next(b for b in at.button if b.label == "Build design")
+    build_button.click().run()
+
+    assert not at.exception
+    assert "result" not in at.session_state
