@@ -30,8 +30,35 @@ class SectionGeometry:
 
     @property
     def hydraulic_diameter_m(self) -> float:
-        perimeter = (math.pi * 2 * self.radius_m if self.shape == "circle"
-                     else 2 * (self.road_width_m + self.crown_height_m))
+        """4A/P, P being the wetted perimeter of the FREE-FLOW cross-section --
+        every solid surface the air actually touches, not the shape's full
+        outline.
+
+        Box: floor, ceiling and both walls -- the full rectangle perimeter.
+
+        Circle (bored tunnel): the carriageway deck sits on a chord below the
+        centre and cuts the bore into two pieces. `free_area_m2` is only the
+        piece ABOVE the deck (the segment below it is solid ground/services,
+        not part of the flow), so the wetted perimeter is the ARC bounding that
+        piece plus the DECK ITSELF -- not the full circle's circumference. The
+        previous formula used the full circumference, which double-counts the
+        arc below the deck (not wetted, and not walked past by the air) and
+        omits the deck (which is wetted). On the bored-tunnel test fixture this
+        understated D_h by about 8%.
+
+        The two intersection points of the deck chord with the bore are at
+        angular distance acos(d/r) from the bottom of the circle, so the MINOR
+        arc (below the deck, excluded) subtends 2*acos(d/r) and the MAJOR arc
+        (above the deck, the one that bounds the free area) subtends the
+        remainder, 2*pi - 2*acos(d/r). At d=0 (deck through the centre) this
+        correctly gives a semicircle's arc, pi*r.
+        """
+        if self.shape == "circle":
+            r, d = self.radius_m, self.deck_below_centre_m
+            major_arc = 2 * r * (math.pi - math.acos(d / r))
+            perimeter = major_arc + self.road_width_m  # road_width_m IS the deck chord
+        else:
+            perimeter = 2 * (self.road_width_m + self.crown_height_m)
         return 4 * self.free_area_m2 / perimeter
 
     def width_at(self, height_above_carriageway_m: float) -> float:
