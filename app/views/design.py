@@ -54,15 +54,31 @@ def render() -> None:
 
 
 def _render_preset_pickers() -> tuple[str, str, str, str]:
-    """The four per-block preset selectors: tunnel, fire, nozzle, hydraulics."""
+    """The four per-block preset selectors: tunnel, fire, nozzle, hydraulics.
+
+    Each defaults to a verified-compatible combination (`examples/designs/
+    road-tunnel-twin-bore-single-mode.json`) rather than position 0 of the
+    alphabetically sorted preset list, which can pair an incompatible tunnel
+    and nozzle (e.g. a nozzle mounted above the crown) with zero user
+    interaction.
+    """
     col1, col2, col3 = st.columns(3)
     with col1:
-        tunnel_preset = st.selectbox("Tunnel preset", list_presets("tunnel"))
+        tunnel_options = list_presets("tunnel")
+        tunnel_preset = st.selectbox(
+            "Tunnel preset", tunnel_options, index=tunnel_options.index("twin_bore_11m"))
     with col2:
-        fire_preset = st.selectbox("Fire preset", list_presets("fire"))
+        fire_options = list_presets("fire")
+        fire_preset = st.selectbox(
+            "Fire preset", fire_options, index=fire_options.index("hgv_150mw"))
     with col3:
-        nozzle_preset = st.selectbox("Nozzle preset", list_presets("nozzle"))
-    hydraulics_preset = st.selectbox("Hydraulics preset", list_presets("hydraulics"))
+        nozzle_options = list_presets("nozzle")
+        nozzle_preset = st.selectbox(
+            "Nozzle preset", nozzle_options,
+            index=nozzle_options.index("single_mode_fine_example"))
+    hydraulics_options = list_presets("hydraulics")
+    hydraulics_preset = st.selectbox(
+        "Hydraulics preset", hydraulics_options, index=hydraulics_options.index("example"))
     return tunnel_preset, fire_preset, nozzle_preset, hydraulics_preset
 
 
