@@ -30,15 +30,22 @@ def render() -> None:
 
     fig = go.Figure()
     xs, ys = [], []
+    ceiling_xs, ceiling_ys = [], []
     for name, x_m in sorted(STATIONS.items(), key=lambda kv: kv[1]):
         if not (X_WINDOW_M[0] <= x_m <= X_WINDOW_M[1]):
             continue
-        sample = step.stations.get(name)
-        if sample is None:
-            continue
+        # sim._sample_stations always populates every STATIONS key -- no skip path.
+        sample = step.stations[name]
         xs.append(x_m)
         ys.append(sample.temp_c)
+        if sample.heights_m:
+            # Top rung of the per-station thermocouple ladder: a real, always-
+            # available near-ceiling reading, distinct from breathing height.
+            ceiling_xs.append(x_m)
+            ceiling_ys.append(sample.temps_c[-1])
     fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines+markers", name="gas temp (breathing height)"))
+    fig.add_trace(go.Scatter(x=ceiling_xs, y=ceiling_ys, mode="lines+markers",
+                             name="near-ceiling (top thermocouple)"))
 
     if step.backlayer_m > 1.0:
         fig.add_vrect(x0=-step.backlayer_m, x1=0.0, fillcolor="grey", opacity=0.2,
