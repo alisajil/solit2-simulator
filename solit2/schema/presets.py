@@ -48,6 +48,13 @@ def load_preset(kind: str, name: str) -> dict:
     raise FileNotFoundError(f"no {kind} preset {name!r}; available: {_available(prefix)}")
 
 
+def list_presets(kind: str) -> list[str]:
+    """Every preset name of one kind, shipped and example, de-duplicated and sorted."""
+    if kind not in _KIND_PREFIX:
+        raise KeyError(f"unknown preset kind {kind!r}; expected one of {sorted(_KIND_PREFIX)}")
+    return _available(_KIND_PREFIX[kind])
+
+
 @lru_cache(maxsize=1)
 def load_calibration() -> dict:
     """Load `presets/calibration.json`, cached.
