@@ -8,13 +8,20 @@ from solit2.schema.result import Criterion
 
 
 def criteria_table(criteria: dict[str, Criterion]) -> pd.DataFrame:
-    """One row per criterion, in the shape `st.dataframe` renders directly."""
+    """One row per criterion, in the shape `st.dataframe` renders directly.
+
+    `value` and `limit` are cast to `str`: `Criterion.value` mixes `bool`
+    and `float` and `Criterion.limit` adds `None` and `tuple[float, float]`
+    on top, so left as-is the column lands on pandas/Arrow as `object` with
+    mixed Python types, which `st.dataframe` cannot serialize cleanly. This
+    is a presentation table, so a string column sidesteps that entirely.
+    """
     rows = []
     for name, c in criteria.items():
         rows.append({
             "criterion": name,
-            "value": c.value,
-            "limit": c.limit,
+            "value": str(c.value),
+            "limit": str(c.limit) if c.limit is not None else "—",
             "status": c.status,
             "margin": round(c.margin, 3),
         })
