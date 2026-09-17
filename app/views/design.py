@@ -53,6 +53,18 @@ def render() -> None:
         )
 
 
+def _default_index(options: list[str], name: str) -> int:
+    """The index of `name` in `options`, or 0 if it isn't there.
+
+    Falls back rather than raising: the four hardcoded default preset names
+    include some that live only in examples/presets/, which
+    solit2/schema/presets.py documents as optional -- "the tool must run
+    without them." A missing example preset should degrade to the first
+    available option, not crash the app's landing page.
+    """
+    return options.index(name) if name in options else 0
+
+
 def _render_preset_pickers() -> tuple[str, str, str, str]:
     """The four per-block preset selectors: tunnel, fire, nozzle, hydraulics.
 
@@ -66,19 +78,19 @@ def _render_preset_pickers() -> tuple[str, str, str, str]:
     with col1:
         tunnel_options = list_presets("tunnel")
         tunnel_preset = st.selectbox(
-            "Tunnel preset", tunnel_options, index=tunnel_options.index("twin_bore_11m"))
+            "Tunnel preset", tunnel_options, index=_default_index(tunnel_options, "twin_bore_11m"))
     with col2:
         fire_options = list_presets("fire")
         fire_preset = st.selectbox(
-            "Fire preset", fire_options, index=fire_options.index("hgv_150mw"))
+            "Fire preset", fire_options, index=_default_index(fire_options, "hgv_150mw"))
     with col3:
         nozzle_options = list_presets("nozzle")
         nozzle_preset = st.selectbox(
             "Nozzle preset", nozzle_options,
-            index=nozzle_options.index("single_mode_fine_example"))
+            index=_default_index(nozzle_options, "single_mode_fine_example"))
     hydraulics_options = list_presets("hydraulics")
     hydraulics_preset = st.selectbox(
-        "Hydraulics preset", hydraulics_options, index=hydraulics_options.index("example"))
+        "Hydraulics preset", hydraulics_options, index=_default_index(hydraulics_options, "example"))
     return tunnel_preset, fire_preset, nozzle_preset, hydraulics_preset
 
 

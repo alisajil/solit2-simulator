@@ -21,4 +21,4 @@ def render() -> None:
     if not rows:
         st.info("No runs saved yet. Run a simulation, then save it here.")
         return
-    st.dataframe(rows, use_container_width=True)
+    st.dataframe(rows)

@@ -7,8 +7,15 @@ import streamlit as st
 from app import state
 from solit2.engines.reduced.criteria import STATIONS
 from solit2.engines.reduced.sim import run_once
+from solit2.engines.reduced.state import RunTrace
+from solit2.schema.design import Design
 
 X_WINDOW_M = (-140.0, 230.0)  # matches the window already proven readable in the artifact
+
+
+@st.cache_data
+def _run_trace(design: Design, section: str, velocity_ms: float) -> RunTrace:
+    return run_once(design, section, velocity_ms)
 
 
 def render() -> None:
@@ -19,7 +26,7 @@ def render() -> None:
         st.warning("Build a design and run it on the Run page first.")
         return
 
-    trace = run_once(design, result.worst_case["section"], result.worst_case["velocity_ms"])
+    trace = _run_trace(design, result.worst_case["section"], result.worst_case["velocity_ms"])
     steps = trace.steps
 
     idx = st.slider("Time (s)", min_value=0, max_value=len(steps) - 1, value=len(steps) // 2,
@@ -57,4 +64,4 @@ def render() -> None:
 
     fig.update_layout(xaxis_title="distance from fire (m)", yaxis_title="gas temperature (C)",
                       height=420, margin=dict(l=10, r=10, t=30, b=10))
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig)

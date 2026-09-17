@@ -32,17 +32,17 @@ def render() -> None:
         col.metric(name, f"{value:.1f}")
 
     st.subheader("Acceptance criteria")
-    st.dataframe(criteria_table(result.criteria), use_container_width=True)
+    st.dataframe(criteria_table(result.criteria))
 
     if result.constraints:
         st.subheader("Site constraints (not SOLIT2 acceptance criteria)")
-        st.dataframe(criteria_table(result.constraints), use_container_width=True)
+        st.dataframe(criteria_table(result.constraints))
 
     st.subheader("Timeseries")
     available = [k for k in result.timeseries if k != "t_s"]
     chosen = st.multiselect("Series", available, default=available[: min(3, len(available))])
     if chosen:
-        st.plotly_chart(timeseries_chart(result.timeseries, chosen), use_container_width=True)
+        st.plotly_chart(timeseries_chart(result.timeseries, chosen))
 
     if result.warnings:
         st.subheader("Warnings")
