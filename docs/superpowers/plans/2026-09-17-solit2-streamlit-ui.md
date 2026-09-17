@@ -17,10 +17,12 @@
 - Files ≤ 400 lines target, 800 hard; functions ≤ 50 lines; nesting ≤ 4.
 - Frozen dataclasses / pydantic models; never mutate an input.
 - Stage only the files a task actually touches, by explicit path; never `git add -A` or `git add .`.
-- Conventional-commit messages, each ending with:
-  ```
-  Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>
-  ```
+- Conventional-commit messages. **No `Co-Authored-By` trailer** — the user's global
+  `~/.claude/rules/common/git-workflow.md` states "Attribution disabled globally via
+  ~/.claude/settings.json," which is exactly the kind of user instruction the session's own
+  attribution reminder says takes precedence over itself. (Earlier tasks in this plan's own history
+  may carry the trailer regardless — that was a live correction mid-plan, not grounds to amend
+  already-landed commits without being asked.)
 - The existing CLI (`solit2 run`, `solit2 validate`, `solit2 history`) and every existing test must keep passing unchanged after every task. `Design.load`'s observable behaviour must not change.
 - Views call the engine **in-process**. No task in this plan introduces an HTTP server, a REST endpoint, or a second runtime.
 - The FDS tier (Plan 2) does not exist. The Verify view (Task 5) must say so plainly rather than imply a capability that is not there.
@@ -539,7 +541,7 @@ Co-Authored-By: Claude Sonnet 5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `state.get_design() -> Design | None` (Task 1). `envelope.run(design: Design) -> Result` (`solit2/engines/reduced/envelope.py`, pre-existing, unchanged). `Result`'s fields (`solit2/schema/result.py`, pre-existing): `criteria: dict[str, Criterion]`, `constraints: dict[str, Criterion]`, `peaks: dict[str, float]`, `hydraulics: dict[str, Any]`, `cost: dict[str, Any]`, `score: dict[str, Any]`, `timeseries: dict[str, list[float]]`, `warnings: list[str]`, `worst_case: dict[str, Any]` (has `"section"` and `"velocity_ms"` keys). `Criterion`'s fields: `value: float | bool`, `limit`, `op`, `passed: bool`, `status: Literal["pass","fail","unset"]`, `margin: float`.
-- Produces: `state.set_result(result: Design) -> None` called after a successful run (Task 1's `state.py`). `app/components/charts.py`'s `criteria_table(criteria: dict) -> pandas.DataFrame` and `timeseries_chart(timeseries: dict[str, list[float]], keys: list[str]) -> plotly.graph_objects.Figure`, both consumed again by Task 3.
+- Produces: `state.set_result(result: Design) -> None` called after a successful run (Task 1's `state.py`). `app/components/charts.py`'s `criteria_table(criteria: dict) -> pandas.DataFrame` and `timeseries_chart(timeseries: dict[str, list[float]], keys: list[str]) -> plotly.graph_objects.Figure` — both are consumed by this task's own `run.py` only. Task 3 builds its section plot inline with its own `go.Figure`/`go.Scatter` calls rather than through these helpers, because its x-axis is station position, not time; do not treat Task 3's non-use of `charts.py` as a spec gap.
 
 - [ ] **Step 1: Write the failing test**
 
