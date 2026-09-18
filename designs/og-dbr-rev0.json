@@ -1,12 +1,15 @@
 {
   "meta": {
     "name": "og-dbr-rev0",
-    "notes": "Orange Gate DBR Rev 0 baseline design. Twin-bore 11 m tunnel, 4240 m per tube, K 4.1 at 50 bar nozzles, 29.0 lpm per head design target. 25 heads per 30 m zone × 3 simultaneous = 75 active heads, 2175 lpm total flow. Neutral presets with project-specific overrides. This is the golden-deck baseline for the optimisation loop."
+    "notes": "Orange Gate DBR Rev 0 baseline. All figures from DBR MSTX-OG-DBR-001 Rev 0 (K 4.1 @ 50 bar → 29.0 lpm/head; 25 heads/zone × 3 = 75 active, 2175 lpm flow). Explicitly stated: tunnel bore/deck/gradient/length, nozzle K/pressure/SMD/height. INHERITED FROM ILLUSTRATION PRESETS (need real measured data before assessment): cone_half_angle_deg, launch_velocity_ms, hydraulics.static_head_bar, hydraulics.fittings_loss_bar. Golden-deck baseline for optimisation loop."
   },
   "tunnel": {
     "preset": "twin_bore_11m",
     "section": "bored",
+    "internal_diameter_m": 11.0,
+    "deck_below_centre_m": 2.125,
     "length_m": 4240.0,
+    "gradient_pct": 0.0,
     "ambient_temp_c": 33.0,
     "ambient_rh_pct": 75.0
   },
@@ -15,6 +18,8 @@
   },
   "nozzles": {
     "preset": "single_mode_fine_example",
+    "k_factor_lpm_bar05": 4.1,
+    "pressure_bar": 50.0,
     "mounting": {
       "height_above_carriageway_m": 5.5,
       "row_lateral_offsets_m": [-2.75, 2.75]
@@ -38,7 +43,12 @@
     "sensor_spacing_m": 25.0
   },
   "hydraulics": {
-    "preset": "example"
+    "preset": "example",
+    "pump_efficiency": 0.68,
+    "motor_efficiency": 0.93,
+    "loop_factor": 0.25,
+    "main_dn_mm": 150.0,
+    "zone_header_dn_mm": 65.0
   },
   "constraints": {
     "note": "Site and procurement limits. NOT from SOLIT2 and not acceptance criteria."
