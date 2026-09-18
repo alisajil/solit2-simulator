@@ -5,6 +5,7 @@ import streamlit as st
 
 from app.views import design as design_view
 from app.views import leaderboard as leaderboard_view
+from app.views import reports as reports_view
 from app.views import run as run_view
 from app.views import tunnel as tunnel_view
 from app.views import verify as verify_view
@@ -17,6 +18,7 @@ PAGES = {
     "Tunnel": tunnel_view.render,
     "Leaderboard": leaderboard_view.render,
     "Verify": verify_view.render,
+    "Reports": reports_view.render,
 }
 
 page = st.sidebar.radio("Page", list(PAGES))

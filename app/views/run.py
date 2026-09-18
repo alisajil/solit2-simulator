@@ -51,3 +51,5 @@ def render() -> None:
 
     with st.expander("Full result JSON"):
         st.json(result.model_dump(mode="json"), expanded=False)
+    st.download_button("Download result JSON", result.model_dump_json(indent=2),
+                       file_name=f"{design.meta.name}-result.json")

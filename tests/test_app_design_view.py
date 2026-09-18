@@ -8,7 +8,7 @@ browser driver.
 from streamlit.testing.v1 import AppTest
 
 
-def test_the_app_launches_with_five_pages_in_the_sidebar():
+def test_the_app_launches_with_six_pages_in_the_sidebar():
     at = AppTest.from_file("../app/streamlit_app.py")
     at.run()
     # Note: this installed streamlit version's AppTest exposes no run_time
@@ -17,7 +17,7 @@ def test_the_app_launches_with_five_pages_in_the_sidebar():
     # substantive guarantee here.
     assert not at.exception
     labels = [opt for radio in at.sidebar.radio for opt in radio.options]
-    assert labels == ["Design", "Run", "Tunnel", "Leaderboard", "Verify"]
+    assert labels == ["Design", "Run", "Tunnel", "Leaderboard", "Verify", "Reports"]
 
 
 def test_the_design_page_is_selected_by_default_and_shows_a_preset_picker():

@@ -46,6 +46,8 @@ Subcommands:
 | `solit2 run <design.json>` | Score a design; result JSON on stdout |
 | `solit2 history` | Leaderboard of recorded runs |
 | `solit2 validate` | Check the engine against the published reference fire tests |
+| `solit2 report test-plan <design.json>` | Markdown: test inputs and predicted outcomes |
+| `solit2 report correlation --test A.json --site B.json` | Markdown: one design's criteria across two runs, side by side |
 
 ## Writing a design
 
@@ -127,10 +129,12 @@ recommendations, and safe to ignore.
 
 Opens the Streamlit UI: Design (build a configuration), Run (execute the
 engine), Tunnel (thermal-field visualization), Leaderboard (run history),
-Verify (stub -- FDS/CFD tier is a separate, unstarted plan).
+Verify (stub -- FDS/CFD tier is a separate, unstarted plan), Reports
+(test-plan and correlation markdown, matching `solit2 report`).
 
 Views call the engine in-process -- the same Python functions the CLI
-(`solit2 run`, `solit2 validate`) uses. There is no separate API server.
+(`solit2 run`, `solit2 validate`, `solit2 report`) uses. There is no
+separate API server.
 
 ## Development
 
