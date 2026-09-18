@@ -1,7 +1,7 @@
 {
   "meta": {
     "name": "og-dbr-rev0",
-    "notes": "Orange Gate DBR Rev 0 baseline. All figures from DBR MSTX-OG-DBR-001 Rev 0 (K 4.1 @ 50 bar → 29.0 lpm/head; 25 heads/zone × 3 = 75 active, 2175 lpm flow). Explicitly stated: tunnel bore/deck/gradient/length, nozzle K/pressure/SMD/height. INHERITED FROM ILLUSTRATION PRESETS (need real measured data before assessment): cone_half_angle_deg, launch_velocity_ms, hydraulics.static_head_bar, hydraulics.fittings_loss_bar. Golden-deck baseline for optimisation loop."
+    "notes": "Orange Gate DBR Rev 0 baseline. All figures from DBR MSTX-OG-DBR-001 Rev 0 (K 4.1 @ 50 bar → 29.0 lpm/head; 25 heads/zone × 3 = 75 active, 2175 lpm flow). Explicitly stated DBR figures: tunnel bore/deck/gradient/length, nozzle K/pressure/height, nozzle SMD 100 µm (fine mode). By field name, nozzles.modes[].cone_half_angle_deg and nozzles.modes[].launch_velocity_ms are carried illustration defaults (45.0 deg, 15.0 m/s) restated here only because the schema requires a complete mode block once smd_um is set explicitly -- they are NOT measured figures and still need real values, alongside hydraulics.static_head_bar and hydraulics.fittings_loss_bar, which remain inherited from the illustration preset (not stated in this file) and likewise still need real measured data before assessment. Golden-deck baseline for optimisation loop."
   },
   "tunnel": {
     "preset": "twin_bore_11m",
@@ -20,6 +20,9 @@
     "preset": "single_mode_fine_example",
     "k_factor_lpm_bar05": 4.1,
     "pressure_bar": 50.0,
+    "modes": [
+      {"id": "fine", "fraction": 1.0, "smd_um": 100.0, "cone_half_angle_deg": 45.0, "launch_velocity_ms": 15.0}
+    ],
     "mounting": {
       "height_above_carriageway_m": 5.5,
       "row_lateral_offsets_m": [-2.75, 2.75]

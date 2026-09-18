@@ -43,6 +43,7 @@ def test_dbr_figures_are_not_silently_drifting():
     # Nozzle hydraulics (DBR)
     assert design.nozzles.k_factor_lpm_bar05 == 4.1
     assert design.nozzles.pressure_bar == 50.0
+    assert design.nozzles.smd_um("fine") == 100.0
     # Nozzle mounting (DBR)
     assert design.nozzles.mounting.height_above_carriageway_m == 5.5
     # Hydraulic arrangement (DBR)
