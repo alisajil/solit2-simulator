@@ -71,3 +71,52 @@ def test_history_subcommand_lists_the_leaderboard(tmp_path):
     proc = _run(["history", "--history", str(hist), "--top", "5"])
     assert proc.returncode == 0, proc.stderr
     assert "road-tunnel-twin-bore" in proc.stdout
+
+
+def test_report_test_plan_emits_markdown_with_inputs_and_outcomes():
+    proc = _run(["report", "test-plan", "examples/designs/road-tunnel-twin-bore.json"])
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.startswith("# Test Plan")
+    assert "road-tunnel-twin-bore" in proc.stdout
+    assert "## Predicted outcomes" in proc.stdout
+
+
+def test_report_test_plan_writes_the_out_file(tmp_path):
+    out = tmp_path / "plan.md"
+    proc = _run(["report", "test-plan", "examples/designs/road-tunnel-twin-bore.json",
+                 "--out", str(out)])
+    assert proc.returncode == 0, proc.stderr
+    assert out.read_text() == proc.stdout
+
+
+def test_report_test_plan_bad_field_exits_two_with_a_named_error(tmp_path):
+    raw = json.loads(open("examples/designs/road-tunnel-twin-bore.json").read())
+    raw["nozzles"]["pressure_bar"] = 12.0
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps(raw))
+    proc = _run(["report", "test-plan", str(bad)])
+    assert proc.returncode == 2
+    err = json.loads(proc.stderr)
+    assert "pressure_bar" in err["error"]
+
+
+def test_report_correlation_puts_both_runs_side_by_side(tmp_path):
+    test_out = tmp_path / "test.json"
+    site_out = tmp_path / "site.json"
+    _run(["run", "examples/designs/solit2-test-protocol.json", "--no-history",
+          "--out", str(test_out)])
+    _run(["run", "examples/designs/road-tunnel-twin-bore.json", "--no-history",
+          "--out", str(site_out)])
+    proc = _run(["report", "correlation", "--test", str(test_out), "--site", str(site_out)])
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.startswith("# Correlation")
+    assert "solit2-test-protocol" in proc.stdout
+    assert "road-tunnel-twin-bore" in proc.stdout
+
+
+def test_report_correlation_missing_file_exits_two():
+    proc = _run(["report", "correlation", "--test", "does/not/exist.json",
+                 "--site", "examples/designs/road-tunnel-twin-bore.json"])
+    assert proc.returncode == 2
+    err = json.loads(proc.stderr)
+    assert err["fix"]

@@ -10,7 +10,9 @@ from pydantic import ValidationError
 
 from solit2 import history as history_mod
 from solit2.engines.reduced import envelope
+from solit2.reports import correlation, test_plan
 from solit2.schema.design import Design
+from solit2.schema.result import Result
 
 EXIT_OK, EXIT_VALIDATION_MISS, EXIT_BAD_INPUT, EXIT_ENGINE = 0, 1, 2, 3
 
@@ -90,6 +92,49 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     return EXIT_OK if all_passed else EXIT_VALIDATION_MISS
 
 
+def _load_result(path: str) -> Result:
+    return Result.model_validate_json(Path(path).read_text())
+
+
+def _emit_report(markdown: str, out: str | None) -> int:
+    print(markdown)
+    if out:
+        try:
+            Path(out).parent.mkdir(parents=True, exist_ok=True)
+            Path(out).write_text(markdown + "\n")
+        except OSError as exc:
+            return _fail(str(exc), "--out", "choose a writable output path",
+                         EXIT_BAD_INPUT)
+    return EXIT_OK
+
+
+def _cmd_report_test_plan(args: argparse.Namespace) -> int:
+    try:
+        design = Design.load(args.design)
+    except (ValidationError, ValueError, FileNotFoundError, KeyError) as exc:
+        return _fail(str(exc), getattr(exc, "field", "design"),
+                     "correct the design JSON and try again", EXIT_BAD_INPUT)
+    try:
+        result = envelope.run(design)
+    except (ArithmeticError, RuntimeError, ValueError, KeyError) as exc:
+        return _fail(str(exc), "engine",
+                     "the design validated but the engine could not finish the run",
+                     EXIT_ENGINE)
+    return _emit_report(test_plan.render(design, result), args.out)
+
+
+def _cmd_report_correlation(args: argparse.Namespace) -> int:
+    try:
+        test_result = _load_result(args.test)
+        site_result = _load_result(args.site)
+    except (ValidationError, ValueError, OSError) as exc:
+        field = "--test" if not Path(args.test).exists() else "--site"
+        return _fail(str(exc), field,
+                     "point --test and --site at result JSON produced by "
+                     "`solit2 run --out`", EXIT_BAD_INPUT)
+    return _emit_report(correlation.render(test_result, site_result), args.out)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="solit2", description="SOLIT2 tunnel water-mist simulator")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -112,6 +157,22 @@ def build_parser() -> argparse.ArgumentParser:
     val.add_argument("--engine", default="reduced", choices=["reduced"])
     val.add_argument("--anchor", action="append")
     val.set_defaults(func=_cmd_validate)
+
+    report = sub.add_parser("report", help="generate a markdown report")
+    report_sub = report.add_subparsers(dest="report_command", required=True)
+
+    rtp = report_sub.add_parser("test-plan",
+                                help="test inputs and predicted outcomes for a design")
+    rtp.add_argument("design")
+    rtp.add_argument("--out")
+    rtp.set_defaults(func=_cmd_report_test_plan)
+
+    rc = report_sub.add_parser("correlation",
+                               help="one design's criteria across two runs, side by side")
+    rc.add_argument("--test", required=True)
+    rc.add_argument("--site", required=True)
+    rc.add_argument("--out")
+    rc.set_defaults(func=_cmd_report_correlation)
     return parser
 
 
