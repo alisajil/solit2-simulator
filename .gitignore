@@ -16,6 +16,10 @@ runs/
 *_devc.csv
 *_hrr.csv
 
+# ...but test fixtures with those extensions ARE committed on purpose
+!tests/fixtures/fds/
+!tests/fixtures/fds/**
+
 # python
 .venv/
 __pycache__/
