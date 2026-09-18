@@ -1,0 +1,15 @@
+{
+  "preset": "orange_gate",
+  "note": "Orange Gate DBR Rev 0 hydraulic arrangement: pumped high-pressure looped ring main. DN150 looped SS316L main, DN65 zone header, DN40 row distribution, loop factor 0.25 (Darcy–Weisbach worst-path, ring-main split flow). Pump: 2 × 72 m³/h duty + 1 standby (total 144 m³/h). Efficiencies: pump 0.68, motor 0.93. Design margin 10 % on flow, 10 % on pressure (rated_bar = 1.10 × required). Tank: 143.6 m³ for 60 min at design flow. Power target 375 kW motor input (650 kW gate = 2 × 325 kW feeders). Spec ref: DBR §4.5 (ring main), §5.7 (hydraulics calculations).",
+  "main_dn_mm": 150.0,
+  "zone_header_dn_mm": 65.0,
+  "row_pipe_dn_mm": 40.0,
+  "roughness_mm": 0.045,
+  "pump_unit_m3h": 72.0,
+  "pump_efficiency": 0.68,
+  "motor_efficiency": 0.93,
+  "loop_factor": 0.25,
+  "static_head_bar": 1.0,
+  "fittings_loss_bar": 1.0,
+  "safety_factor": 1.10
+}

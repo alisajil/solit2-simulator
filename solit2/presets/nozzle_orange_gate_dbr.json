@@ -1,7 +1,7 @@
 {
   "preset": "orange_gate_dbr",
   "note": "Orange Gate DBR Rev 0 nozzle: fine-mist single mode, K 4.1 at 50 bar nominal. 29.0 lpm per head at design pressure.",
-  "k_factor_lpm_bar05": 4.101,
+  "k_factor_lpm_bar05": 4.1,
   "pressure_bar": 50.0,
   "modes": [
     {

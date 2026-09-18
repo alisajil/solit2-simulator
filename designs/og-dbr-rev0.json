@@ -31,7 +31,7 @@
     "sensor_spacing_m": 25.0
   },
   "hydraulics": {
-    "preset": "example"
+    "preset": "orange_gate"
   },
   "constraints": {
     "note": "Site and procurement limits. NOT from SOLIT2 and not acceptance criteria."
