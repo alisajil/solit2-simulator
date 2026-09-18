@@ -1,0 +1,41 @@
+{
+  "meta": {
+    "name": "og-dbr-rev0",
+    "notes": "Orange Gate DBR Rev 0 baseline design. Hydraulic target: K 4.1 at 50 bar gives 29.0 lpm per head; 25 heads per 30 m zone; 3 simultaneous zones yield 2175 lpm. This file is the golden-deck baseline for the optimisation loop."
+  },
+  "tunnel": {
+    "preset": "orange_gate",
+    "section": "bored"
+  },
+  "fire": {
+    "preset": "hgv_150mw"
+  },
+  "nozzles": {
+    "preset": "orange_gate_dbr"
+  },
+  "zones": {
+    "section_length_m": 30.0,
+    "sections_simultaneous": 3,
+    "heads_per_zone": 25,
+    "activation_delay_s": 60.0,
+    "pump_ramp_s": 30.0,
+    "duration_min": 60.0
+  },
+  "ventilation": {
+    "mode": "longitudinal",
+    "velocity_range_ms": [3.88, 5.08]
+  },
+  "detection": {
+    "type": "linear_heat",
+    "threshold_c": 60.0,
+    "sensor_spacing_m": 25.0
+  },
+  "hydraulics": {
+    "preset": "example"
+  },
+  "constraints": {
+    "note": "Site and procurement limits. NOT from SOLIT2 and not acceptance criteria."
+  },
+  "ahj": {},
+  "criteria": {}
+}
