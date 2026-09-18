@@ -9,8 +9,9 @@ BASELINE = "designs/og-dbr-rev0.json"
 def test_the_orange_gate_baseline_loads():
     design = Design.load(BASELINE)
     assert design.meta.name == "og-dbr-rev0"
-    assert design.tunnel.preset == "orange_gate"
+    assert design.tunnel.preset == "twin_bore_11m"
     assert design.tunnel.shape == "circle"
+    assert design.tunnel.length_m == 4240.0
 
 
 def test_the_baseline_matches_the_dbr_hydraulics_numbers():
