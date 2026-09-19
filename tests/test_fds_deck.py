@@ -303,3 +303,30 @@ def test_the_wall_surface_carries_a_thickness_with_its_material():
         line = next(ln for ln in deck.generate(Design.load(design_path)).splitlines()
                     if ln.startswith("&SURF ID='WALL'"))
         assert "MATL_ID=" in line and f"THICKNESS={deck.WALL_THICKNESS_M:.2f}" in line
+
+
+def test_nozzles_wait_for_the_activation_control():
+    # QUANTITY='TIME', SETPOINT=0.0 self-triggers every head at t=0 whatever
+    # CTRL_ID says: a real FDS run had 22,781 droplets in one mesh by t=0.5 s,
+    # with detection and the activation delay never applied, which makes
+    # suppression look instantaneous. FDS's own activate_sprinklers.fds uses
+    # QUANTITY='CONTROL' for a head opened by an external control.
+    text = deck.generate(Design.load(BASELINE))
+    heads = [ln for ln in text.splitlines() if "PROP_ID='NOZ_FINE'" in ln]
+    assert heads
+    for ln in heads:
+        assert "QUANTITY='CONTROL'" in ln
+        assert "CTRL_ID='ACT'" in ln
+        assert "SETPOINT" not in ln, "a setpoint on the head bypasses the control"
+
+
+def test_the_simulated_window_is_separate_from_the_discharge_duration():
+    # zones.duration_min sizes the water tank and the cost index, so it must
+    # not be edited to shorten a CFD run: 60 -> 20 min takes the Orange Gate
+    # baseline's tank from 92.4 m3 to 30.8 m3 and breaks Annex 7 5.2.8's
+    # 30-minute minimum discharge.
+    design = Design.load(BASELINE)
+    full = deck.generate(design)
+    short = deck.generate(design, t_end_s=1200.0)
+    assert f"T_END={design.zones.duration_min * 60.0:.1f}" in full
+    assert "T_END=1200.0" in short

@@ -71,8 +71,17 @@ def _head(design: Design) -> list[str]:
     return [f"&HEAD CHID='{_design_sha(design)}', TITLE='{design.meta.name}' /", ""]
 
 
-def _time(design: Design) -> list[str]:
-    return [f"&TIME T_END={design.zones.duration_min * 60.0:.1f} /",
+def _time(design: Design, t_end_s: float | None = None) -> list[str]:
+    """`t_end_s` shortens the SIMULATION without touching the DESIGN.
+
+    `zones.duration_min` is how long the system discharges, and it sizes the
+    water tank (`hydraulics.size_system`) and the cost index. Editing it to cut
+    a CFD run short would shrink the tank -- 60 min to 20 min takes the Orange
+    Gate baseline from 92.4 m3 to 30.8 m3 -- and break Annex 7 5.2.8's
+    30-minute minimum discharge. The simulated window is a property of the
+    run, not of the system, so it is a separate knob.
+    """
+    return [f"&TIME T_END={(t_end_s if t_end_s is not None else design.zones.duration_min * 60.0):.1f} /",
             f"&MISC TMPA={design.tunnel.ambient_temp_c:.1f} /",
             # One global pressure matrix across all meshes instead of FDS's
             # default block-wise FFT per mesh. A 600 m tunnel split into
@@ -257,8 +266,15 @@ def _nozzles(design: Design, geom: SectionGeometry) -> list[str]:
     tilt = math.radians(design.nozzles.mounting.tilt_deg)
     for i, pos in enumerate(nozzle_positions(design, geom, FIRE_X_M)):
         lines.append(
+            # QUANTITY='CONTROL' + CTRL_ID is FDS's form for a head opened by an
+            # external control (see its own Verification/Sprinklers_and_Sprays/
+            # activate_sprinklers.fds). The earlier QUANTITY='TIME', SETPOINT=0.0
+            # self-triggered every head at t=0 regardless of CTRL_ID: a real run
+            # had 22,781 droplets in one mesh by t=0.5 s, with detection and the
+            # activation delay never applied, which makes suppression look
+            # instant. LATCH keeps a zone open once it has opened.
             f"&DEVC ID='NOZ{i}', XYZ={pos.x_m:.2f},{pos.y_m:.2f},{pos.z_m:.2f}, "
-            f"PROP_ID='NOZ_FINE', QUANTITY='TIME', SETPOINT=0.0, "
+            f"PROP_ID='NOZ_FINE', QUANTITY='CONTROL', LATCH=.TRUE., "
             f"ORIENTATION=0.0,{math.sin(tilt):.3f},{-math.cos(tilt):.3f}, "
             f"CTRL_ID='ACT' /"
         )
@@ -372,9 +388,10 @@ def _output() -> list[str]:
             "&SLCF PBY=0.0, QUANTITY='U-VELOCITY' /", ""]
 
 
-def generate(design: Design, dx_m: float = DX_M) -> str:
+def generate(design: Design, dx_m: float = DX_M,
+             t_end_s: float | None = None) -> str:
     geom = section_geometry(design)
-    blocks = (_head(design) + _time(design) + _meshes(geom, dx_m)
+    blocks = (_head(design) + _time(design, t_end_s) + _meshes(geom, dx_m)
               + _tunnel(geom, dx_m) + _portals(design) + _fire(design)
               + _nozzles(design, geom) + _detection(design)
               + _stations(design, geom) + _output() + ["&TAIL /"])
