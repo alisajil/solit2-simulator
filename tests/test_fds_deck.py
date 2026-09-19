@@ -78,6 +78,18 @@ def test_the_mesh_is_padded_to_whole_cells_and_the_wall_fills_the_padding():
     assert any(f",{y1:.2f}," in ln for ln in walls), "no wall reaches the +y mesh edge"
 
 
+def test_the_deck_asks_for_the_global_pressure_solver():
+    # The default block-wise FFT solver treats each mesh's pressure separately
+    # and iterates to reconcile the interfaces. On a 10-mesh proxy of this
+    # topology it capped out at 10 iterations on half the steps and still left
+    # 0.4-0.7 m/s of interface velocity error; UGLMAT solves one global matrix
+    # and left ~1e-15, in less wall time. A 600 m tunnel is one duct.
+    text = deck.generate(Design.load(BASELINE))
+    assert "&PRES" in text
+    pres = next(ln for ln in text.splitlines() if ln.startswith("&PRES"))
+    assert "UGLMAT" in pres
+
+
 def test_the_default_cell_size_is_inside_the_resolution_band():
     # D* = 7.1 m at 150 MW; the design spec's screening band is D*/dx in [10, 16]
     assert 10 <= 7.1 / deck.DX_M <= 16
