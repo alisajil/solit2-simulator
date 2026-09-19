@@ -280,6 +280,18 @@ def fire_ceiling_device_id() -> str:
     return f"{CEILING_TC_PREFIX}{int((FIRE_X_M - CORE_M[0]) / CEILING_TC_SPACING_M)}"
 
 
+def _gauge_orientation(x_m: float) -> str:
+    """Unit vector from a gauge toward the fire, on the x-axis.
+
+    FDS's boundary-quantity GAUGE HEAT FLUX needs a solid surface to sit on
+    and rejects a free-floating DEVC (ERROR 427) -- confirmed against a real
+    FDS 6.11.1 run. GAUGE HEAT FLUX GAS is the gas-phase equivalent Table 5's
+    stations actually need (a person or a target, not a wall), and it asks
+    for ORIENTATION -- the sensing face's outward normal -- in place of IOR.
+    """
+    return "1.0,0.0,0.0" if FIRE_X_M > x_m else "-1.0,0.0,0.0"
+
+
 def _stations(design: Design, geom: SectionGeometry) -> list[str]:
     """Annex 7 Table 5, device by device, plus the two a simulation needs."""
     from solit2.engines.reduced.criteria import (BREATHING_HEIGHT_M, HEAT_FLUX_HEIGHT_M,
@@ -298,7 +310,7 @@ def _stations(design: Design, geom: SectionGeometry) -> list[str]:
         if kit.heat_flux:
             lines.append(
                 f"&DEVC ID='{name}_HF', XYZ={x_m:.2f},0.0,{HEAT_FLUX_HEIGHT_M:.2f}, "
-                f"QUANTITY='GAUGE HEAT FLUX', IOR=-1 /")
+                f"QUANTITY='GAUGE HEAT FLUX GAS', ORIENTATION={_gauge_orientation(x_m)} /")
         if kit.visibility:
             lines.append(
                 f"&DEVC ID='{name}_VIS', XYZ={x_m:.2f},0.0,{VISIBILITY_HEIGHT_M:.2f}, "
@@ -318,7 +330,8 @@ def _stations(design: Design, geom: SectionGeometry) -> list[str]:
     # the target gauge Table 5 has no reason to carry
     lines.append(
         f"&DEVC ID='{TARGET_GAUGE_ID}', XYZ={design.fire.target_x_m:.2f},0.0,"
-        f"{BREATHING_HEIGHT_M:.2f}, QUANTITY='GAUGE HEAT FLUX', IOR=-1 /")
+        f"{BREATHING_HEIGHT_M:.2f}, QUANTITY='GAUGE HEAT FLUX GAS', "
+        f"ORIENTATION={_gauge_orientation(design.fire.target_x_m)} /")
     # ceiling line over the core, for the exposed-length criterion
     x0, x1 = CORE_M
     z = _ceiling_z(design)

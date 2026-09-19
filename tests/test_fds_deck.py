@@ -121,6 +121,29 @@ def test_the_target_carries_its_own_flux_gauge():
     assert f"ID='{deck.TARGET_GAUGE_ID}'" in deck.generate(Design.load(BASELINE))
 
 
+def test_flux_gauges_are_gas_phase_with_an_orientation_not_a_boundary_ior():
+    # FDS ERROR 427: a free-floating 'GAUGE HEAT FLUX' DEVC with IOR needs a
+    # solid boundary and is rejected outright -- verified against a real FDS
+    # run. 'GAUGE HEAT FLUX GAS' is the gas-phase equivalent Table 5's
+    # stations need (a person or a target, not a wall).
+    text = deck.generate(Design.load(BASELINE))
+    gauge_lines = [ln for ln in text.splitlines()
+                  if "QUANTITY='GAUGE HEAT FLUX" in ln]
+    assert gauge_lines, "no heat-flux gauges in the deck"
+    for ln in gauge_lines:
+        assert "GAUGE HEAT FLUX GAS" in ln
+        assert "ORIENTATION=" in ln
+        assert "IOR=" not in ln
+
+
+def test_a_gauge_orients_toward_the_fire():
+    # U-side gauges (negative x) face +x toward the fire at x=0; D-side
+    # gauges face -x. Getting the sign backward reads the WRONG direction's
+    # incident flux -- away from the fire instead of toward it.
+    assert deck._gauge_orientation(-15.0) == "1.0,0.0,0.0"
+    assert deck._gauge_orientation(15.0) == "-1.0,0.0,0.0"
+
+
 def test_a_ceiling_thermocouple_line_spans_the_core():
     # structure exposure is a near-fire quantity; the far meshes exist only so
     # the three far stations are measured, not to resolve a hot ceiling
