@@ -30,6 +30,11 @@ CEILING_TC_PREFIX = "CEIL"
 TARGET_GAUGE_ID = "TARGET_FLUX"
 CEILING_OFFSET_M = 0.15      # below the crown, matching Tier 1's ceiling definition
 DEVC_DT_S = 1.0
+# FDS's VOLUME FRACTION is mol/mol. `max_co_ppm` is an Annex 7 life-safety
+# criterion in ppm, so FDS is asked to emit ppm rather than the reader guessing
+# at the unit -- without this the gate compares ~2e-4 against a limit of 500 and
+# structurally cannot fail.
+CO_PPM_CONVERSION = "1E6"
 
 
 def _head(design: Design) -> list[str]:
@@ -224,7 +229,8 @@ def _stations(design: Design, geom: SectionGeometry) -> list[str]:
         if kit.toxic_gas:
             lines += [
                 f"&DEVC ID='{name}_CO', XYZ={x_m:.2f},0.0,{BREATHING_HEIGHT_M:.2f}, "
-                f"QUANTITY='VOLUME FRACTION', SPEC_ID='CARBON MONOXIDE' /",
+                f"QUANTITY='VOLUME FRACTION', SPEC_ID='CARBON MONOXIDE', "
+                f"CONVERSION_FACTOR={CO_PPM_CONVERSION}, UNITS='ppm' /",
                 f"&DEVC ID='{name}_FED', XYZ={x_m:.2f},0.0,{BREATHING_HEIGHT_M:.2f}, "
                 f"QUANTITY='FED' /",
             ]

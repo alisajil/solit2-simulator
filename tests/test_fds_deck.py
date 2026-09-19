@@ -151,3 +151,19 @@ def test_the_test_rig_deck_matches_its_golden_file():
     from pathlib import Path
     golden = Path("tests/fixtures/fds/solit2-test-protocol.fds")
     assert deck.generate(Design.load(TEST_RIG)) == golden.read_text()
+
+
+def test_the_co_device_is_converted_to_ppm():
+    # FDS's VOLUME FRACTION is mol/mol; `max_co_ppm` is an Annex 7 life-safety
+    # criterion in ppm. Without the conversion the gate compares ~2e-4 against a
+    # limit of several hundred and structurally cannot fail.
+    from solit2.engines.reduced.criteria import INSTRUMENTS, STATIONS
+    text = deck.generate(Design.load(BASELINE))
+    co_lines = [ln for ln in text.splitlines() if "_CO'" in ln]
+    expected = sum(1 for n, x in STATIONS.items()
+                   if deck.WINDOW_M[0] <= x <= deck.WINDOW_M[1]
+                   and INSTRUMENTS[n].toxic_gas)
+    assert co_lines and len(co_lines) == expected
+    for line in co_lines:
+        assert f"CONVERSION_FACTOR={deck.CO_PPM_CONVERSION}" in line
+        assert "UNITS='ppm'" in line
