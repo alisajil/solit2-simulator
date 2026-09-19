@@ -56,6 +56,9 @@
   "constraints": {
     "note": "Site and procurement limits. NOT from SOLIT2 and not acceptance criteria."
   },
-  "ahj": {},
+  "ahj": {
+    "note": "Only one acceptance limit is set, because only one is stated by an authority. HPWM-TECHNICAL SPEC_R2 section 6 requires a 150 MW minimum design fire load reduced to <= 50 MW. Every other Annex 7 criterion stays null and is reported 'unset': the tender defers tenability to 'SOLIT2 or NFPA 502 test protocols' without naming numbers, and Annex 7 7.1 leaves those to the authority having jurisdiction. Do not fill them from a vendor's test report -- see INDEPENDENCE.md rule 2.",
+    "tvs_design_fire_mw": 50.0
+  },
   "criteria": {}
 }
