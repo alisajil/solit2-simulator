@@ -159,7 +159,8 @@ def _peaks_of(steps: list[StepRecord], modelled: list[str],
     return peaks
 
 
-def _warnings(geom: SectionGeometry, skipped: list[str]) -> list[str]:
+def _warnings(geom: SectionGeometry, velocity_ms: float,
+              skipped: list[str]) -> list[str]:
     """Everything a reader must know that the numbers do not say themselves.
 
     A Tier 2 result is interchangeable with a Tier 1 one downstream, so every
@@ -175,6 +176,19 @@ def _warnings(geom: SectionGeometry, skipped: list[str]) -> list[str]:
         f"{stepped_m2:.1f} m2 against Tier 1's {geom.free_area_m2:.1f} m2 "
         f"({gap_pct:+.1f}%); the ring is written at the core mesh's resolution, "
         f"so the coarse meshes snap it to their own coarser grid",
+    ]
+    warnings += [
+        # score.py deducts for airflow below u_critical_ms and envelope warns
+        # near it. Both read a Tier 1 correlation output that FDS has no
+        # equivalent for, so both are unreachable here -- and a leaderboard
+        # ranking Tier 1 and Tier 2 together must not read that as a clean run.
+        "the critical-velocity penalty cannot apply to a Tier 2 result: FDS "
+        "resolves backlayering directly and the Tier 1 correlation input "
+        "u_critical_ms is not computed, so it is recorded as 0.0 rather than "
+        "measured",
+        f"this result covers the single ventilation velocity "
+        f"{velocity_ms:.2f} m/s, not Tier 1's section x velocity envelope; "
+        f"criteria_cases is empty for the same reason",
     ]
     if skipped:
         warnings.append(f"stations outside the {deck_mod.WINDOW_M} m deck window "
@@ -225,5 +239,6 @@ def read(run_dir: Path, design: Design) -> Result:
         timeseries={"t_s": [s.t_s for s in steps],
                     "hrr_mw": [s.hrr_mw for s in steps],
                     "ceiling_temp_c": [s.ceiling_temp_c for s in steps]},
-        warnings=_warnings(geom, sorted(set(STATIONS) - set(modelled))),
+        warnings=_warnings(geom, trace.velocity_ms,
+                           sorted(set(STATIONS) - set(modelled))),
     )

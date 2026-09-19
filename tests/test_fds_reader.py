@@ -92,3 +92,18 @@ def test_the_result_names_the_gap_between_the_stepped_and_the_smooth_section(run
     assert f"{stepped_m2:.1f} m2" in named[0]
     assert f"{geom.free_area_m2:.1f} m2" in named[0]
     assert "%" in named[0]
+
+
+def test_the_result_says_which_penalties_a_tier_2_run_cannot_receive(run_dir):
+    # u_critical_ms = 0.0 makes score.py's backlayering deduction and the
+    # envelope's critical-velocity warning unreachable, and the leaderboard
+    # ranks Tier 1 and Tier 2 in one list. An unreachable penalty that nothing
+    # names reads as a clean run.
+    design = Design.load(BASELINE)
+    result = reader.read(run_dir, design)
+    assert any("critical-velocity penalty cannot apply" in w for w in result.warnings)
+    velocity = design.ventilation.velocity_ms or max(design.ventilation.velocity_range_ms)
+    single = [w for w in result.warnings if "single ventilation velocity" in w]
+    assert len(single) == 1
+    assert f"{velocity:.2f} m/s" in single[0]
+    assert result.criteria_cases == {}
