@@ -103,11 +103,7 @@ def _tunnel(geom: SectionGeometry, dx_m: float) -> list[str]:
         ]
         return lines + [""]
     # circle: one OBST pair per dx layer, each as wide as the bore is at that height
-    steps = max(int(geom.crown_height_m / dx_m), 1)
-    for i in range(steps):
-        z_lo = i * dx_m
-        z_hi = z_lo + dx_m
-        clear = geom.width_at(min(z_hi, geom.crown_height_m)) / 2.0
+    for z_lo, z_hi, clear in _bore_layers(geom, dx_m):
         if clear >= half_width:
             continue
         lines += [
@@ -117,6 +113,34 @@ def _tunnel(geom: SectionGeometry, dx_m: float) -> list[str]:
             f"{z_lo:.2f},{z_hi:.2f}, SURF_ID='WALL' /",
         ]
     return lines + [""]
+
+
+def _bore_layers(geom: SectionGeometry, dx_m: float) -> list[tuple[float, float, float]]:
+    """(z_lo, z_hi, clear half-width) for every dx layer of the stair-stepped bore."""
+    steps = max(int(geom.crown_height_m / dx_m), 1)
+    return [(i * dx_m, (i + 1) * dx_m,
+             geom.width_at(min((i + 1) * dx_m, geom.crown_height_m)) / 2.0)
+            for i in range(steps)]
+
+
+def stepped_free_area_m2(geom: SectionGeometry, dx_m: float = FINE_DX_M) -> float:
+    """Free area of the section AS THE DECK EMITS IT, not as Tier 1 defines it.
+
+    A stair-stepped circle cannot match a smooth one, so this will not equal
+    `geom.free_area_m2` and no attempt is made to make it. It exists so the gap
+    can be REPORTED: the whole point of Tier 2 is that it models the same
+    tunnel Tier 1 does, and where the discretisation makes that untrue, the
+    difference belongs in `Result.warnings` rather than in a source comment.
+    """
+    if geom.shape == "box":
+        return geom.road_width_m * geom.crown_height_m
+    half_width = geom.road_width_m / 2.0
+    layers = _bore_layers(geom, dx_m)
+    area = sum((geom.road_width_m if clear >= half_width else 2.0 * clear)
+               * (z_hi - z_lo) for z_lo, z_hi, clear in layers)
+    # above the topmost whole layer the deck writes no obstruction at all, so
+    # that sliver stands open at the full road width
+    return area + geom.road_width_m * (geom.crown_height_m - layers[-1][1])
 
 
 def _portals(design: Design) -> list[str]:

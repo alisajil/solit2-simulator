@@ -76,3 +76,19 @@ def test_the_lining_temperature_comes_from_the_ceiling_device_above_the_fire(run
     devc.write_text("\n".join(lines[:2] + marked))
     result = reader.read(run_dir, Design.load(BASELINE))
     assert result.peaks["lining_temp_c"] == pytest.approx(911.0)
+
+
+def test_the_result_names_the_gap_between_the_stepped_and_the_smooth_section(run_dir):
+    # a stair-stepped circle cannot match a smooth one; the requirement is that
+    # the difference is visible in the result, not that it is zero
+    from solit2.engines.fds import deck as deck_mod
+    from solit2.engines.reduced.geometry import section_geometry
+    design = Design.load(BASELINE)
+    geom = section_geometry(design)
+    stepped_m2 = deck_mod.stepped_free_area_m2(geom)
+    assert stepped_m2 != pytest.approx(geom.free_area_m2), "nothing to report otherwise"
+    named = [w for w in reader.read(run_dir, design).warnings if "free area" in w]
+    assert len(named) == 1
+    assert f"{stepped_m2:.1f} m2" in named[0]
+    assert f"{geom.free_area_m2:.1f} m2" in named[0]
+    assert "%" in named[0]

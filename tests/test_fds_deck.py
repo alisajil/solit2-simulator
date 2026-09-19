@@ -200,3 +200,13 @@ def test_the_fire_ceiling_device_sits_directly_above_the_fire():
     line = next(ln for ln in text.splitlines() if f"ID='{device}'" in ln)
     x_m = float(line.split("XYZ=")[1].split(",")[0])
     assert x_m == deck.FIRE_X_M
+
+
+def test_the_stepped_free_area_is_the_area_the_deck_actually_emits():
+    from solit2.engines.reduced.geometry import section_geometry
+    # a box is emitted exactly, so there is no gap to report
+    rig = section_geometry(Design.load(TEST_RIG))
+    assert deck.stepped_free_area_m2(rig) == rig.road_width_m * rig.crown_height_m
+    # a stair-stepped bore cannot be, and loses area against the smooth circle
+    bore = section_geometry(Design.load(BASELINE))
+    assert deck.stepped_free_area_m2(bore) < bore.free_area_m2
