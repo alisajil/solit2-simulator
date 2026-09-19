@@ -120,3 +120,43 @@ def test_report_correlation_missing_file_exits_two():
     assert proc.returncode == 2
     err = json.loads(proc.stderr)
     assert err["fix"]
+
+
+def test_fds_deck_writes_a_namelist(tmp_path):
+    out = tmp_path / "case.fds"
+    proc = _run(["fds-deck", "examples/designs/road-tunnel-twin-bore.json", "--out", str(out)])
+    assert proc.returncode == 0, proc.stderr
+    text = out.read_text()
+    assert text.startswith("&HEAD")
+    assert "&TAIL /" in text
+
+
+def test_fds_deck_honours_the_dx_override(tmp_path):
+    coarse = _run(["fds-deck", "examples/designs/road-tunnel-twin-bore.json", "--dx", "0.9"]).stdout
+    fine = _run(["fds-deck", "examples/designs/road-tunnel-twin-bore.json", "--dx", "0.25"]).stdout
+    assert coarse != fine
+
+
+def test_fds_deck_on_a_bad_design_exits_two(tmp_path):
+    raw = json.loads(open("examples/designs/road-tunnel-twin-bore.json").read())
+    raw["nozzles"]["pressure_bar"] = 12.0
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps(raw))
+    proc = _run(["fds-deck", str(bad)])
+    assert proc.returncode == 2
+    assert json.loads(proc.stderr)["fix"]
+
+
+def test_fds_status_reports_a_missing_run(tmp_path):
+    proc = _run(["fds-status", str(tmp_path / "nope")])
+    assert proc.returncode == 0, proc.stderr
+    assert "failed" in proc.stdout
+
+
+def test_run_with_engine_fds_refuses_without_a_binary(tmp_path):
+    # no FDS on this machine: the pre-flight must say so plainly, not crash
+    proc = _run(["run", "examples/designs/road-tunnel-twin-bore.json", "--engine", "fds", "--no-history"])
+    assert proc.returncode == 3
+    err = json.loads(proc.stderr)
+    assert "fds" in err["error"]
+    assert err["fix"]

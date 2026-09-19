@@ -4,17 +4,22 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+import time
 from pathlib import Path
 
 from pydantic import ValidationError
 
 from solit2 import history as history_mod
+from solit2.engines.fds import deck as fds_deck
+from solit2.engines.fds import reader as fds_reader
+from solit2.engines.fds import runner as fds_runner
 from solit2.engines.reduced import envelope
 from solit2.reports import correlation, test_plan
 from solit2.schema.design import Design
 from solit2.schema.result import Result
 
 EXIT_OK, EXIT_VALIDATION_MISS, EXIT_BAD_INPUT, EXIT_ENGINE = 0, 1, 2, 3
+FDS_POLL_S = 30.0
 
 
 def _fail(message: str, field: str, fix: str, code: int) -> int:
@@ -29,6 +34,47 @@ def _write_out(path: Path, payload: dict) -> None:
     path.write_text(json.dumps(payload, indent=2))
 
 
+def _cmd_fds_deck(args: argparse.Namespace) -> int:
+    try:
+        design = Design.load(args.design)
+    except (ValidationError, ValueError, FileNotFoundError, KeyError) as exc:
+        return _fail(str(exc), getattr(exc, "field", "design"),
+                     "correct the design JSON and try again", EXIT_BAD_INPUT)
+    text = fds_deck.generate(design, fine_dx_m=args.dx)
+    print(text)
+    if args.out:
+        try:
+            Path(args.out).parent.mkdir(parents=True, exist_ok=True)
+            Path(args.out).write_text(text + "\n")
+        except OSError as exc:
+            return _fail(str(exc), "--out", "choose a writable output path", EXIT_BAD_INPUT)
+    return EXIT_OK
+
+
+def _cmd_fds_status(args: argparse.Namespace) -> int:
+    state = fds_runner.status(Path(args.run_dir))
+    print(f"{state['state']}  {state['progress'] * 100:.0f}%  {state.get('detail', '')}".rstrip())
+    return EXIT_OK
+
+
+def _run_fds(design: Design, args: argparse.Namespace) -> Result:
+    """Generate, launch, wait, read. Hours, not seconds -- by design."""
+    problems = fds_runner.preflight()
+    if problems:
+        raise RuntimeError("; ".join(problems))
+    from solit2.engines.reduced.envelope import _design_sha
+    out_dir = Path(args.history).parent / _design_sha(design)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    deck_path = out_dir / "deck.fds"
+    deck_path.write_text(fds_deck.generate(design))
+    fds_runner.run(deck_path, out_dir)
+    while fds_runner.status(out_dir)["state"] == "running":
+        time.sleep(FDS_POLL_S)
+    if fds_runner.status(out_dir)["state"] == "failed":
+        raise RuntimeError(f"the FDS run in {out_dir} failed; see {out_dir / 'run.out'}")
+    return fds_reader.read(out_dir, design)
+
+
 def _cmd_run(args: argparse.Namespace) -> int:
     try:
         design = Design.load(args.design)
@@ -36,7 +82,10 @@ def _cmd_run(args: argparse.Namespace) -> int:
         return _fail(str(exc), getattr(exc, "field", "design"),
                      "correct the design JSON and run again", EXIT_BAD_INPUT)
     try:
-        result = envelope.run(design)
+        if args.engine == "fds":
+            result = _run_fds(design, args)
+        else:
+            result = envelope.run(design)
     except (ArithmeticError, RuntimeError, ValueError, KeyError) as exc:
         return _fail(str(exc), "engine",
                      "the design validated but the engine could not finish the run",
@@ -141,11 +190,25 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = sub.add_parser("run", help="score a design")
     run.add_argument("design")
-    run.add_argument("--engine", default="reduced", choices=["reduced"])
+    run.add_argument("--engine", default="reduced", choices=["reduced", "fds"],
+                     help="'fds' generates a deck, runs it and parses the result; "
+                          "a Tier 2 run takes hours, not seconds")
     run.add_argument("--out")
     run.add_argument("--history", default=str(history_mod.DEFAULT_PATH))
     run.add_argument("--no-history", action="store_true")
     run.set_defaults(func=_cmd_run)
+
+    fdeck = sub.add_parser("fds-deck", help="write the FDS input deck for a design")
+    fdeck.add_argument("design")
+    fdeck.add_argument("--dx", type=float, default=fds_deck.FINE_DX_M,
+                       help="cell size in the fine core mesh; the far meshes "
+                            "scale with it")
+    fdeck.add_argument("--out")
+    fdeck.set_defaults(func=_cmd_fds_deck)
+
+    fstat = sub.add_parser("fds-status", help="progress of an FDS run directory")
+    fstat.add_argument("run_dir")
+    fstat.set_defaults(func=_cmd_fds_status)
 
     hist = sub.add_parser("history", help="show the leaderboard")
     hist.add_argument("--history", default=str(history_mod.DEFAULT_PATH))
