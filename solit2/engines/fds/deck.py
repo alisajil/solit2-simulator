@@ -8,6 +8,8 @@ engines describe the same tunnel and measure the same points -- without that,
 """
 from __future__ import annotations
 
+import math
+
 from solit2.engines.reduced.envelope import _design_sha
 from solit2.engines.reduced.geometry import SectionGeometry, section_geometry
 from solit2.schema.design import Design
@@ -23,6 +25,11 @@ WINDOW_M = (-360.0, 240.0)
 CORE_M = (-60.0, 120.0)
 FINE_DX_M = 0.5              # D*/dx = 14.2 at 150 MW, inside the 10-16 band
 COARSE_RATIO = 3             # far-field dx = FINE_DX_M * COARSE_RATIO
+CEILING_TC_SPACING_M = 5.0
+CEILING_TC_PREFIX = "CEIL"
+TARGET_GAUGE_ID = "TARGET_FLUX"
+CEILING_OFFSET_M = 0.15      # below the crown, matching Tier 1's ceiling definition
+DEVC_DT_S = 1.0
 
 
 def _head(design: Design) -> list[str]:
@@ -105,8 +112,150 @@ def _portals(design: Design) -> list[str]:
             "&VENT MB='XMAX', SURF_ID='OPEN' /", ""]
 
 
+def _fire(design: Design) -> list[str]:
+    """Free-burn curve as the surface's own ramp; suppression is FDS's job.
+
+    Tier 1 bakes suppression into its HRR curve because it has no droplets.
+    Here the deck declares the UNSUPPRESSED fire and lets `E_COEFFICIENT` --
+    the surface's extinguishing coefficient -- fall out of the water that
+    actually lands on it.
+    """
+    f = design.fire
+    fp = f.footprint
+    area_m2 = fp.length_m * fp.width_m
+    hrrpua = design.fire.design_hrr_mw * 1000.0 / area_m2
+    half_l, half_w = fp.length_m / 2.0, fp.width_m / 2.0
+    lines = [
+        f"&SURF ID='FIRE', HRRPUA={hrrpua:.1f}, RAMP_Q='FIRE_RAMP', "
+        f"E_COEFFICIENT=0.4, COLOR='RED' /",
+        f"&OBST XB={FIRE_X_M - half_l:.2f},{FIRE_X_M + half_l:.2f},"
+        f"{-half_w:.2f},{half_w:.2f},{fp.base_height_m:.2f},{fp.top_height_m:.2f}, "
+        f"SURF_IDS='FIRE','INERT','INERT' /",
+    ]
+    # t-squared growth after the incubation period, sampled every 30 s
+    alpha = f.alpha
+    t_peak = math.sqrt(design.fire.design_hrr_mw * 1000.0 / alpha) + f.incubation_s
+    t = 0.0
+    while t <= t_peak:
+        q = 0.0 if t < f.incubation_s else min(alpha * (t - f.incubation_s) ** 2, design.fire.design_hrr_mw * 1000.0)
+        lines.append(f"&RAMP ID='FIRE_RAMP', T={t:.1f}, F={q / (design.fire.design_hrr_mw * 1000.0):.4f} /")
+        t += 30.0
+    lines.append(f"&RAMP ID='FIRE_RAMP', T={design.zones.duration_min * 60.0:.1f}, F=1.0000 /")
+    return lines + [""]
+
+
+def _nozzles(design: Design, geom: SectionGeometry) -> list[str]:
+    """One PART, one PROP, and one DEVC per head -- single-mode only."""
+    from solit2.engines.reduced.geometry import nozzle_positions
+
+    mode = design.nozzles.modes[0]
+    smd_um = mode.smd_um or next(iter(design.nozzles.smd_table.values()))
+    lines = [
+        "&SPEC ID='WATER VAPOR' /",
+        f"&PART ID='FINE', SPEC_ID='WATER VAPOR', DIAMETER={smd_um:.1f}, "
+        f"GAMMA_D=2.4, SAMPLING_FACTOR=10 /",
+        f"&PROP ID='NOZ_FINE', PART_ID='FINE', "
+        f"FLOW_RATE={design.nozzles.flow_per_head_lpm:.2f}, "
+        f"SPRAY_ANGLE=0.0,{mode.cone_half_angle_deg:.1f}, "
+        f"PARTICLE_VELOCITY={mode.launch_velocity_ms:.1f} /",
+    ]
+    tilt = math.radians(design.nozzles.mounting.tilt_deg)
+    for i, pos in enumerate(nozzle_positions(design, geom, FIRE_X_M)):
+        lines.append(
+            f"&DEVC ID='NOZ{i}', XYZ={pos.x_m:.2f},{pos.y_m:.2f},{pos.z_m:.2f}, "
+            f"PROP_ID='NOZ_FINE', QUANTITY='TIME', SETPOINT=0.0, "
+            f"ORIENTATION=0.0,{math.sin(tilt):.3f},{-math.cos(tilt):.3f}, "
+            f"CTRL_ID='ACT' /"
+        )
+    return lines + [""]
+
+
+def _detection(design: Design) -> list[str]:
+    """Linear heat detection along the ceiling, then the activation delay.
+
+    Over the core only: detection that matters is detection near the fire, and
+    a sensor 300 m up the approach tunnel would never be the one that trips.
+    """
+    x0, x1 = CORE_M
+    lines = []
+    n = int((x1 - x0) / design.detection.sensor_spacing_m)
+    for i in range(n):
+        x = x0 + i * design.detection.sensor_spacing_m
+        lines.append(
+            f"&DEVC ID='LHD{i}', XYZ={x:.2f},0.0,{_ceiling_z(design):.2f}, "
+            f"QUANTITY='THERMOCOUPLE', SETPOINT={design.detection.threshold_c:.1f} /"
+        )
+    lines += [
+        f"&CTRL ID='DETECT', FUNCTION_TYPE='ANY', "
+        f"INPUT_ID={','.join(repr(f'LHD{i}') for i in range(n))} /",
+        f"&CTRL ID='ACT', FUNCTION_TYPE='TIME_DELAY', INPUT_ID='DETECT', "
+        f"DELAY={design.zones.activation_delay_s:.1f} /",
+    ]
+    return lines + [""]
+
+
+def _ceiling_z(design: Design) -> float:
+    return section_geometry(design).crown_height_m - CEILING_OFFSET_M
+
+
+def _stations(design: Design, geom: SectionGeometry) -> list[str]:
+    """Annex 7 Table 5, device by device, plus the two a simulation needs."""
+    from solit2.engines.reduced.criteria import (BREATHING_HEIGHT_M, HEAT_FLUX_HEIGHT_M,
+                                                 INSTRUMENTS, STATIONS,
+                                                 VISIBILITY_HEIGHT_M,
+                                                 thermocouple_heights_m)
+    lines = []
+    for name, x_m in sorted(STATIONS.items(), key=lambda kv: kv[1]):
+        if not (WINDOW_M[0] <= x_m <= WINDOW_M[1]):
+            continue
+        kit = INSTRUMENTS[name]
+        heights = thermocouple_heights_m(kit.thermocouples, geom.crown_height_m)
+        for rung, z in enumerate(heights):
+            lines.append(f"&DEVC ID='{name}_TC{rung}', XYZ={x_m:.2f},0.0,{z:.2f}, "
+                        f"QUANTITY='THERMOCOUPLE' /")
+        if kit.heat_flux:
+            lines.append(
+                f"&DEVC ID='{name}_HF', XYZ={x_m:.2f},0.0,{HEAT_FLUX_HEIGHT_M:.2f}, "
+                f"QUANTITY='GAUGE HEAT FLUX', IOR=-1 /")
+        if kit.visibility:
+            lines.append(
+                f"&DEVC ID='{name}_VIS', XYZ={x_m:.2f},0.0,{VISIBILITY_HEIGHT_M:.2f}, "
+                f"QUANTITY='VISIBILITY' /")
+        if kit.toxic_gas:
+            lines += [
+                f"&DEVC ID='{name}_CO', XYZ={x_m:.2f},0.0,{BREATHING_HEIGHT_M:.2f}, "
+                f"QUANTITY='VOLUME FRACTION', SPEC_ID='CARBON MONOXIDE' /",
+                f"&DEVC ID='{name}_FED', XYZ={x_m:.2f},0.0,{BREATHING_HEIGHT_M:.2f}, "
+                f"QUANTITY='FED' /",
+            ]
+        if kit.air_velocity:
+            lines.append(
+                f"&DEVC ID='{name}_U', XYZ={x_m:.2f},0.0,{BREATHING_HEIGHT_M:.2f}, "
+                f"QUANTITY='U-VELOCITY' /")
+    # the target gauge Table 5 has no reason to carry
+    lines.append(
+        f"&DEVC ID='{TARGET_GAUGE_ID}', XYZ={design.fire.target_x_m:.2f},0.0,"
+        f"{BREATHING_HEIGHT_M:.2f}, QUANTITY='GAUGE HEAT FLUX', IOR=-1 /")
+    # ceiling line over the core, for the exposed-length criterion
+    x0, x1 = CORE_M
+    z = _ceiling_z(design)
+    for i in range(int((x1 - x0) / CEILING_TC_SPACING_M)):
+        x = x0 + i * CEILING_TC_SPACING_M
+        lines.append(f"&DEVC ID='{CEILING_TC_PREFIX}{i}', XYZ={x:.2f},0.0,{z:.2f}, "
+                    f"QUANTITY='THERMOCOUPLE' /")
+    return lines + [""]
+
+
+def _output() -> list[str]:
+    return [f"&DUMP DT_DEVC={DEVC_DT_S:.1f}, DT_HRR={DEVC_DT_S:.1f} /",
+            "&SLCF PBY=0.0, QUANTITY='TEMPERATURE' /",
+            "&SLCF PBY=0.0, QUANTITY='U-VELOCITY' /", ""]
+
+
 def generate(design: Design, fine_dx_m: float = FINE_DX_M) -> str:
     geom = section_geometry(design)
     blocks = (_head(design) + _time(design) + _meshes(geom, fine_dx_m)
-              + _tunnel(geom, fine_dx_m) + _portals(design) + ["&TAIL /"])
+              + _tunnel(geom, fine_dx_m) + _portals(design) + _fire(design)
+              + _nozzles(design, geom) + _detection(design)
+              + _stations(design, geom) + _output() + ["&TAIL /"])
     return "\n".join(blocks)
