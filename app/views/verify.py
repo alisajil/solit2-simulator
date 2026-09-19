@@ -72,6 +72,11 @@ def _render_comparison() -> None:
     except ValueError as exc:
         st.error(f"Could not read that result: {exc}")
         return
+    # Every Tier 2 stand-in is recorded in the result's warnings. This is the
+    # one page where the two tiers are read side by side, so it is the one page
+    # that must not present Tier 2's numbers without them.
+    for warning in tier2.warnings:
+        st.warning(warning)
     st.markdown(correlation.render(tier1, tier2))
 
 

@@ -6,9 +6,19 @@ from __future__ import annotations
 from solit2.schema.result import Result
 
 
+def _column(result: Result) -> str:
+    """Design name AND engine.
+
+    The comparison this report exists for is one design across two tiers, and
+    naming only the design prints "og-dbr-rev0 vs og-dbr-rev0" -- a table whose
+    two columns cannot be told apart.
+    """
+    return f"{result.meta['design_name']} ({result.meta.get('engine', 'unknown engine')})"
+
+
 def render(test_result: Result, site_result: Result) -> str:
-    test_name = test_result.meta["design_name"]
-    site_name = site_result.meta["design_name"]
+    test_name = _column(test_result)
+    site_name = _column(site_result)
     lines = [
         f"# Correlation — {test_name} vs {site_name}",
         "",
