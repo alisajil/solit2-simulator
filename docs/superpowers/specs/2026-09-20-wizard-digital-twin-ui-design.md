@@ -166,7 +166,7 @@ unit-tested without a browser:
 def tunnel_layer(design: Design, geom: SectionGeometry, window_m: tuple[float, float],
                  step: StepRecord, target_ignited: bool = False) -> Layer
 def instrument_layer(design: Design, geom: SectionGeometry, step: StepRecord) -> Layer
-def fire_layer(design: Design, step: StepRecord) -> Layer
+def fire_layer(design: Design, geom: SectionGeometry, step: StepRecord) -> Layer
 def mist_layer(design: Design, geom: SectionGeometry, step: StepRecord) -> Layer
 def cfd_layer(slice_: Slice, frame_index: int) -> Layer
 def frames(design: Design, geom: SectionGeometry, trace: RunTrace, stride_s: float) -> list[go.Frame]
@@ -370,15 +370,20 @@ Builds a design dict and returns `Design.from_dict(...)`:
 | `constraints` | omitted — site constraints do not apply in the test gallery |
 | `ahj` | `design.ahj` unchanged — the acceptance limits belong to the project, not the tunnel |
 
-**Mounting rule.** `drop = section_geometry(design).crown_height_m −
-design.nozzles.mounting.height_above_carriageway_m`; twin height = `gallery_height −
-drop`, where `gallery_height` is `height_m` read from the `solit2_test` tunnel preset
-(5.2 m today), never hard-coded. If the result is ≤ 0 the function raises
-`ValueError("nozzle mounting cannot be reproduced in the <h> m test gallery: the site's
-drop below the crown is <drop> m")` and the Reports step shows that message. No silent
-clamp. `meta.notes` states: "Test-facility twin of
-<name>: the site's nozzle and hydraulics blocks in the SOLIT2 Annex 7 gallery. Heads
-mounted <h> m above the carriageway, keeping the site's <drop> m drop below the crown."
+**Mounting rule.** Let `gallery_m` be `height_m` of the `solit2_test` tunnel preset (5.2 m
+today, read from the preset, never hard-coded), `site_m` the design's
+`mounting.height_above_carriageway_m`, and `fuel_top_m` the design's
+`fire.footprint.top_height_m`. If `fuel_top_m < site_m < gallery_m`, the twin keeps the
+site's own height — the system is tested as it will be installed. Otherwise the twin mounts
+its heads where the SOLIT2 reference tests mounted theirs: `mounting.height_above_carriageway_m`
+of the `solit2_reference` nozzle preset (4.9 m). This is a fact about the gallery from the
+standard, not a vendor figure. If even that height is not strictly between the fuel top and
+the gallery ceiling the function raises `ValueError` naming all three values; no silent clamp.
+(Checked on this project's candidate: bore crown 7.625 m, heads at 6.0 m → does not fit the
+gallery → 4.9 m; the twin validates and runs in Tier 1.) `meta.notes` states which branch applied, e.g. "Test-facility twin of <name>: the site's
+nozzle and hydraulics blocks in the SOLIT2 Annex 7 gallery. Heads at 4.90 m, where the SOLIT2
+reference tests mounted theirs: the site's 6.00 m does not fit between the 4.00 m fuel top and
+the 5.20 m gallery ceiling."
 
 `solit2_test` is a core preset (`solit2/presets/tunnel_solit2_test.json`), so this module
 does not depend on `examples/`.
@@ -455,8 +460,8 @@ Smokeview". Empty states say what to do next in one sentence. Units on every num
   `tests/fixtures/fds/sample_1_1.sf` (29 KB, copied from `runs/dcfb87012b57`) parses to
   6 frames with header `('TEMPERATURE', 'temp', 'C')`.
 - **Twin builder** (`tests/test_twin.py`): nozzle and hydraulics blocks equal the site's
-  except mounting height; tunnel preset is `solit2_test`; mounting rule holds on a design
-  with a 1.0 m drop; a drop of 6 m raises `ValueError`; the twin validates and runs in
+  except mounting height; tunnel preset is `solit2_test`; a site height that fits the gallery is kept; a site
+  height of 6.5 m falls back to the reference 4.9 m and the notes say so; the twin validates and runs in
   Tier 1.
 - **Deck**: `_output()` contains both new `&SLCF` lines; existing exact-content tests
   updated.
