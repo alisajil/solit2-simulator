@@ -35,6 +35,9 @@ DEVC_DT_S = 1.0
 # at the unit -- without this the gate compares ~2e-4 against a limit of 500 and
 # structurally cannot fail.
 CO_PPM_CONVERSION = "1E6"
+# FDS requires a THICKNESS wherever a SURF names a MATL; without it the wall
+# has a material and no heat capacity to apply it to.
+WALL_THICKNESS_M = 0.30      # concrete lining
 
 
 def _head(design: Design) -> list[str]:
@@ -89,7 +92,8 @@ def _tunnel(geom: SectionGeometry, dx_m: float) -> list[str]:
     """Solid boundary. A box gets walls; a bore gets a stair-stepped ring."""
     x0, x1 = WINDOW_M
     half_width = geom.road_width_m / 2.0
-    lines = ["&SURF ID='WALL', DEFAULT=.TRUE., MATL_ID='CONCRETE' /",
+    lines = [f"&SURF ID='WALL', DEFAULT=.TRUE., MATL_ID='CONCRETE', "
+             f"THICKNESS={WALL_THICKNESS_M:.2f} /",
              "&MATL ID='CONCRETE', DENSITY=2280., CONDUCTIVITY=1.8, "
              "SPECIFIC_HEAT=1.04 /", ""]
     if geom.shape == "box":

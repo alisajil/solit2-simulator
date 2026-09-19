@@ -210,3 +210,11 @@ def test_the_stepped_free_area_is_the_area_the_deck_actually_emits():
     # a stair-stepped bore cannot be, and loses area against the smooth circle
     bore = section_geometry(Design.load(BASELINE))
     assert deck.stepped_free_area_m2(bore) < bore.free_area_m2
+
+
+def test_the_wall_surface_carries_a_thickness_with_its_material():
+    # FDS requires THICKNESS wherever a SURF names a MATL
+    for design_path in (BASELINE, TEST_RIG):
+        line = next(ln for ln in deck.generate(Design.load(design_path)).splitlines()
+                    if ln.startswith("&SURF ID='WALL'"))
+        assert "MATL_ID=" in line and f"THICKNESS={deck.WALL_THICKNESS_M:.2f}" in line

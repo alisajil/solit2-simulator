@@ -52,3 +52,8 @@ def test_dbr_figures_are_not_silently_drifting():
     assert design.hydraulics.loop_factor == 0.25
     assert design.hydraulics.main_dn_mm == 150.0
     assert design.hydraulics.zone_header_dn_mm == 65.0
+    # These two still resolve from examples/presets/hydraulics_example.json.
+    # Unpinned, editing that illustration silently moves this baseline's pump
+    # power and cost index.
+    assert design.hydraulics.static_head_bar == 2.0
+    assert design.hydraulics.fittings_loss_bar == 1.9

@@ -50,6 +50,21 @@ Subcommands:
 | `solit2 report correlation --test A.json --site B.json` | Markdown: one design's criteria across two runs, side by side |
 | `solit2 fds-deck <design.json>` | Write the FDS input deck for a design |
 | `solit2 fds-status <run-dir>` | Progress of an FDS run |
+| `solit2 run <design.json> --engine fds` | Tier 2: write the deck, run FDS, parse the result back into the same result JSON |
+
+`--engine fds` **blocks for hours, not seconds.** It writes the deck into a
+directory named after the design hash beside the history file, launches FDS in
+the background and then polls until the run finishes. It needs a real FDS
+install -- `fds` and `mpiexec` on `PATH`, or `SOLIT2_FDS_BIN` pointing at the
+binary -- and refuses with a named pre-flight problem when one is missing. To
+launch and walk away instead, generate the deck with `fds-deck`, start FDS
+yourself, and follow the run with `fds-status <run-dir>`.
+
+A Tier 2 result carries `warnings` naming every quantity FDS did not measure:
+the free-burn HRR curve, the stepped-versus-smooth section area, the
+critical-velocity penalty that cannot apply, and the single ventilation
+velocity it covers in place of Tier 1's envelope. Read them before comparing
+the two tiers.
 
 ## Writing a design
 

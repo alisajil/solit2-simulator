@@ -12,9 +12,14 @@ import streamlit as st
 from app import state
 from solit2.engines.fds import deck as fds_deck
 from solit2.engines.fds import runner as fds_runner
+from solit2.engines.reduced.envelope import _design_sha
 from solit2.reports import correlation
 from solit2.schema.design import Design
 from solit2.schema.result import Result
+
+# The deck runs to tens of thousands of characters; st.code is a preview, and
+# the download button beside it carries the whole file.
+DECK_PREVIEW_CHARS = 4000
 
 
 def _render_preflight() -> list[str]:
@@ -32,7 +37,11 @@ def _render_deck(design: Design) -> None:
     st.subheader("Deck")
     if st.button("Generate FDS deck"):
         text = fds_deck.generate(design)
-        st.code(text[:4000], language="text")
+        st.code(text[:DECK_PREVIEW_CHARS], language="text")
+        if len(text) > DECK_PREVIEW_CHARS:
+            st.caption(f"Preview only: the first {DECK_PREVIEW_CHARS:,} of "
+                       f"{len(text):,} characters. The download below is the "
+                       f"whole deck.")
         st.download_button("Download deck (.fds)", text,
                            file_name=f"{design.meta.name}.fds")
 
@@ -44,14 +53,16 @@ def _render_run(design: Design, blocked: list[str]) -> None:
         return
     st.caption("A Tier 2 run takes hours. It is launched in the background; "
               "come back to this page for progress.")
+    # Keyed on the design sha, matching the CLI and the deck's own CHID. Keyed
+    # on the name, two edits of one design would share a directory -- and a
+    # progress bar reporting the wrong run.
+    run_dir = Path("runs") / _design_sha(design)
     if st.button("Start FDS run", type="primary"):
-        out_dir = Path("runs") / design.meta.name
-        out_dir.mkdir(parents=True, exist_ok=True)
-        deck_path = out_dir / "deck.fds"
+        run_dir.mkdir(parents=True, exist_ok=True)
+        deck_path = run_dir / "deck.fds"
         deck_path.write_text(fds_deck.generate(design))
-        fds_runner.run(deck_path, out_dir)
-        st.success(f"Launched in {out_dir}")
-    run_dir = Path("runs") / design.meta.name
+        fds_runner.run(deck_path, run_dir)
+        st.success(f"Launched in {run_dir}")
     if run_dir.exists():
         status = fds_runner.status(run_dir)
         st.progress(status["progress"], text=f"{status['state']} -- "
