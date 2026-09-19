@@ -132,7 +132,7 @@ def test_fds_deck_writes_a_namelist(tmp_path):
 
 
 def test_fds_deck_honours_the_dx_override(tmp_path):
-    coarse = _run(["fds-deck", "examples/designs/road-tunnel-twin-bore.json", "--dx", "0.9"]).stdout
+    coarse = _run(["fds-deck", "examples/designs/road-tunnel-twin-bore.json", "--dx", "0.75"]).stdout
     fine = _run(["fds-deck", "examples/designs/road-tunnel-twin-bore.json", "--dx", "0.25"]).stdout
     assert coarse != fine
 

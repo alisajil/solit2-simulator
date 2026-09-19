@@ -1,3 +1,5 @@
+import pytest
+
 from solit2.engines.fds import deck
 from solit2.schema.design import Design
 
@@ -26,33 +28,11 @@ def test_the_domain_holds_every_station_the_criteria_read():
     from solit2.engines.reduced.criteria import STATIONS
     text = deck.generate(Design.load(BASELINE))
     mesh_lines = [ln for ln in text.splitlines() if ln.startswith("&MESH")]
-    assert len(mesh_lines) == 3, "far upstream, core, far downstream"
-    assert str(deck.WINDOW_M[0]) in mesh_lines[0]
-    assert str(deck.WINDOW_M[1]) in mesh_lines[-1]
+    assert len(mesh_lines) == deck.MESH_COUNT
+    assert f"XB={deck.WINDOW_M[0]:.1f}," in mesh_lines[0]
+    assert f",{deck.WINDOW_M[1]:.1f}," in mesh_lines[-1]
     for x_m in STATIONS.values():
         assert deck.WINDOW_M[0] <= x_m <= deck.WINDOW_M[1]
-
-
-def test_the_core_mesh_is_finer_than_the_far_field():
-    text = deck.generate(Design.load(BASELINE))
-    mesh_lines = [ln for ln in text.splitlines() if ln.startswith("&MESH")]
-
-    def i_cells(line: str) -> int:
-        return int(line.split("IJK=")[1].split(",")[0])
-
-    # the core spans 180 m against the far upstream's 300 m, and still has more
-    # cells along x -- that is what "finer" means here
-    assert i_cells(mesh_lines[1]) > i_cells(mesh_lines[0])
-
-
-def test_the_cell_count_stays_inside_the_planned_budget():
-    # the plan budgets about 180k cells; rounding j and k up for interface
-    # alignment costs cells, and a silent jump past the budget turns an
-    # overnight run into a week. The goldens pin the exact mesh set.
-    for design_path in (BASELINE, TEST_RIG):
-        total = sum(i * j * k for i, j, k in
-                    _mesh_ijk(deck.generate(Design.load(design_path))))
-        assert total < 180_000, (design_path, total)
 
 
 def _mesh_ijk(text: str) -> list[tuple[int, int, int]]:
@@ -60,23 +40,62 @@ def _mesh_ijk(text: str) -> list[tuple[int, int, int]]:
             for ln in text.splitlines() if ln.startswith("&MESH")]
 
 
-def test_mesh_interfaces_are_aligned_in_x_y_and_z():
-    # misaligned interfaces are the classic multi-mesh FDS bug
-    core_span = deck.CORE_M[1] - deck.CORE_M[0]
-    up_span = deck.CORE_M[0] - deck.WINDOW_M[0]
-    down_span = deck.WINDOW_M[1] - deck.CORE_M[1]
-    coarse = deck.FINE_DX_M * deck.COARSE_RATIO
-    assert core_span % deck.FINE_DX_M == 0
-    assert up_span % coarse == 0
-    assert down_span % coarse == 0
-    # y and z: all three meshes share ONE y extent and ONE z extent, so an
-    # aligned interface means the core's j and k are exactly COARSE_RATIO times
-    # the far meshes'. j=20 against j=7 (ratio 2.857) is the bug this catches.
+def _mesh_xb(text: str) -> list[tuple[float, ...]]:
+    return [tuple(float(n) for n in ln.split("XB=")[1].split(" /")[0].split(","))
+            for ln in text.splitlines() if ln.startswith("&MESH")]
+
+
+def test_meshes_are_uniform_and_tile_the_window_exactly():
+    # Nested meshes (fine core, coarse far field) were built first and failed
+    # against real FDS: the pressure solver never converged at the interfaces
+    # and the run went unstable at ignition, at 3:1 and again at 2:1. Uniform
+    # meshes are the fix, so every mesh must be identical and the tiling exact.
     for design_path in (BASELINE, TEST_RIG):
-        up, core, down = _mesh_ijk(deck.generate(Design.load(design_path)))
-        for axis, name in ((1, "j"), (2, "k")):
-            assert core[axis] == up[axis] * deck.COARSE_RATIO, (design_path, name)
-            assert core[axis] == down[axis] * deck.COARSE_RATIO, (design_path, name)
+        text = deck.generate(Design.load(design_path))
+        ijk, xb = _mesh_ijk(text), _mesh_xb(text)
+        assert len(set(ijk)) == 1, (design_path, "meshes differ in IJK")
+        assert len({b[2:] for b in xb}) == 1, (design_path, "meshes differ in y/z")
+        span = (deck.WINDOW_M[1] - deck.WINDOW_M[0]) / deck.MESH_COUNT
+        for (x0, x1, *_), (i, _, _) in zip(xb, ijk):
+            assert x1 - x0 == pytest.approx(span)
+            assert i * deck.DX_M == pytest.approx(span), "x-span is not whole cells"
+        for a, b in zip(xb, xb[1:]):
+            assert a[1] == pytest.approx(b[0]), "gap or overlap between meshes"
+
+
+def test_the_mesh_is_padded_to_whole_cells_and_the_wall_fills_the_padding():
+    # the mesh's y and z extents are ceil(section/dx) cells, so the solid
+    # boundary lands on a cell face; the tunnel OBSTs must reach that edge
+    from solit2.engines.reduced.geometry import section_geometry
+    design = Design.load(BASELINE)
+    geom = section_geometry(design)
+    text = deck.generate(design)
+    _, _, y0, y1, _, z1 = _mesh_xb(text)[0]
+    assert y1 - y0 >= geom.road_width_m and z1 >= geom.crown_height_m
+    assert (y1 - y0) / deck.DX_M == pytest.approx(round((y1 - y0) / deck.DX_M))
+    assert z1 / deck.DX_M == pytest.approx(round(z1 / deck.DX_M))
+    walls = [ln for ln in text.splitlines() if "SURF_ID='WALL'" in ln and ln.startswith("&OBST")]
+    assert any(f",{y1:.2f}," in ln for ln in walls), "no wall reaches the +y mesh edge"
+
+
+def test_the_default_cell_size_is_inside_the_resolution_band():
+    # D* = 7.1 m at 150 MW; the design spec's screening band is D*/dx in [10, 16]
+    assert 10 <= 7.1 / deck.DX_M <= 16
+
+
+def test_a_cell_size_that_does_not_tile_the_window_is_rejected():
+    with pytest.raises(ValueError, match="does not tile"):
+        deck.generate(Design.load(BASELINE), dx_m=0.9)
+
+
+def test_the_cell_count_stays_inside_the_planned_budget():
+    # 0.6 m uniform over 600 m is about 221k cells; the earlier 180k figure
+    # belonged to the nested design that could not run. A silent jump past this
+    # turns an overnight run into a week. The goldens pin the exact mesh set.
+    for design_path in (BASELINE, TEST_RIG):
+        total = sum(i * j * k for i, j, k in
+                    _mesh_ijk(deck.generate(Design.load(design_path))))
+        assert total < 250_000, (design_path, total)
 
 
 def test_the_portals_supply_upstream_and_open_downstream():

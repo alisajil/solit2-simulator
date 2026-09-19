@@ -127,3 +127,29 @@ def test_the_fds_version_is_read_from_the_log_and_is_none_when_absent(tmp_path):
     (tmp_path / "abc123.out").write_text(
         " Revision         : FDS6.9.1-0-g889da6a-release\n")
     assert runner.fds_version(tmp_path) == "6.9.1"
+
+
+def test_run_launches_one_mpi_rank_per_mesh(ready, monkeypatch, tmp_path):
+    # A bare `fds` runs every mesh in one process -- valid, but measured at
+    # 2.1x slower than one rank per mesh on a three-mesh deck. The launch must
+    # be `mpiexec -np N fds deck.fds` with N read off the deck itself.
+    captured = {}
+
+    class FakePopen:
+        def __init__(self, argv, **kwargs):
+            captured["argv"] = argv
+
+    monkeypatch.setattr(runner.subprocess, "Popen", FakePopen)
+    deck = tmp_path / "deck.fds"
+    deck.write_text("&MESH IJK=1,1,1, XB=0,1,0,1,0,1 /\n" * 4 + "&TAIL /\n")
+    runner.run(deck, tmp_path)
+    argv = captured["argv"]
+    assert argv[0].endswith("mpiexec")
+    assert argv[1:3] == ["-np", "4"]
+    assert argv[3].endswith("fds") and argv[4] == "deck.fds"
+
+
+def test_mesh_count_reads_the_deck(tmp_path):
+    deck = tmp_path / "d.fds"
+    deck.write_text("&HEAD /\n&MESH a /\n&MESH b /\n&MESH c /\n&TAIL /\n")
+    assert runner.mesh_count(deck) == 3

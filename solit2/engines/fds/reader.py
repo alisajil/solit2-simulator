@@ -186,8 +186,8 @@ def _warnings(geom: SectionGeometry, velocity_ms: float, engine_version: str,
         "so no free-burn curve exists to report",
         f"deck geometry: the stair-stepped section's free area is "
         f"{stepped_m2:.1f} m2 against Tier 1's {geom.free_area_m2:.1f} m2 "
-        f"({gap_pct:+.1f}%); the ring is written at the core mesh's resolution, "
-        f"so the coarse meshes snap it to their own coarser grid",
+        f"({gap_pct:+.1f}%); a {deck_mod.DX_M} m stair-step cannot match a "
+        f"smooth circle, and no attempt is made to make it",
     ]
     warnings += [
         # score.py deducts for airflow below u_critical_ms and envelope warns

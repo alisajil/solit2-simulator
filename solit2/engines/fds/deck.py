@@ -24,10 +24,21 @@ FIRE_X_M = 0.0
 # U340 to D215 -- because a station the deck does not measure is a KeyError
 # inside `criteria._worst_station_value`, not a smaller result.
 WINDOW_M = (-360.0, 240.0)
-# Where the fire is and where resolution has to be paid for.
+# The near-fire region the ceiling thermocouple line and the detection line
+# cover. It no longer decides the mesh -- see DX_M.
 CORE_M = (-60.0, 120.0)
-FINE_DX_M = 0.5              # D*/dx = 14.2 at 150 MW, inside the 10-16 band
-COARSE_RATIO = 3             # far-field dx = FINE_DX_M * COARSE_RATIO
+# ONE cell size for the whole window, split into MESH_COUNT equal meshes along
+# x for MPI. Nested meshes -- a fine core inside a coarse far field -- were
+# built first and failed against a real FDS 6.11.1 run: the pressure solver
+# pinned at its iteration cap every step without converging at the interfaces
+# (velocity error 1-2 m/s in cold flow, ~9 m/s once the fire lit) and the run
+# went numerically unstable at ignition, at a 3:1 ratio and again at 2:1. The
+# User Guide lists "a change in grid resolution of more than a factor of 2 at
+# a mesh interface" as a cause of instability; uniform meshes carrying the
+# same fire converged in a few iterations. 0.6 m keeps D*/dx = 11.8 at 150 MW,
+# inside the 10-16 band, at 221k cells; 0.5 m is one --dx away at 403k.
+DX_M = 0.6
+MESH_COUNT = 10              # one MPI rank per mesh; sized for an 11-core machine
 CEILING_TC_SPACING_M = 5.0
 CEILING_TC_PREFIX = "CEIL"
 TARGET_GAUGE_ID = "TARGET_FLUX"
@@ -65,61 +76,61 @@ def _time(design: Design) -> list[str]:
             f"&MISC TMPA={design.tunnel.ambient_temp_c:.1f} /", ""]
 
 
-def _cells_up_to_ratio(cells: int) -> int:
-    """Round a cell count UP to a multiple of COARSE_RATIO, never below it."""
-    cells = max(cells, COARSE_RATIO)
-    return cells + (-cells) % COARSE_RATIO
+def _mesh_extent(geom: SectionGeometry, dx_m: float) -> tuple[int, int]:
+    """(j, k): whole cells across the chord and up to the crown, rounded UP.
 
-
-def _meshes(geom: SectionGeometry, fine_dx_m: float) -> list[str]:
-    """Three meshes: coarse approach, fine core, coarse exit.
-
-    The far meshes exist so U340, U100 and D215 are measured at all; they carry
-    near-uniform flow, so they are resolved at COARSE_RATIO x the core's dx.
-    A misaligned interface is the classic multi-mesh bug, so alignment is
-    enforced in all three directions, not just x:
-
-    - x: each span is an exact multiple of its own dx, and the coarse dx is
-      COARSE_RATIO x the fine one;
-    - y and z: the three meshes share ONE y extent and ONE z extent, so the
-      core's j and k are rounded UP to a multiple of COARSE_RATIO and the far
-      meshes take exactly a COARSE_RATIO-th of them. Rounding up rather than
-      taking round(width/dx) is what stops j=20 landing against j=7.
+    The mesh is padded out to whole cells rather than clipped to the section,
+    and `_tunnel` fills the padding with wall, so the solid boundary always
+    lands exactly on a cell face.
     """
-    coarse_dx_m = fine_dx_m * COARSE_RATIO
-    half_width = geom.road_width_m / 2.0
-    z_top = geom.crown_height_m
-    fine_j = _cells_up_to_ratio(round(geom.road_width_m / fine_dx_m))
-    fine_k = _cells_up_to_ratio(round(z_top / fine_dx_m))
-    coarse_jk = (fine_j // COARSE_RATIO, fine_k // COARSE_RATIO)
-    zones = ((WINDOW_M[0], CORE_M[0], coarse_dx_m, coarse_jk),
-             (CORE_M[0], CORE_M[1], fine_dx_m, (fine_j, fine_k)),
-             (CORE_M[1], WINDOW_M[1], coarse_dx_m, coarse_jk))
-    lines = []
-    for x0, x1, dx, (j, k) in zones:
-        lines.append(
-            f"&MESH IJK={round((x1 - x0) / dx)},{j},{k}, "
-            f"XB={x0:.1f},{x1:.1f},{-half_width:.2f},{half_width:.2f},0.0,{z_top:.2f} /"
-        )
-    return lines + [""]
+    return math.ceil(geom.road_width_m / dx_m), math.ceil(geom.crown_height_m / dx_m)
+
+
+def _meshes(geom: SectionGeometry, dx_m: float) -> list[str]:
+    """MESH_COUNT equal meshes along x, all at one cell size -- see DX_M.
+
+    Every mesh shares one y extent and one z extent, each a whole number of
+    cells, so the interfaces are trivially aligned in all three directions and
+    the stair-stepped bore is the same solid in every mesh.
+    """
+    x0, x1 = WINDOW_M
+    nx = (x1 - x0) / dx_m
+    if abs(nx - round(nx)) > 1e-9 or round(nx) % MESH_COUNT:
+        raise ValueError(
+            f"dx={dx_m} m does not tile the {x1 - x0:.0f} m window into "
+            f"{MESH_COUNT} equal whole-cell meshes; 0.5 and 0.6 do")
+    nx_each = round(nx) // MESH_COUNT
+    span = (x1 - x0) / MESH_COUNT
+    j, k = _mesh_extent(geom, dx_m)
+    half_width, z_top = j * dx_m / 2.0, k * dx_m
+    return [
+        f"&MESH IJK={nx_each},{j},{k}, "
+        f"XB={x0 + i * span:.1f},{x0 + (i + 1) * span:.1f},"
+        f"{-half_width:.2f},{half_width:.2f},0.0,{z_top:.2f} /"
+        for i in range(MESH_COUNT)
+    ] + [""]
 
 
 def _tunnel(geom: SectionGeometry, dx_m: float) -> list[str]:
     """Solid boundary. A box gets walls; a bore gets a stair-stepped ring."""
     x0, x1 = WINDOW_M
-    half_width = geom.road_width_m / 2.0
+    # Fill from the section's real edge out to the mesh's padded edge, so the
+    # wall lands on a cell face: the mesh is whole cells, the tunnel is not.
+    j, k = _mesh_extent(geom, dx_m)
+    half_width, z_top = j * dx_m / 2.0, k * dx_m
+    real_half = geom.road_width_m / 2.0
     lines = [f"&SURF ID='WALL', DEFAULT=.TRUE., MATL_ID='CONCRETE', "
              f"THICKNESS={WALL_THICKNESS_M:.2f} /",
              "&MATL ID='CONCRETE', DENSITY=2280., CONDUCTIVITY=1.8, "
              "SPECIFIC_HEAT=1.04 /", ""]
     if geom.shape == "box":
         lines += [
-            f"&OBST XB={x0:.1f},{x1:.1f},{-half_width - dx_m:.2f},{-half_width:.2f},"
-            f"0.0,{geom.crown_height_m:.2f}, SURF_ID='WALL' /",
-            f"&OBST XB={x0:.1f},{x1:.1f},{half_width:.2f},{half_width + dx_m:.2f},"
-            f"0.0,{geom.crown_height_m:.2f}, SURF_ID='WALL' /",
+            f"&OBST XB={x0:.1f},{x1:.1f},{-half_width:.2f},{-real_half:.2f},"
+            f"0.0,{z_top:.2f}, SURF_ID='WALL' /",
+            f"&OBST XB={x0:.1f},{x1:.1f},{real_half:.2f},{half_width:.2f},"
+            f"0.0,{z_top:.2f}, SURF_ID='WALL' /",
             f"&OBST XB={x0:.1f},{x1:.1f},{-half_width:.2f},{half_width:.2f},"
-            f"{geom.crown_height_m:.2f},{geom.crown_height_m + dx_m:.2f}, SURF_ID='WALL' /",
+            f"{geom.crown_height_m:.2f},{z_top:.2f}, SURF_ID='WALL' /",
         ]
         return lines + [""]
     # circle: one OBST pair per dx layer, each as wide as the bore is at that height
@@ -137,13 +148,15 @@ def _tunnel(geom: SectionGeometry, dx_m: float) -> list[str]:
 
 def _bore_layers(geom: SectionGeometry, dx_m: float) -> list[tuple[float, float, float]]:
     """(z_lo, z_hi, clear half-width) for every dx layer of the stair-stepped bore."""
-    steps = max(int(geom.crown_height_m / dx_m), 1)
+    # ceil, not int: the mesh is padded to whole cells above the crown, and the
+    # top layer must be sealed (width_at(crown) is 0, so it is a full-width wall)
+    steps = max(math.ceil(geom.crown_height_m / dx_m), 1)
     return [(i * dx_m, (i + 1) * dx_m,
              geom.width_at(min((i + 1) * dx_m, geom.crown_height_m)) / 2.0)
             for i in range(steps)]
 
 
-def stepped_free_area_m2(geom: SectionGeometry, dx_m: float = FINE_DX_M) -> float:
+def stepped_free_area_m2(geom: SectionGeometry, dx_m: float = DX_M) -> float:
     """Free area of the section AS THE DECK EMITS IT, not as Tier 1 defines it.
 
     A stair-stepped circle cannot match a smooth one, so this will not equal
@@ -348,10 +361,10 @@ def _output() -> list[str]:
             "&SLCF PBY=0.0, QUANTITY='U-VELOCITY' /", ""]
 
 
-def generate(design: Design, fine_dx_m: float = FINE_DX_M) -> str:
+def generate(design: Design, dx_m: float = DX_M) -> str:
     geom = section_geometry(design)
-    blocks = (_head(design) + _time(design) + _meshes(geom, fine_dx_m)
-              + _tunnel(geom, fine_dx_m) + _portals(design) + _fire(design)
+    blocks = (_head(design) + _time(design) + _meshes(geom, dx_m)
+              + _tunnel(geom, dx_m) + _portals(design) + _fire(design)
               + _nozzles(design, geom) + _detection(design)
               + _stations(design, geom) + _output() + ["&TAIL /"])
     return "\n".join(blocks)

@@ -40,7 +40,12 @@ def _cmd_fds_deck(args: argparse.Namespace) -> int:
     except (ValidationError, ValueError, FileNotFoundError, KeyError) as exc:
         return _fail(str(exc), getattr(exc, "field", "design"),
                      "correct the design JSON and try again", EXIT_BAD_INPUT)
-    text = fds_deck.generate(design, fine_dx_m=args.dx)
+    try:
+        text = fds_deck.generate(design, dx_m=args.dx)
+    except ValueError as exc:
+        return _fail(str(exc), "--dx",
+                     "choose a cell size that tiles the window into equal "
+                     "whole-cell meshes, e.g. 0.5 or 0.6", EXIT_BAD_INPUT)
     print(text)
     if args.out:
         try:
@@ -200,9 +205,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     fdeck = sub.add_parser("fds-deck", help="write the FDS input deck for a design")
     fdeck.add_argument("design")
-    fdeck.add_argument("--dx", type=float, default=fds_deck.FINE_DX_M,
-                       help="cell size in the fine core mesh; the far meshes "
-                            "scale with it")
+    fdeck.add_argument("--dx", type=float, default=fds_deck.DX_M,
+                       help="cell size for every mesh; must tile the window "
+                            "into equal whole-cell meshes (0.5 or 0.6 do)")
     fdeck.add_argument("--out")
     fdeck.set_defaults(func=_cmd_fds_deck)
 
