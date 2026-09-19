@@ -20,6 +20,10 @@ runs/
 !tests/fixtures/fds/
 !tests/fixtures/fds/**
 
+# issued decks are deliverables, not run output -- committed on purpose
+!decks/
+!decks/**
+
 # python
 .venv/
 __pycache__/
