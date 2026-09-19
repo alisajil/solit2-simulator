@@ -10,8 +10,8 @@ def _column(result: Result) -> str:
     """Design name AND engine.
 
     The comparison this report exists for is one design across two tiers, and
-    naming only the design prints "og-dbr-rev0 vs og-dbr-rev0" -- a table whose
-    two columns cannot be told apart.
+    naming only the design heads both columns with the same string -- a table
+    whose two sides cannot be told apart.
     """
     return f"{result.meta['design_name']} ({result.meta.get('engine', 'unknown engine')})"
 
