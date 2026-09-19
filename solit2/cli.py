@@ -41,7 +41,8 @@ def _cmd_fds_deck(args: argparse.Namespace) -> int:
         return _fail(str(exc), getattr(exc, "field", "design"),
                      "correct the design JSON and try again", EXIT_BAD_INPUT)
     try:
-        text = fds_deck.generate(design, dx_m=args.dx)
+        text = fds_deck.generate(design, dx_m=args.dx,
+                                 t_end_s=(args.minutes * 60.0 if args.minutes else None))
     except ValueError as exc:
         return _fail(str(exc), "--dx",
                      "choose a cell size that tiles the window into equal "
@@ -208,6 +209,12 @@ def build_parser() -> argparse.ArgumentParser:
     fdeck.add_argument("--dx", type=float, default=fds_deck.DX_M,
                        help="cell size for every mesh; must tile the window "
                             "into equal whole-cell meshes (0.5 or 0.6 do)")
+    fdeck.add_argument("--minutes", type=float,
+                       help="simulate only this many minutes instead of the "
+                            "design's full discharge duration. This shortens "
+                            "the RUN, not the system: zones.duration_min sizes "
+                            "the water tank and the cost index, so editing it "
+                            "to cut a run short would redesign the system")
     fdeck.add_argument("--out")
     fdeck.set_defaults(func=_cmd_fds_deck)
 

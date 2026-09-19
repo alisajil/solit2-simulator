@@ -203,3 +203,17 @@ def test_run_with_engine_fds_completes_end_to_end(tmp_path, monkeypatch, capsys)
     assert "total" in payload["score"]
     assert (tmp_path / chid / "deck.fds").read_text().startswith("&HEAD")
     assert json.loads(hist.read_text().splitlines()[0])["design_name"] == "og-dbr-rev0"
+
+
+def test_fds_deck_minutes_shortens_the_run_not_the_design():
+    # zones.duration_min sizes the water tank and the cost index; --minutes
+    # must shorten only the simulated window.
+    full = _run(["fds-deck", "designs/og-cand-a.json"])
+    short = _run(["fds-deck", "designs/og-cand-a.json", "--minutes", "20"])
+    assert full.returncode == 0 and short.returncode == 0, short.stderr
+    assert "T_END=3600.0" in full.stdout
+    assert "T_END=1200.0" in short.stdout
+    # everything except the T_END line is identical
+    a = [ln for ln in full.stdout.splitlines() if not ln.startswith("&TIME")]
+    b = [ln for ln in short.stdout.splitlines() if not ln.startswith("&TIME")]
+    assert a == b
