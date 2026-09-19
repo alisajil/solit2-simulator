@@ -167,3 +167,13 @@ def test_the_co_device_is_converted_to_ppm():
     for line in co_lines:
         assert f"CONVERSION_FACTOR={deck.CO_PPM_CONVERSION}" in line
         assert "UNITS='ppm'" in line
+
+
+def test_the_fire_ceiling_device_sits_directly_above_the_fire():
+    # `reader` reads lining_temp_c from this device. The MIDDLE of the ceiling
+    # line is 30 m downstream of the fire on the current window, not above it.
+    text = deck.generate(Design.load(BASELINE))
+    device = deck.fire_ceiling_device_id()
+    line = next(ln for ln in text.splitlines() if f"ID='{device}'" in ln)
+    x_m = float(line.split("XYZ=")[1].split(",")[0])
+    assert x_m == deck.FIRE_X_M

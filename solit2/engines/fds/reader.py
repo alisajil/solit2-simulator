@@ -88,6 +88,7 @@ def read(run_dir: Path, design: Design) -> Result:
     heights = {n: thermocouple_heights_m(INSTRUMENTS[n].thermocouples, geom.crown_height_m)
                for n in modelled}
     ceiling = _ceiling_ids(devc_ids)
+    fire_ceiling = deck_mod.fire_ceiling_device_id()
     threshold_c = design.ahj.structure_temp_threshold_c
     activation_s = design.zones.activation_delay_s
     full_pressure_s = activation_s + design.zones.pump_ramp_s
@@ -109,8 +110,10 @@ def read(run_dir: Path, design: Design) -> Result:
             # and deriving one would be a Tier 1 number wearing a Tier 2 label.
             hrr_free_mw=hrr_mw,
             ceiling_temp_c=max(ceiling_temps),
-            # Tier 1's own definition: the ceiling gas above the fire.
-            lining_temp_c=ceiling_temps[len(ceiling_temps) // 2],
+            # Tier 1's own definition: the ceiling gas above the fire -- read by
+            # device ID, not by position, so a reordered CSV cannot silently
+            # move the measurement somewhere else.
+            lining_temp_c=_at(devc_ids, row, fire_ceiling),
             # No pipe in the deck. A water-filled pipe that nothing has heated
             # reads ambient; 0.0 would be a colder-than-air measurement.
             pipe_temp_c=design.tunnel.ambient_temp_c,

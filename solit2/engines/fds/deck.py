@@ -203,6 +203,17 @@ def _ceiling_z(design: Design) -> float:
     return section_geometry(design).crown_height_m - CEILING_OFFSET_M
 
 
+def fire_ceiling_device_id() -> str:
+    """The ceiling thermocouple directly above the fire.
+
+    `_stations` lays the ceiling line out from CORE_M[0] in CEILING_TC_SPACING_M
+    steps, so the device over the fire is that offset divided by the spacing.
+    The MIDDLE of the line is not it: the line is not centred on the fire, and
+    on the current window the midpoint sits 30 m downstream of it.
+    """
+    return f"{CEILING_TC_PREFIX}{int((FIRE_X_M - CORE_M[0]) / CEILING_TC_SPACING_M)}"
+
+
 def _stations(design: Design, geom: SectionGeometry) -> list[str]:
     """Annex 7 Table 5, device by device, plus the two a simulation needs."""
     from solit2.engines.reduced.criteria import (BREATHING_HEIGHT_M, HEAT_FLUX_HEIGHT_M,

@@ -59,3 +59,20 @@ def test_the_result_round_trips_through_json(run_dir):
     from solit2.schema.result import Result
     result = reader.read(run_dir, Design.load(BASELINE))
     assert Result.model_validate_json(result.model_dump_json()) == result
+
+
+def test_the_lining_temperature_comes_from_the_ceiling_device_above_the_fire(run_dir):
+    from solit2.engines.fds import deck as deck_mod
+    from solit2.engines.reduced.envelope import _design_sha
+    chid = _design_sha(Design.load(BASELINE))
+    devc = run_dir / f"{chid}_devc.csv"
+    lines = devc.read_text().splitlines()
+    column = lines[1].split(",").index(deck_mod.fire_ceiling_device_id())
+    marked = []
+    for row in lines[2:]:
+        cells = row.split(",")
+        cells[column] = "911.0"
+        marked.append(",".join(cells))
+    devc.write_text("\n".join(lines[:2] + marked))
+    result = reader.read(run_dir, Design.load(BASELINE))
+    assert result.peaks["lining_temp_c"] == pytest.approx(911.0)
