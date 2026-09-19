@@ -46,25 +46,40 @@ def _time(design: Design) -> list[str]:
             f"&MISC TMPA={design.tunnel.ambient_temp_c:.1f} /", ""]
 
 
+def _cells_up_to_ratio(cells: int) -> int:
+    """Round a cell count UP to a multiple of COARSE_RATIO, never below it."""
+    cells = max(cells, COARSE_RATIO)
+    return cells + (-cells) % COARSE_RATIO
+
+
 def _meshes(geom: SectionGeometry, fine_dx_m: float) -> list[str]:
     """Three meshes: coarse approach, fine core, coarse exit.
 
     The far meshes exist so U340, U100 and D215 are measured at all; they carry
     near-uniform flow, so they are resolved at COARSE_RATIO x the core's dx.
-    Each span is an exact multiple of its own dx, which is what keeps the mesh
-    interfaces aligned -- a misaligned interface is the classic multi-mesh bug.
+    A misaligned interface is the classic multi-mesh bug, so alignment is
+    enforced in all three directions, not just x:
+
+    - x: each span is an exact multiple of its own dx, and the coarse dx is
+      COARSE_RATIO x the fine one;
+    - y and z: the three meshes share ONE y extent and ONE z extent, so the
+      core's j and k are rounded UP to a multiple of COARSE_RATIO and the far
+      meshes take exactly a COARSE_RATIO-th of them. Rounding up rather than
+      taking round(width/dx) is what stops j=20 landing against j=7.
     """
     coarse_dx_m = fine_dx_m * COARSE_RATIO
     half_width = geom.road_width_m / 2.0
     z_top = geom.crown_height_m
-    zones = ((WINDOW_M[0], CORE_M[0], coarse_dx_m),
-             (CORE_M[0], CORE_M[1], fine_dx_m),
-             (CORE_M[1], WINDOW_M[1], coarse_dx_m))
+    fine_j = _cells_up_to_ratio(round(geom.road_width_m / fine_dx_m))
+    fine_k = _cells_up_to_ratio(round(z_top / fine_dx_m))
+    coarse_jk = (fine_j // COARSE_RATIO, fine_k // COARSE_RATIO)
+    zones = ((WINDOW_M[0], CORE_M[0], coarse_dx_m, coarse_jk),
+             (CORE_M[0], CORE_M[1], fine_dx_m, (fine_j, fine_k)),
+             (CORE_M[1], WINDOW_M[1], coarse_dx_m, coarse_jk))
     lines = []
-    for x0, x1, dx in zones:
-        ijk = (round((x1 - x0) / dx), round(geom.road_width_m / dx), round(z_top / dx))
+    for x0, x1, dx, (j, k) in zones:
         lines.append(
-            f"&MESH IJK={ijk[0]},{ijk[1]},{ijk[2]}, "
+            f"&MESH IJK={round((x1 - x0) / dx)},{j},{k}, "
             f"XB={x0:.1f},{x1:.1f},{-half_width:.2f},{half_width:.2f},0.0,{z_top:.2f} /"
         )
     return lines + [""]

@@ -45,7 +45,22 @@ def test_the_core_mesh_is_finer_than_the_far_field():
     assert i_cells(mesh_lines[1]) > i_cells(mesh_lines[0])
 
 
-def test_mesh_spans_are_exact_multiples_of_their_own_dx():
+def test_the_cell_count_stays_inside_the_planned_budget():
+    # the plan budgets about 180k cells; rounding j and k up for interface
+    # alignment costs cells, and a silent jump past the budget turns an
+    # overnight run into a week. The goldens pin the exact mesh set.
+    for design_path in (BASELINE, TEST_RIG):
+        total = sum(i * j * k for i, j, k in
+                    _mesh_ijk(deck.generate(Design.load(design_path))))
+        assert total < 180_000, (design_path, total)
+
+
+def _mesh_ijk(text: str) -> list[tuple[int, int, int]]:
+    return [tuple(int(n) for n in ln.split("IJK=")[1].split(",")[:3])
+            for ln in text.splitlines() if ln.startswith("&MESH")]
+
+
+def test_mesh_interfaces_are_aligned_in_x_y_and_z():
     # misaligned interfaces are the classic multi-mesh FDS bug
     core_span = deck.CORE_M[1] - deck.CORE_M[0]
     up_span = deck.CORE_M[0] - deck.WINDOW_M[0]
@@ -54,6 +69,14 @@ def test_mesh_spans_are_exact_multiples_of_their_own_dx():
     assert core_span % deck.FINE_DX_M == 0
     assert up_span % coarse == 0
     assert down_span % coarse == 0
+    # y and z: all three meshes share ONE y extent and ONE z extent, so an
+    # aligned interface means the core's j and k are exactly COARSE_RATIO times
+    # the far meshes'. j=20 against j=7 (ratio 2.857) is the bug this catches.
+    for design_path in (BASELINE, TEST_RIG):
+        up, core, down = _mesh_ijk(deck.generate(Design.load(design_path)))
+        for axis, name in ((1, "j"), (2, "k")):
+            assert core[axis] == up[axis] * deck.COARSE_RATIO, (design_path, name)
+            assert core[axis] == down[axis] * deck.COARSE_RATIO, (design_path, name)
 
 
 def test_the_portals_supply_upstream_and_open_downstream():
