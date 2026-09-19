@@ -26,8 +26,7 @@
 
 | File | Responsibility |
 |---|---|
-| `solit2/presets/tunnel_orange_gate.json` | Orange Gate tunnel preset (spec §2 names it; does not exist yet) |
-| `designs/og-dbr-rev0.json` | The Orange Gate baseline design — golden-deck fixture and the starting point `CLAUDE.md` §12's loop needs |
+| `designs/og-dbr-rev0.json` | The Orange Gate baseline design — golden-deck fixture and the starting point `CLAUDE.md` §12's loop needs. Built on the neutral `examples/presets/` with every DBR figure as an explicit inline override |
 | `solit2/engines/fds/__init__.py` | Package marker |
 | `solit2/engines/fds/deck.py` | `generate(design) -> str`; deterministic namelist text |
 | `solit2/engines/fds/runner.py` | `preflight()`, `run()`, `status()` |
@@ -41,21 +40,33 @@
 ## Task 1: Orange Gate preset and baseline design
 
 **Files:**
-- Create: `solit2/presets/tunnel_orange_gate.json`
 - Create: `designs/og-dbr-rev0.json`
 - Test: `tests/test_orange_gate_baseline.py`
+
+**CORRECTION (made during execution, after this task's first review round).** An earlier
+version of this task created `solit2/presets/tunnel_orange_gate.json` and two sibling presets.
+That violates `INDEPENDENCE.md` rule 1 — "Nothing inside `solit2/` describes any real product"
+— which is enforced by `tests/test_independence.py::test_no_file_in_the_package_names_a_vendor_or_a_project`
+and, for the 4240 m tube length, by `test_no_retired_tube_length_survives_in_the_package_or_the_examples`.
+The parent spec's repo layout (which names `tunnel_orange_gate.json` in `solit2/presets/`)
+predates that architecture; the shipped tests are the binding authority. Project data lives in
+`designs/`, which both independence scans deliberately exclude. Every DBR figure is an explicit
+override in the design file — never inherited silently from an illustration preset whose own
+note says to replace it.
 
 **Interfaces:**
 - Consumes: `Design.load(path)`, `envelope.run(design)` (both existing).
 - Produces: `designs/og-dbr-rev0.json`, loadable by `Design.load`, used as a golden-deck input by Tasks 2, 3 and 6.
 
-Context: `solit2/presets/` currently has `tunnel_solit2_test.json` and `tunnel_template.json` but no Orange Gate preset, and `designs/` does not exist at all. The existing `examples/presets/tunnel_twin_bore_11m.json` is a deliberately genericised illustration and `examples/` is documented as optional ("the tool must run without them"), so a shipped baseline must not depend on it.
+Context: `designs/` does not exist yet. `examples/presets/tunnel_twin_bore_11m.json` is a deliberately genericised illustration — an 11 m circular twin bore, which is the right shape here — and the baseline references it while overriding every project figure explicitly. Depending on `examples/` is fine for a design in `designs/`: the "must not depend on optional `examples/`" rule governs what the package SHIPS, and `designs/` ships nothing.
 
 - [ ] **Step 1: Write the failing test**
 
 Create `tests/test_orange_gate_baseline.py`:
 
 ```python
+import pytest
+
 from solit2.engines.reduced import envelope
 from solit2.schema.design import Design
 
@@ -65,23 +76,40 @@ BASELINE = "designs/og-dbr-rev0.json"
 def test_the_orange_gate_baseline_loads():
     design = Design.load(BASELINE)
     assert design.meta.name == "og-dbr-rev0"
-    assert design.tunnel.preset == "orange_gate"
     assert design.tunnel.shape == "circle"
+
+
+def test_the_dbr_figures_are_stated_in_the_design_not_inherited():
+    """A preset under examples/ is an illustration whose own note says to
+    replace it. If one of these values ever arrives by inheritance, an edit to
+    that illustration silently moves this project's baseline."""
+    design = Design.load(BASELINE)
+    assert design.nozzles.k_factor_lpm_bar05 == 4.1
+    assert design.nozzles.pressure_bar == 50.0
+    assert design.tunnel.internal_diameter_m == 11.0
+    assert design.nozzles.mounting.height_above_carriageway_m == 5.5
 
 
 def test_the_baseline_matches_the_dbr_hydraulics_numbers():
     design = Design.load(BASELINE)
     # DBR: K 4.1, 50 bar -> 29.0 lpm per head; 25 heads per 30 m zone;
-    # 3 zones simultaneous -> 2175 lpm before the 10% design margin.
+    # 3 zones simultaneous. The spec reaches 2175 by rounding per-head to 29.0
+    # first; flow_lpm multiplies the unrounded 28.9914 and reaches 2174.35.
+    # Parent spec section 5.7 checks hydraulics figures to +/-0.5%.
     assert round(design.nozzles.flow_per_head_lpm, 1) == 29.0
     assert design.active_heads == 75
-    assert round(design.flow_lpm, 0) == 2175.0
+    assert design.flow_lpm == pytest.approx(2175.0, rel=0.005)
 
 
 def test_the_baseline_runs_through_tier_1():
     result = envelope.run(Design.load(BASELINE))
     assert result.meta["design_name"] == "og-dbr-rev0"
     assert "target_ignited" in result.criteria
+
+
+def test_the_baseline_is_not_reported_as_a_placeholder_illustration():
+    result = envelope.run(Design.load(BASELINE))
+    assert not [w for w in result.warnings if "placeholder" in w.lower()]
 ```
 
 - [ ] **Step 2: Run it to make sure it fails**
@@ -89,29 +117,17 @@ def test_the_baseline_runs_through_tier_1():
 Run: `uv run pytest tests/test_orange_gate_baseline.py -q`
 Expected: FAIL — `FileNotFoundError` on `designs/og-dbr-rev0.json`.
 
-- [ ] **Step 3: Write the tunnel preset**
+- [ ] **Step 3 and 4: Write the baseline design**
 
-Create `solit2/presets/tunnel_orange_gate.json`. Read `solit2/presets/tunnel_solit2_test.json` first and match its key set exactly:
+Create `designs/og-dbr-rev0.json`. Copy `examples/designs/road-tunnel-twin-bore-single-mode.json` as the structural starting point (same single-mode nozzle shape), keep its neutral preset references (`twin_bore_11m`, `hgv_150mw`, `single_mode_fine_example`, `example`), and set `meta.name` to `"og-dbr-rev0"`.
 
-```json
-{
-  "preset": "orange_gate",
-  "note": "Orange Gate - Marine Drive underground road tunnel, Mumbai (MMRDA via L&T). Twin bored tubes, TBM-driven, carriageway on a chord below the bore centre. Dimensions from the project DBR.",
-  "shape": "circle",
-  "internal_diameter_m": 11.0,
-  "deck_below_centre_m": 2.125,
-  "clearance_m": 5.5,
-  "length_m": 4240.0,
-  "tubes": 2,
-  "gradient_pct": 0.0,
-  "ambient_temp_c": 33.0,
-  "ambient_rh_pct": 75.0
-}
-```
+Every DBR figure goes in as an **explicit override**, never left to resolve from the preset — an illustration preset's value silently becoming a project baseline's input is the defect this task already had once:
 
-- [ ] **Step 4: Write the baseline design**
+`tunnel.section` `"bored"`, `tunnel.internal_diameter_m` `11.0`, `tunnel.deck_below_centre_m` `2.125`, `tunnel.length_m` `4240.0`, `tunnel.gradient_pct` `0.0`, `nozzles.k_factor_lpm_bar05` `4.1`, `nozzles.pressure_bar` `50.0`, the fine mode's `smd_um` `100`, `nozzles.mounting.height_above_carriageway_m` `5.5`, `zones.section_length_m` `30.0`, `zones.sections_simultaneous` `3`, `ventilation.velocity_range_ms` `[3.88, 5.08]`.
 
-Create `designs/og-dbr-rev0.json`. Copy `examples/designs/road-tunnel-twin-bore-single-mode.json` as the structural starting point (same single-mode nozzle shape), then set: `meta.name` `"og-dbr-rev0"`, `tunnel.preset` `"orange_gate"`, `tunnel.section` `"bored"`, `zones.section_length_m` `30.0`, `zones.sections_simultaneous` `3`, `nozzles.k_factor_lpm_bar05` `4.1`, `nozzles.pressure_bar` `50.0`, `ventilation.velocity_range_ms` `[3.88, 5.08]`, and `meta.notes` recording that these are DBR Rev 0 figures and that this file is the optimisation loop's baseline. Keep `ahj` empty — Annex 7 §7.1 leaves every acceptance limit to the authority.
+Do NOT use the `template` presets — `envelope._placeholder_warnings` fires on `preset == "template"` and would stamp "this result is an illustration and not an assessment" onto a design carrying real data.
+
+`meta.notes` records that these are DBR Rev 0 figures, that this file is the optimisation loop's baseline, and — by field name — which values are still inherited from the illustration presets rather than measured (`cone_half_angle_deg`, `launch_velocity_ms`, `hydraulics.static_head_bar`, `hydraulics.fittings_loss_bar`), so nobody mistakes the file for a complete DBR transcription. Keep `ahj` empty — Annex 7 §7.1 leaves every acceptance limit to the authority.
 
 Verify `active_heads` lands on 75: `heads_per_zone` must resolve to 25 for a 30 m zone, which it does when `mounting.pitch_m` is 2.4 with 2 rows. If it does not, adjust `zones.heads_per_zone` explicitly to 25 rather than fighting the pitch.
 
@@ -123,7 +139,7 @@ Expected: PASS (3 tests).
 - [ ] **Step 6: Commit**
 
 ```bash
-git add solit2/presets/tunnel_orange_gate.json designs/og-dbr-rev0.json tests/test_orange_gate_baseline.py
+git add designs/og-dbr-rev0.json tests/test_orange_gate_baseline.py
 git commit -m "feat(presets): Orange Gate tunnel preset and the DBR Rev 0 baseline design"
 ```
 
