@@ -330,3 +330,14 @@ def test_the_simulated_window_is_separate_from_the_discharge_duration():
     short = deck.generate(design, t_end_s=1200.0)
     assert f"T_END={design.zones.duration_min * 60.0:.1f}" in full
     assert "T_END=1200.0" in short
+
+
+def test_the_spray_particle_count_is_set_and_far_below_the_fds_default():
+    # FDS defaults to 5000 droplets per head per second; on a 54-head deck that
+    # is 270,000 a second. A 66k-cell test case accumulated over a million,
+    # took ~4 GB and never finished. A convergence study over 250/500/1000
+    # agreed to 0.12% on suppressed HRR, so the sampling is converged here.
+    text = deck.generate(Design.load(BASELINE))
+    prop = next(ln for ln in text.splitlines() if ln.startswith("&PROP"))
+    assert f"PARTICLES_PER_SECOND={deck.PARTICLES_PER_SECOND}" in prop
+    assert deck.PARTICLES_PER_SECOND < 5000, "must stay below the FDS default"

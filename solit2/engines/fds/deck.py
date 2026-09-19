@@ -39,6 +39,28 @@ CORE_M = (-60.0, 120.0)
 # inside the 10-16 band, at 221k cells; 0.5 m is one --dx away at 403k.
 DX_M = 0.6
 MESH_COUNT = 10              # one MPI rank per mesh; sized for an 11-core machine
+# Lagrangian droplets inserted per head per second. FDS defaults to 5000, which
+# on a 54-head deck inserts 270,000 droplets a second: a 66k-cell test case
+# accumulated over a million of them, took ~4 GB, and decelerated toward a
+# four-hour run it never finished -- at full scale that is not merely slow but
+# close to infeasible.
+#
+# 1000 is chosen from a convergence study on an isolated 33k-cell case (fire
+# from t=0, water from t=10 s, 60 s simulated), comparing 250 / 500 / 1000:
+#
+#   mean suppressed HRR   126,535 / 126,591 / 126,685 kW   (0.12% spread)
+#   water evaporated       14.96 /  14.78 /  14.65 kg/s    (2.1%)
+#   energy to droplets    -36,813 / -36,300 / -35,985 kW   (2.3%)
+#   D15 heat flux            7.44 /   7.47 /   7.76 kW/m2  (4.3%)
+#
+# Three points over a 4x range agree to ~2% on everything and 0.12% on the
+# suppression HRR the tier exists to compute, so the spray sampling is
+# converged well below FDS's default. 250 would do, but the study also measured
+# the cost -- 382 s / 414 s / 450 s -- so 4x the sampling costs 18%, not the
+# steep climb assumed before measuring. 1000 therefore sits mid-range rather
+# than at its edge, leaving margin for designs with fewer heads or coarser
+# cells where 250 could sample too thinly, at a price worth paying.
+PARTICLES_PER_SECOND = 1000
 CEILING_TC_SPACING_M = 5.0
 CEILING_TC_PREFIX = "CEIL"
 TARGET_GAUGE_ID = "TARGET_FLUX"
@@ -261,7 +283,8 @@ def _nozzles(design: Design, geom: SectionGeometry) -> list[str]:
         f"&PROP ID='NOZ_FINE', PART_ID='FINE', "
         f"FLOW_RATE={design.nozzles.flow_per_head_lpm:.2f}, "
         f"SPRAY_ANGLE=0.0,{mode.cone_half_angle_deg:.1f}, "
-        f"PARTICLE_VELOCITY={mode.launch_velocity_ms:.1f} /",
+        f"PARTICLE_VELOCITY={mode.launch_velocity_ms:.1f}, "
+        f"PARTICLES_PER_SECOND={PARTICLES_PER_SECOND} /",
     ]
     tilt = math.radians(design.nozzles.mounting.tilt_deg)
     for i, pos in enumerate(nozzle_positions(design, geom, FIRE_X_M)):
