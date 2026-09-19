@@ -160,3 +160,46 @@ def test_run_with_engine_fds_refuses_without_a_binary(tmp_path):
     err = json.loads(proc.stderr)
     assert "fds" in err["error"]
     assert err["fix"]
+
+
+def test_run_with_engine_fds_completes_end_to_end(tmp_path, monkeypatch, capsys):
+    """The promised happy path: generate, launch, poll, read.
+
+    There is no FDS binary on this machine by design, so the launch and the
+    status polling are stubbed -- the status stub reports `running` once and
+    then `done`, so the CLI's poll loop is actually entered and left -- and the
+    reader is pointed at the committed device fixture.
+    """
+    import shutil
+    from pathlib import Path
+
+    from solit2 import cli
+    from solit2.engines.fds import runner as fds_runner
+    from solit2.engines.reduced.envelope import _design_sha
+    from solit2.schema.design import Design
+
+    design_path = "designs/og-dbr-rev0.json"
+    chid = _design_sha(Design.load(design_path))
+    fixtures = Path("tests/fixtures/fds")
+    states = [{"state": "running", "progress": 0.0, "detail": ""},
+              {"state": "done", "progress": 1.0, "detail": ""}]
+
+    def fake_run(deck_path, out_dir):
+        shutil.copy(fixtures / "sample_devc.csv", Path(out_dir) / f"{chid}_devc.csv")
+        shutil.copy(fixtures / "sample_hrr.csv", Path(out_dir) / f"{chid}_hrr.csv")
+        return Path(out_dir).name
+
+    monkeypatch.setattr(fds_runner, "preflight", lambda: [])
+    monkeypatch.setattr(fds_runner, "run", fake_run)
+    monkeypatch.setattr(fds_runner, "status", lambda run_dir: states.pop(0) if states
+                        else {"state": "done", "progress": 1.0, "detail": ""})
+    monkeypatch.setattr(cli, "FDS_POLL_S", 0.0)
+
+    hist = tmp_path / "history.jsonl"
+    assert cli.main(["run", design_path, "--engine", "fds", "--history", str(hist)]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["meta"]["engine"] == "fds"
+    assert "target_ignited" in payload["criteria"]
+    assert "total" in payload["score"]
+    assert (tmp_path / chid / "deck.fds").read_text().startswith("&HEAD")
+    assert json.loads(hist.read_text().splitlines()[0])["design_name"] == "og-dbr-rev0"

@@ -19,6 +19,12 @@ LOG_NAME = "run.out"
 _TOTAL_TIME = re.compile(r"Total Time:\s+([\d.]+)\s*s")
 _T_END = re.compile(r"T_END\s*=\s*([\d.]+)")
 _DONE = "STOP: FDS completed successfully"
+# Anything FDS says that is not the success STOP means the run is over and did
+# not finish. Without this, "no progress line yet" and "dead" look identical.
+_ERROR = re.compile(r"^[ \t]*(?:ERROR|STOP: (?!FDS completed successfully))",
+                    re.MULTILINE)
+# FDS banners its build as "Revision : FDS6.9.1-0-g..." or "Version : FDS 6.7.0".
+_VERSION = re.compile(r"(?:FDS|Version\s*:)\s*v?(\d+\.\d+(?:\.\d+)?)")
 
 
 def _binary() -> str | None:
@@ -65,20 +71,58 @@ def run(deck_path: Path, out_dir: Path) -> str:
     return out_dir.name
 
 
+def log_path(run_dir: Path) -> Path | None:
+    """FDS's own `<CHID>.out` if it is there, else the stdout `run()` captured.
+
+    The progress and version lines this module parses are ones FDS writes to
+    `<CHID>.out`. `run()` only captures the process's stdout, and whether that
+    carries the same lines is install-dependent -- so FDS's own file wins and
+    `run.out` is the fallback.
+    """
+    run_dir = Path(run_dir)
+    own = sorted(p for p in run_dir.glob("*.out") if p.name != LOG_NAME)
+    if own:
+        return own[0]
+    captured = run_dir / LOG_NAME
+    return captured if captured.exists() else None
+
+
+def fds_version(run_dir: Path) -> str | None:
+    """The FDS that wrote this run, or None when the log does not say.
+
+    Never guess: an unverified version in `Result.meta` is a provenance claim
+    nothing measured.
+    """
+    log = log_path(run_dir)
+    if log is None:
+        return None
+    found = _VERSION.search(log.read_text())
+    return found.group(1) if found else None
+
+
 def status(run_dir: Path) -> dict:
     """Progress from FDS's own log, against the deck's T_END."""
-    log = Path(run_dir) / LOG_NAME
-    deck = Path(run_dir) / "deck.fds"
-    if not log.exists():
+    log = log_path(run_dir)
+    if log is None:
         return {"state": "failed", "progress": 0.0,
-                "detail": f"no {LOG_NAME} in {run_dir}"}
+                "detail": f"no FDS log in {run_dir}"}
     text = log.read_text()
     if _DONE in text:
         return {"state": "done", "progress": 1.0, "detail": ""}
-    elapsed = _TOTAL_TIME.findall(text)
-    end = _T_END.search(deck.read_text()) if deck.exists() else None
-    if not elapsed or end is None:
+    if _ERROR.search(text):
         return {"state": "failed", "progress": 0.0,
-                "detail": "the log carries no simulated time"}
-    progress = min(float(elapsed[-1]) / float(end.group(1)), 1.0)
-    return {"state": "running", "progress": progress, "detail": ""}
+                "detail": f"FDS reported an error in {log.name}"}
+    deck = Path(run_dir) / "deck.fds"
+    end = _T_END.search(deck.read_text()) if deck.exists() else None
+    if end is None:
+        return {"state": "failed", "progress": 0.0,
+                "detail": "no deck.fds carrying a T_END to measure progress against"}
+    elapsed = _TOTAL_TIME.findall(text)
+    if not elapsed:
+        # A run launched seconds ago has an open log and no time step in it yet.
+        # Calling that "failed" made `run --engine fds` impossible to complete.
+        return {"state": "running", "progress": 0.0,
+                "detail": "launched; no simulated time reported yet"}
+    return {"state": "running",
+            "progress": min(float(elapsed[-1]) / float(end.group(1)), 1.0),
+            "detail": ""}
