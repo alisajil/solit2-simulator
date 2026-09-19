@@ -11,7 +11,10 @@ from __future__ import annotations
 import math
 
 from solit2.engines.reduced.envelope import _design_sha
+from solit2.engines.reduced.fire import (DIESEL_HEAT_OF_COMBUSTION_MJKG,
+                                         WOOD_HEAT_OF_COMBUSTION_MJKG)
 from solit2.engines.reduced.geometry import SectionGeometry, section_geometry
+from solit2.engines.reduced.tenability import YIELDS
 from solit2.schema.design import Design
 
 # The fire sits at the origin of the measurement x-frame, the same frame
@@ -38,6 +41,19 @@ CO_PPM_CONVERSION = "1E6"
 # FDS requires a THICKNESS wherever a SURF names a MATL; without it the wall
 # has a material and no heat capacity to apply it to.
 WALL_THICKNESS_M = 0.30      # concrete lining
+# FDS rejects any SURF using HRRPUA without a REAC line (ERROR 314): the fuel
+# chemistry is what lets it balance the reaction and compute species transport,
+# not merely a heat source. Formulas are generic surrogates -- cellulose for
+# wood (Class A), heptane for diesel (Class B, close on heat of combustion:
+# ~44.6 MJ/kg pure heptane against the 44.8 MJ/kg Tier 1 already assumes for
+# diesel) -- common choices in published tunnel-fire FDS work, verified only to
+# the extent that FDS accepts and runs them, not against a cited source.
+# Heat of combustion and species yields are NOT surrogate guesses: they are the
+# exact constants Tier 1's own fire.py/tenability.py use, so both tiers burn
+# the same fuel.
+_REAC_FORMULA = {"A": {"C": 3.4, "H": 6.2, "O": 2.5}, "B": {"C": 7.0, "H": 16.0}}
+_REAC_HEAT_OF_COMBUSTION_MJKG = {"A": WOOD_HEAT_OF_COMBUSTION_MJKG,
+                                 "B": DIESEL_HEAT_OF_COMBUSTION_MJKG}
 
 
 def _head(design: Design) -> list[str]:
@@ -173,7 +189,14 @@ def _fire(design: Design) -> list[str]:
     area_m2 = fp.length_m * fp.width_m
     hrrpua = design.fire.design_hrr_mw * 1000.0 / area_m2
     half_l, half_w = fp.length_m / 2.0, fp.width_m / 2.0
+    formula = _REAC_FORMULA[f.fire_class]
+    formula_str = ", ".join(f"{el}={v}" for el, v in formula.items())
+    yields = YIELDS[f.fire_class]
     lines = [
+        f"&REAC ID='{'WOOD' if f.fire_class == 'A' else 'DIESEL'}', "
+        f"FUEL='{'WOOD' if f.fire_class == 'A' else 'DIESEL'}', {formula_str}, "
+        f"HEAT_OF_COMBUSTION={_REAC_HEAT_OF_COMBUSTION_MJKG[f.fire_class] * 1000.0:.1f}, "
+        f"SOOT_YIELD={yields['soot']:.3f}, CO_YIELD={yields['co']:.3f} /",
         f"&SURF ID='FIRE', HRRPUA={hrrpua:.1f}, RAMP_Q='FIRE_RAMP', "
         f"E_COEFFICIENT=0.4, COLOR='RED' /",
         f"&OBST XB={FIRE_X_M - half_l:.2f},{FIRE_X_M + half_l:.2f},"

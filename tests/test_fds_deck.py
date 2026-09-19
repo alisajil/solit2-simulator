@@ -164,6 +164,37 @@ def test_the_fire_ramps_to_the_design_hrr():
     assert "E_COEFFICIENT" in text
 
 
+def test_the_fire_surface_has_a_reac_line():
+    # FDS ERROR 314: a SURF using HRRPUA is rejected outright without a REAC
+    # line to define the fuel's chemistry -- verified against a real FDS run.
+    text = deck.generate(Design.load(BASELINE))
+    assert "&REAC" in text
+    reac = next(ln for ln in text.splitlines() if ln.startswith("&REAC"))
+    assert "HEAT_OF_COMBUSTION" in reac
+    assert "SOOT_YIELD" in reac
+    assert "CO_YIELD" in reac
+
+
+def test_the_reac_chemistry_matches_tier_1s_own_constants():
+    from solit2.engines.reduced.fire import WOOD_HEAT_OF_COMBUSTION_MJKG
+    from solit2.engines.reduced.tenability import YIELDS
+    text = deck.generate(Design.load(BASELINE))  # Class A
+    reac = next(ln for ln in text.splitlines() if ln.startswith("&REAC"))
+    assert f"HEAT_OF_COMBUSTION={WOOD_HEAT_OF_COMBUSTION_MJKG * 1000.0:.1f}" in reac
+    assert f"SOOT_YIELD={YIELDS['A']['soot']:.3f}" in reac
+    assert f"CO_YIELD={YIELDS['A']['co']:.3f}" in reac
+
+
+def test_a_class_b_design_gets_diesel_reac_chemistry():
+    from solit2.engines.reduced.fire import DIESEL_HEAT_OF_COMBUSTION_MJKG
+    from solit2.engines.reduced.tenability import YIELDS
+    class_b = Design.load("examples/designs/solit2-test-protocol-class-b.json")
+    text = deck.generate(class_b)
+    reac = next(ln for ln in text.splitlines() if ln.startswith("&REAC"))
+    assert f"HEAT_OF_COMBUSTION={DIESEL_HEAT_OF_COMBUSTION_MJKG * 1000.0:.1f}" in reac
+    assert f"SOOT_YIELD={YIELDS['B']['soot']:.3f}" in reac
+
+
 def test_the_deck_matches_its_golden_file():
     from pathlib import Path
     golden = Path("tests/fixtures/fds/og-dbr-rev0.fds")
