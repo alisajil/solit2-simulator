@@ -107,3 +107,18 @@ def test_the_result_says_which_penalties_a_tier_2_run_cannot_receive(run_dir):
     assert len(single) == 1
     assert f"{velocity:.2f} m/s" in single[0]
     assert result.criteria_cases == {}
+
+
+def test_the_engine_version_is_unverified_when_the_log_does_not_name_one(run_dir):
+    # "fds-6.11.1" used to be hardcoded: a provenance claim nothing measured
+    result = reader.read(run_dir, Design.load(BASELINE))
+    assert result.meta["engine_version"] == reader.ENGINE_VERSION_UNKNOWN
+    assert any("unverified" in w for w in result.warnings)
+
+
+def test_the_engine_version_comes_from_the_fds_log_when_it_names_one(run_dir):
+    (run_dir / "run.out").write_text(
+        " Fire Dynamics Simulator\n Revision : FDS6.9.1-0-g889da6a-release\n")
+    result = reader.read(run_dir, Design.load(BASELINE))
+    assert result.meta["engine_version"] == "fds-6.9.1"
+    assert not any("unverified" in w for w in result.warnings)

@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from solit2.engines.fds import deck as deck_mod
+from solit2.engines.fds import runner as runner_mod
 from solit2.engines.reduced.constraints import evaluate as evaluate_constraints
 from solit2.engines.reduced.cost import cost_index
 from solit2.engines.reduced.criteria import (BREATHING_HEIGHT_M, INSTRUMENTS, STATIONS,
@@ -26,7 +27,8 @@ from solit2.schema.design import Design
 from solit2.schema.result import Result
 
 ENGINE = "fds"
-ENGINE_VERSION = "fds-6.11.1"
+# Not a constant: a hardcoded version is a provenance claim nothing measured.
+ENGINE_VERSION_UNKNOWN = "fds-unknown"
 
 
 def _read_csv(path: Path) -> tuple[list[str], list[list[float]]]:
@@ -67,6 +69,16 @@ def _station(ids: list[str], row: list[float], name: str,
         temps_c=temps,
         heights_m=heights,
     )
+
+
+def _engine_version(run_dir: Path) -> str:
+    """The FDS build that wrote this output, or an explicit 'unknown'.
+
+    Parsed from FDS's own log. Where the log does not name a build, the result
+    says so rather than asserting a version nobody verified.
+    """
+    version = runner_mod.fds_version(run_dir)
+    return f"fds-{version}" if version else ENGINE_VERSION_UNKNOWN
 
 
 def _in_window(x_m: float) -> bool:
@@ -159,7 +171,7 @@ def _peaks_of(steps: list[StepRecord], modelled: list[str],
     return peaks
 
 
-def _warnings(geom: SectionGeometry, velocity_ms: float,
+def _warnings(geom: SectionGeometry, velocity_ms: float, engine_version: str,
               skipped: list[str]) -> list[str]:
     """Everything a reader must know that the numbers do not say themselves.
 
@@ -190,6 +202,9 @@ def _warnings(geom: SectionGeometry, velocity_ms: float,
         f"{velocity_ms:.2f} m/s, not Tier 1's section x velocity envelope; "
         f"criteria_cases is empty for the same reason",
     ]
+    if engine_version == ENGINE_VERSION_UNKNOWN:
+        warnings.append("the FDS log does not name a build, so the engine "
+                        "version on this result is unverified")
     if skipped:
         warnings.append(f"stations outside the {deck_mod.WINDOW_M} m deck window "
                         f"were not modelled: {', '.join(skipped)}")
@@ -208,6 +223,7 @@ def read(run_dir: Path, design: Design) -> Result:
                for n in modelled}
     steps = _step_records(devc_ids, devc_rows, hrr_rows, design, heights)
     trace = _trace(design, steps)
+    engine_version = _engine_version(run_dir)
 
     hyd = size_system(design, geom)
     cost = cost_index(design, hyd)
@@ -220,7 +236,7 @@ def read(run_dir: Path, design: Design) -> Result:
         # No calibration_* keys: Tier 1 carries them because it is fitted to the
         # anchors. FDS is not, and claiming that provenance would be a lie.
         meta={"design_name": design.meta.name, "design_sha": chid,
-              "engine": ENGINE, "engine_version": ENGINE_VERSION,
+              "engine": ENGINE, "engine_version": engine_version,
               "timestamp": datetime.now(timezone.utc).isoformat(),
               "window_m": list(deck_mod.WINDOW_M)},
         envelope=[{"section": trace.section, "velocity_ms": trace.velocity_ms}],
@@ -239,6 +255,6 @@ def read(run_dir: Path, design: Design) -> Result:
         timeseries={"t_s": [s.t_s for s in steps],
                     "hrr_mw": [s.hrr_mw for s in steps],
                     "ceiling_temp_c": [s.ceiling_temp_c for s in steps]},
-        warnings=_warnings(geom, trace.velocity_ms,
+        warnings=_warnings(geom, trace.velocity_ms, engine_version,
                            sorted(set(STATIONS) - set(modelled))),
     )
