@@ -13,6 +13,7 @@ from app import state
 from solit2.engines.fds import deck as fds_deck
 from solit2.engines.fds import runner as fds_runner
 from solit2.reports import correlation
+from solit2.schema.design import Design
 from solit2.schema.result import Result
 
 
@@ -27,7 +28,7 @@ def _render_preflight() -> list[str]:
     return problems
 
 
-def _render_deck(design) -> None:
+def _render_deck(design: Design) -> None:
     st.subheader("Deck")
     if st.button("Generate FDS deck"):
         text = fds_deck.generate(design)
@@ -36,7 +37,7 @@ def _render_deck(design) -> None:
                            file_name=f"{design.meta.name}.fds")
 
 
-def _render_run(design, blocked: list[str]) -> None:
+def _render_run(design: Design, blocked: list[str]) -> None:
     st.subheader("Run")
     if blocked:
         st.info("A Tier 2 run needs the pre-flight above to pass first.")
