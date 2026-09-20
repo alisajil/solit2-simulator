@@ -12,45 +12,52 @@ from __future__ import annotations
 import streamlit as st
 
 from app import state
+from solit2.engines.reduced.geometry import section_geometry
+from solit2.engines.reduced.hydraulics import size_system
 from solit2.schema.design import Design
 from solit2.schema.presets import list_presets
 
 
+def _render_summary(raw: dict) -> None:
+    """What the inputs above add up to, before anything is built."""
+    st.subheader("This system")
+    try:
+        design = Design.from_dict(raw)
+    except Exception as exc:  # noqa: BLE001 -- shown inline, so the user can fix the input
+        st.caption(f"Not a valid design yet: {exc}")
+        return
+    hyd = size_system(design, section_geometry(design))
+    per_head_lpm = design.nozzles.k_factor_lpm_bar05 * design.nozzles.pressure_bar ** 0.5
+    cols = st.columns(6)
+    cols[0].metric("Active heads", f"{hyd.active_heads}")
+    cols[1].metric("Per head", f"{per_head_lpm:.1f} L/min")
+    cols[2].metric("Zone flow", f"{hyd.flow_lpm:.0f} L/min")
+    cols[3].metric("Pump power", f"{hyd.power_kw:.0f} kW")
+    cols[4].metric("Tank", f"{hyd.tank_m3:.1f} m³")
+    cols[5].metric("Density", f"{hyd.density_mm_min:.2f} mm/min")
+
+
 def render() -> None:
     st.header("Design")
-    st.caption(
-        "Pick a starting preset for each block, then override the parameters "
-        "below. Every other field comes from the presets you choose."
-    )
-
+    st.caption("Pick a starting preset for each block, then set the parameters an engineer "
+               "actually varies. Everything else comes from the presets.")
     tunnel_preset, fire_preset, nozzle_preset, hydraulics_preset = _render_preset_pickers()
     k_factor, pressure_bar, rows, pitch_m = _render_nozzle_hydraulics_inputs()
     section_length_m, sections_simultaneous = _render_zoning_inputs()
     velocity_lo, velocity_hi = _render_ventilation_inputs()
-
-    if st.button("Build design", type="primary"):
-        raw = _assemble(tunnel_preset, fire_preset, nozzle_preset, hydraulics_preset,
-                        k_factor, pressure_bar, int(rows), pitch_m,
-                        section_length_m, int(sections_simultaneous),
-                        velocity_lo, velocity_hi)
+    raw = _assemble(tunnel_preset, fire_preset, nozzle_preset, hydraulics_preset,
+                    k_factor, pressure_bar, int(rows), pitch_m,
+                    section_length_m, int(sections_simultaneous), velocity_lo, velocity_hi)
+    _render_summary(raw)
+    if st.button("Build & continue →", key="build_design", type="primary"):
         try:
             design = Design.from_dict(raw)
         except Exception as exc:  # noqa: BLE001 -- surfaced to the user, not swallowed
             st.error(f"Could not build a valid design: {exc}")
             return
         state.set_design(design)
-        st.success(f"Design built: {design.meta.name}")
-
-    current = state.get_design()
-    if current is not None:
-        st.subheader("Current design")
-        st.json(current.model_dump(mode="json"), expanded=False)
-        st.download_button(
-            "Download design JSON",
-            data=current.model_dump_json(indent=2),
-            file_name=f"{current.meta.name}.json",
-            mime="application/json",
-        )
+        state.set_step(2)
+        st.rerun()
 
 
 def _default_index(options: list[str], name: str) -> int:
@@ -78,19 +85,22 @@ def _render_preset_pickers() -> tuple[str, str, str, str]:
     with col1:
         tunnel_options = list_presets("tunnel")
         tunnel_preset = st.selectbox(
-            "Tunnel preset", tunnel_options, index=_default_index(tunnel_options, "twin_bore_11m"))
+            "Tunnel preset", tunnel_options, index=_default_index(tunnel_options, "twin_bore_11m"),
+            key="d_tunnel")
     with col2:
         fire_options = list_presets("fire")
         fire_preset = st.selectbox(
-            "Fire preset", fire_options, index=_default_index(fire_options, "hgv_150mw"))
+            "Fire preset", fire_options, index=_default_index(fire_options, "hgv_150mw"),
+            key="d_fire")
     with col3:
         nozzle_options = list_presets("nozzle")
         nozzle_preset = st.selectbox(
             "Nozzle preset", nozzle_options,
-            index=_default_index(nozzle_options, "single_mode_fine_example"))
+            index=_default_index(nozzle_options, "single_mode_fine_example"), key="d_nozzle")
     hydraulics_options = list_presets("hydraulics")
     hydraulics_preset = st.selectbox(
-        "Hydraulics preset", hydraulics_options, index=_default_index(hydraulics_options, "example"))
+        "Hydraulics preset", hydraulics_options, index=_default_index(hydraulics_options, "example"),
+        key="d_hydraulics")
     return tunnel_preset, fire_preset, nozzle_preset, hydraulics_preset
 
 
@@ -100,14 +110,18 @@ def _render_nozzle_hydraulics_inputs() -> tuple[float, float, int, float]:
     c1, c2, c3 = st.columns(3)
     with c1:
         k_factor = st.number_input(
-            "K-factor (L/min·bar⁰·⁵)", min_value=0.6, max_value=20.0, value=4.1, step=0.1)
+            "K-factor (L/min·bar⁰·⁵)", min_value=0.6, max_value=20.0, value=4.1, step=0.1,
+            key="d_k")
     with c2:
         pressure_bar = st.number_input(
-            "Working pressure (bar)", min_value=34.5, max_value=140.0, value=50.0, step=0.5)
+            "Working pressure (bar)", min_value=34.5, max_value=140.0, value=50.0, step=0.5,
+            key="d_pressure")
     with c3:
-        rows = st.number_input("Nozzle rows", min_value=1, max_value=3, value=2, step=1)
+        rows = st.number_input("Nozzle rows", min_value=1, max_value=3, value=2, step=1,
+                               key="d_rows")
     pitch_m = st.number_input(
-        "Nozzle spacing / pitch (m)", min_value=0.1, max_value=10.0, value=2.4, step=0.1)
+        "Nozzle spacing / pitch (m)", min_value=0.1, max_value=10.0, value=2.4, step=0.1,
+        key="d_pitch")
     return k_factor, pressure_bar, rows, pitch_m
 
 
@@ -117,10 +131,12 @@ def _render_zoning_inputs() -> tuple[float, int]:
     z1, z2 = st.columns(2)
     with z1:
         section_length_m = st.number_input(
-            "Section length (m)", min_value=8.0, max_value=100.0, value=30.0, step=1.0)
+            "Section length (m)", min_value=8.0, max_value=100.0, value=30.0, step=1.0,
+            key="d_section_len")
     with z2:
         sections_simultaneous = st.number_input(
-            "Sections activated simultaneously", min_value=1, max_value=6, value=3, step=1)
+            "Sections activated simultaneously", min_value=1, max_value=6, value=3, step=1,
+            key="d_sections")
     return section_length_m, sections_simultaneous
 
 
@@ -130,10 +146,12 @@ def _render_ventilation_inputs() -> tuple[float, float]:
     v1, v2 = st.columns(2)
     with v1:
         velocity_lo = st.number_input(
-            "Ventilation velocity, low (m/s)", min_value=0.0, max_value=8.0, value=3.88, step=0.01)
+            "Ventilation velocity, low (m/s)", min_value=0.0, max_value=8.0, value=3.88, step=0.01,
+            key="d_v_lo")
     with v2:
         velocity_hi = st.number_input(
-            "Ventilation velocity, high (m/s)", min_value=0.0, max_value=8.0, value=5.08, step=0.01)
+            "Ventilation velocity, high (m/s)", min_value=0.0, max_value=8.0, value=5.08, step=0.01,
+            key="d_v_hi")
     return velocity_lo, velocity_hi
 
 
