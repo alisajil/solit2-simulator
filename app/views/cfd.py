@@ -82,7 +82,19 @@ def _live_progress(run_dir: Path) -> None:
         st.rerun(scope="app")
 
 
-def _canvas(design: Design, trace: RunTrace, run_dir: Path, running: bool) -> None:
+def _slice_caption(run_state: str, slice_) -> str:
+    """Only a run that actually finished may describe its field as complete."""
+    last = float(slice_.t_s[-1])
+    if run_state == "running":
+        return f"Preliminary — last complete frame at t = {last:.0f} s; the run is still going."
+    if run_state == "done":
+        return f"{len(slice_.t_s)} frames to t = {last:.0f} s."
+    return (f"Incomplete — the run did not finish. Last frame written at t = {last:.0f} s; "
+            f"this field is not a completed simulation.")
+
+
+def _canvas(design: Design, trace: RunTrace, run_dir: Path, run_state: str) -> None:
+    running = run_state == "running"
     for tab, (label, quantity) in zip(st.tabs([label for label, _ in QUANTITIES]), QUANTITIES):
         with tab:
             slice_ = _load_slice(str(run_dir), quantity, stamp(run_dir))
@@ -91,9 +103,7 @@ def _canvas(design: Design, trace: RunTrace, run_dir: Path, running: bool) -> No
                         else f"This run holds no {label.lower()} slice.")
                 continue
             st.plotly_chart(twin_canvas.figure(design, trace, cfd=slice_), key=f"cfd_{quantity}")
-            last = float(slice_.t_s[-1])
-            st.caption(f"Preliminary — last complete frame at t = {last:.0f} s; the run is still going."
-                       if running else f"{len(slice_.t_s)} frames to t = {last:.0f} s.")
+            st.caption(_slice_caption(run_state, slice_))
 
 
 def _smokeview(run_dir: Path) -> None:
@@ -142,7 +152,7 @@ def render() -> None:
     if status is None:
         st.info("Start a run to see the CFD field here.")
         return
-    _canvas(design, trace, run_dir, running)
+    _canvas(design, trace, run_dir, status["state"])
     _smokeview(run_dir)
     if status["state"] == "done":
         _tier2(design, run_dir, result)

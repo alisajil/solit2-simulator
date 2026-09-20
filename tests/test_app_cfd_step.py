@@ -82,3 +82,29 @@ def test_stamp_changes_when_a_slice_file_changes(tmp_path):
     before = cfd.stamp(tmp_path)
     (tmp_path / "a_1_1.sf").write_bytes(b"12")
     assert cfd.stamp(tmp_path) != before
+
+
+def test_a_failed_run_never_captions_its_field_as_complete(run_view, monkeypatch, tmp_path):
+    """A run that died mid-simulation must not describe its partial field as finished.
+
+    The canvas caption keys off the run's actual state, not merely "is it still
+    running", so `failed` gets its own wording rather than falling through to the
+    completed-run sentence.
+    """
+    import numpy as np
+
+    from app.views import cfd
+    from solit2.engines.fds.slices import Slice
+
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    _fake_run(run_dir, "Total Time: 300.0 s\n ERROR: Numerical instability\n")
+    partial = Slice("TEMPERATURE", "C", np.linspace(-10.0, 10.0, 4), np.linspace(0.0, 6.0, 3),
+                    np.array([0.0, 150.0, 300.0]), np.zeros((3, 3, 4)))
+    monkeypatch.setattr(cfd, "_load_slice", lambda *a, **kw: partial)
+    at = run_view("cfd")
+
+    assert not at.exception
+    captions = [c.value for c in at.caption]
+    assert any("did not finish" in c for c in captions), captions
+    assert not any(c.startswith("Preliminary") for c in captions), captions
+    assert not any("frames to t =" in c for c in captions), captions
