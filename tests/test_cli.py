@@ -187,6 +187,7 @@ def test_run_with_engine_fds_completes_end_to_end(tmp_path, monkeypatch, capsys)
     def fake_run(deck_path, out_dir):
         shutil.copy(fixtures / "sample_devc.csv", Path(out_dir) / f"{chid}_devc.csv")
         shutil.copy(fixtures / "sample_hrr.csv", Path(out_dir) / f"{chid}_hrr.csv")
+        shutil.copy(fixtures / "sample_ctrl.csv", Path(out_dir) / f"{chid}_ctrl.csv")
         return Path(out_dir).name
 
     monkeypatch.setattr(fds_runner, "preflight", lambda: [])

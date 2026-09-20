@@ -146,25 +146,40 @@ def test_only_the_stations_table_5_instruments_get_a_flux_gauge():
         assert present == INSTRUMENTS[name].heat_flux, name
 
 
-def test_the_target_carries_its_own_flux_gauge():
+
+def test_the_target_is_a_solid_with_its_gauge_on_the_face_toward_the_fire():
     # Table 5 lists no gauge at the target -- a real test observes ignition.
-    # A simulation has to measure it, so the deck adds one.
-    assert f"ID='{deck.TARGET_GAUGE_ID}'" in deck.generate(Design.load(BASELINE))
+    # A simulation has to measure it, and the measurement Tier 1 makes is the
+    # flux ON the target's face at half the fuel top height (`sim`), not at a
+    # point in free gas the flow passes straight through. So the target is a
+    # solid the flow goes round, and the gauge is FDS's boundary gauge on it.
+    from solit2.engines.reduced.geometry import section_geometry
+    design = Design.load(BASELINE)
+    text = deck.generate(design)
+    box = deck.target_box(design, section_geometry(design))
+    assert f"&OBST XB={box.xb()}, SURF_ID='INERT' /" in text
+    gauge = next(ln for ln in text.splitlines() if f"ID='{deck.TARGET_GAUGE_ID}'" in ln)
+    assert "QUANTITY='GAUGE HEAT FLUX'," in gauge and "IOR=-1" in gauge
+    x, y, z = (float(v) for v in gauge.split("XYZ=")[1].split(",")[:3])
+    assert x == pytest.approx(box.x0), "the gauge must sit on the upstream face"
+    assert y == pytest.approx(box.y_centre_m)
+    assert box.z0 < z < box.z1
 
 
-def test_flux_gauges_are_gas_phase_with_an_orientation_not_a_boundary_ior():
-    # FDS ERROR 427: a free-floating 'GAUGE HEAT FLUX' DEVC with IOR needs a
-    # solid boundary and is rejected outright -- verified against a real FDS
-    # run. 'GAUGE HEAT FLUX GAS' is the gas-phase equivalent Table 5's
-    # stations need (a person or a target, not a wall).
+
+def test_station_gauges_are_gas_phase_and_only_the_target_gauge_is_a_boundary_one():
+    # FDS ERROR 427: a 'GAUGE HEAT FLUX' DEVC needs a solid to sit on. The Table 5
+    # station gauges stand where a person would, in free gas, so they are the
+    # gas-phase 'GAUGE HEAT FLUX GAS' with an ORIENTATION. The target gauge is
+    # the one boundary gauge, and it has the solid target under it.
     text = deck.generate(Design.load(BASELINE))
-    gauge_lines = [ln for ln in text.splitlines()
-                  if "QUANTITY='GAUGE HEAT FLUX" in ln]
+    gauge_lines = [ln for ln in text.splitlines() if "QUANTITY='GAUGE HEAT FLUX" in ln]
     assert gauge_lines, "no heat-flux gauges in the deck"
     for ln in gauge_lines:
-        assert "GAUGE HEAT FLUX GAS" in ln
-        assert "ORIENTATION=" in ln
-        assert "IOR=" not in ln
+        if f"ID='{deck.TARGET_GAUGE_ID}'" in ln:
+            assert "GAUGE HEAT FLUX'" in ln and "IOR=" in ln
+        else:
+            assert "GAUGE HEAT FLUX GAS" in ln and "ORIENTATION=" in ln and "IOR=" not in ln
 
 
 def test_a_gauge_orients_toward_the_fire():
@@ -210,12 +225,23 @@ def test_detection_drives_activation_through_a_time_delay_control():
     assert "&CTRL ID='ACT'" in text
 
 
-def test_the_fire_ramps_to_the_design_hrr():
+
+def test_the_fire_releases_exactly_the_design_hrr_on_the_area_it_actually_emits():
+    # FDS snaps OBST bounds to cell faces and burns HRRPUA x the SNAPPED area. A
+    # 10 x 2.4 m footprint on a 0.6 m mesh is not 24 m2 once snapped, so a
+    # HRRPUA sized on the design footprint gives the wrong total. The deck
+    # snaps first and normalises to what it emits.
+    from solit2.engines.reduced.geometry import section_geometry
     design = Design.load(BASELINE)
     text = deck.generate(design)
-    assert "&SURF ID='FIRE'" in text
-    assert "RAMP_Q='FIRE_RAMP'" in text
-    assert "E_COEFFICIENT" in text
+    box = deck.fuel_box(design, section_geometry(design))
+    surfs = [ln for ln in text.splitlines() if ln.startswith("&SURF ID='FIRE")]
+    hrrpua = float(surfs[0].split("HRRPUA=")[1].split(",")[0])
+    assert hrrpua * box.top_area_m2 == pytest.approx(design.fire.design_hrr_mw * 1000.0, rel=1e-4)
+    assert all("E_COEFFICIENT" in ln for ln in surfs)
+    ramps = [float(ln.split("F=")[1].split(" /")[0]) for ln in text.splitlines()
+             if ln.startswith("&RAMP ID='FIRE_RAMP")]
+    assert max(ramps) == pytest.approx(1.0) and min(ramps) >= 0.0
 
 
 def test_the_fire_surface_has_a_reac_line():
@@ -343,8 +369,154 @@ def test_the_spray_particle_count_is_set_and_far_below_the_fds_default():
     assert deck.PARTICLES_PER_SECOND < 5000, "must stay below the FDS default"
 
 
-def test_output_carries_centreline_slices_for_temperature_smoke_and_mist():
-    text = deck.generate(Design.load("examples/designs/road-tunnel-twin-bore.json"))
-    assert "&SLCF PBY=0.0, QUANTITY='TEMPERATURE' /" in text
-    assert "&SLCF PBY=0.0, QUANTITY='SOOT DENSITY' /" in text
-    assert "&SLCF PBY=0.0, QUANTITY='MPUV', PART_ID='FINE' /" in text
+
+def test_output_slices_cut_through_the_fire_not_the_empty_centreline():
+    from solit2.engines.reduced.geometry import section_geometry
+    design = Design.load("examples/designs/road-tunnel-twin-bore.json")
+    text = deck.generate(design)
+    y = deck.fuel_box(design, section_geometry(design)).y_centre_m
+    assert y != 0.0, "the fixture fire is eccentric, so a y=0 slice would miss it"
+    assert f"&SLCF PBY={y:.2f}, QUANTITY='TEMPERATURE' /" in text
+    # FDS 6.11 rejected QUANTITY='SOOT DENSITY' outright (ERROR 1042 in a real
+    # run); a species' mass per unit volume is DENSITY with its SPEC_ID.
+    assert f"&SLCF PBY={y:.2f}, QUANTITY='DENSITY', SPEC_ID='SOOT' /" in text
+    assert "SOOT DENSITY" not in text
+    assert f"&SLCF PBY={y:.2f}, QUANTITY='MPUV', PART_ID='FINE' /" in text
+
+def _device_xyz(text: str, device: str) -> tuple[float, float, float]:
+    line = next(ln for ln in text.splitlines() if f"ID='{device}'" in ln)
+    return tuple(float(v) for v in line.split("XYZ=")[1].split(",")[:3])
+
+
+def _open_ceiling_m(geom, y_m: float) -> float:
+    """Top of the highest stair-step layer still open at lateral position y."""
+    return max(z_hi for _, z_hi, clear in deck._bore_layers(geom, deck.DX_M) if clear > abs(y_m))
+
+
+def test_ceiling_thermocouples_and_heat_detectors_sit_in_gas_not_inside_the_crown_slab():
+    # The bore's topmost stair-step layer is solid across the full width
+    # (width_at(crown) is 0). Devices at crown - 0.15 m sat INSIDE it: in a real
+    # 147 MW run every CEIL and LHD device read 30.0 C for 936 s while D05 read
+    # 1094 C, the detector never tripped, and the "mist" run was a free burn.
+    from solit2.engines.reduced.geometry import section_geometry
+    design = Design.load(BASELINE)
+    geom = section_geometry(design)
+    text = deck.generate(design)
+    for device in ("LHD0", deck.fire_ceiling_device_id()):
+        _, y, z = _device_xyz(text, device)
+        open_top = _open_ceiling_m(geom, y)
+        assert z < open_top, f"{device} at z={z} is inside the solid layer above {open_top}"
+        assert z > open_top - deck.DX_M, f"{device} is not just under the ceiling that exists at y={y}"
+    assert deck.ceiling_z_at(geom, 0.0) != pytest.approx(geom.crown_height_m - deck.CEILING_OFFSET_M)
+
+
+def test_the_fire_sits_where_tier_1_puts_it_eccentric_toward_the_near_wall():
+    # Annex 7 5.2.3: the mock-up is offset toward one wall because a centred
+    # load flatters the system. Tier 1's mist envelope already uses
+    # `fire_lateral_m`; the deck burned the fire on the centreline instead, so
+    # the two tiers were not the same experiment.
+    from solit2.engines.reduced.geometry import fire_lateral_m, section_geometry
+    design = Design.load(BASELINE)
+    geom = section_geometry(design)
+    box = deck.fuel_box(design, geom)
+    assert abs(box.y_centre_m - fire_lateral_m(design, geom)) <= deck.DX_M / 2
+    assert box.y_centre_m < 0 and box.y1 < 0, "the whole load lies on the near-wall side"
+    assert deck.target_box(design, geom).y_centre_m == box.y_centre_m
+
+
+def test_every_emitted_box_bound_lies_on_a_cell_face():
+    from solit2.engines.reduced.geometry import section_geometry
+    for path in (BASELINE, TEST_RIG):
+        design = Design.load(path)
+        geom = section_geometry(design)
+        y_origin = deck._y_origin(geom, deck.DX_M)
+        for box in (deck.fuel_box(design, geom), deck.target_box(design, geom)):
+            for value, origin in ((box.x0, deck.WINDOW_M[0]), (box.x1, deck.WINDOW_M[0]),
+                                  (box.y0, y_origin), (box.y1, y_origin), (box.z0, 0.0), (box.z1, 0.0)):
+                cells = (value - origin) / deck.DX_M
+                assert cells == pytest.approx(round(cells), abs=1e-6), (path, box)
+
+
+def test_the_fire_ramp_is_tier_1s_free_burn_curve_and_burns_out():
+    # The previous ramp sampled the growth every 30 s, missed the instant the
+    # plateau was reached, then held F=1 to the end of the run: an hour at
+    # 150 MW is 540 GJ from a 140 GJ pallet load. The ramp is now Tier 1's own
+    # free-burn curve, decay included.
+    from solit2.engines.reduced import fire as fire_mod
+    from solit2.engines.reduced.state import MistEffect
+    design = Design.load(BASELINE)
+    horizon = design.zones.duration_min * 60.0
+    curve = deck.free_burn_curve(design, horizon)
+    model = fire_mod.build_model(design)
+    state = fire_mod.initial_state(model)
+    for _ in range(900):
+        state = fire_mod.step(model, state, 1.0, MistEffect.none())
+    assert deck._interp(curve, 900.0) == pytest.approx(state.hrr_free_mw * 1000 / model.design_hrr_kw, rel=1e-6)
+    assert max(f for _, f in curve) == pytest.approx(1.0)
+    assert curve[-1][1] < 0.2, "the fuel is spent long before the hour is up"
+
+
+def test_segment_ramps_sum_to_the_curve_and_light_from_upstream_to_downstream():
+    design = Design.load(BASELINE)
+    curve = deck.free_burn_curve(design, design.zones.duration_min * 60.0)
+    n = 16
+    ramps = deck.segment_ramps(curve, n)
+    assert len(ramps) == n
+
+    def at(ramp, t):
+        for (t0, f0), (t1, f1) in zip(ramp, ramp[1:]):
+            if t0 <= t <= t1:
+                return f0 + (f1 - f0) * (t - t0) / (t1 - t0) if t1 > t0 else f0
+        return ramp[-1][1] if t >= ramp[-1][0] else ramp[0][1]
+
+    for t in (100.0, 300.0, 600.0, 900.0, 1200.0, 1800.0):
+        assert sum(at(r, t) for r in ramps) / n == pytest.approx(deck._interp(curve, t), abs=2e-3)
+    first_full = next(t for t, f in ramps[0] if f >= 1.0)
+    last_lit = next(t for t, f in ramps[-1] if f > 0.0)
+    assert first_full <= last_lit, "the upstream segment is fully alight before the downstream one lights"
+    for r in ramps:
+        times = [t for t, _ in r]
+        assert times == sorted(set(times)), "FDS needs strictly increasing T"
+
+
+def test_the_fire_is_emitted_as_one_burner_segment_per_cell_along_the_load():
+    from solit2.engines.reduced.geometry import section_geometry
+    design = Design.load(BASELINE)
+    text = deck.generate(design)
+    box = deck.fuel_box(design, section_geometry(design))
+    n = round((box.x1 - box.x0) / deck.DX_M)
+    assert text.count("&SURF ID='FIRE") == n
+    assert text.count("SURF_IDS='FIRE") == n
+    assert all(f"&RAMP ID='FIRE_RAMP{k}'" in text for k in range(n))
+
+
+def test_the_droplet_diameter_handed_to_fds_is_the_volume_median_not_the_sauter_mean():
+    # PART DIAMETER is D_v,0.5 (User Guide); the design records D32. For FDS's
+    # default distribution at GAMMA_D 2.4 the ratio is 1.14, so passing D32
+    # straight through ran a spray 12% finer than specified.
+    design = Design.load(BASELINE)
+    smd = design.nozzles.modes[0].smd_um
+    assert deck._dv50_over_d32(2.4) == pytest.approx(1.14, abs=0.005)
+    assert f"DIAMETER={deck.volume_median_um(smd):.1f}" in deck.generate(design)
+    assert deck.volume_median_um(smd) > smd
+
+
+def test_the_pumps_ramp_to_full_flow_after_activation():
+    design = Design.load(BASELINE)
+    text = deck.generate(design)
+    assert f"FLOW_RAMP='{deck.PUMP_RAMP_ID}'" in text
+    assert f"&RAMP ID='{deck.PUMP_RAMP_ID}', T={design.zones.pump_ramp_s:.1f}, F=1.0 /" in text
+    instant = design.model_copy(update={"zones": design.zones.model_copy(update={"pump_ramp_s": 0.0})})
+    assert "FLOW_RAMP" not in deck.generate(instant)
+
+
+def test_the_free_burn_deck_is_the_same_fire_with_no_mist_system():
+    design = Design.load(BASELINE)
+    mist, free = deck.generate(design), deck.generate(design, suppression=False)
+    assert deck.chid(design, suppression=False) != deck.chid(design)
+    assert f"CHID='{deck.chid(design, suppression=False)}'" in free
+    for token in ("&PART", "&PROP", "PROP_ID='NOZ_FINE'", "MPUV"):
+        assert token in mist and token not in free
+    fire = lambda text: [ln for ln in text.splitlines() if "FIRE" in ln or ln.startswith("&OBST")]  # noqa: E731
+    assert fire(mist) == fire(free), "same fire, same tunnel, same target"
+    assert "&CTRL ID='DETECT'" in free, "detection is still timed in the free burn"

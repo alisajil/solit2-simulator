@@ -26,14 +26,29 @@ def test_tunnel_outline_is_the_real_road_width(design, geom):
     assert (shape["x0"], shape["x1"]) == (-50.0, 50.0)
 
 
-def test_fire_and_target_use_the_footprints_own_dimensions(design):
+def test_fire_and_target_use_the_footprints_own_dimensions(design, geom):
     fp = design.fire.footprint
-    fire, target = overview.fire_and_target(design)
+    fire, target = overview.fire_and_target(design, geom)
     assert (fire["x0"], fire["x1"]) == (-fp.length_m / 2, fp.length_m / 2)
     assert fire["y1"] - fire["y0"] == pytest.approx(fp.width_m)
     assert target["x0"] == pytest.approx(design.fire.target_x_m)
     assert target["x1"] - target["x0"] == pytest.approx(fp.width_m), \
         "target length mirrors twin_canvas's own reasoning: width, not fp.length_m"
+
+
+def test_fire_and_target_sit_where_both_engines_put_them_not_on_the_centreline(design, geom):
+    # Annex 7 5.2.3: eccentric toward one wall. Tier 1's mist envelope and the
+    # FDS deck both use `fire_lateral_m`; a centred drawing showed an experiment
+    # neither engine runs.
+    from solit2.engines.reduced.geometry import fire_lateral_m
+    y = fire_lateral_m(design, geom)
+    assert y != 0.0
+    fire, target = overview.fire_and_target(design, geom)
+    for shape in (fire, target):
+        assert (shape["y0"] + shape["y1"]) / 2 == pytest.approx(y)
+    # the near-wall clearance is the preset's own arithmetic: offset - width/2
+    assert fire["y0"] - (-geom.road_width_m / 2) == pytest.approx(
+        design.fire.lane_centre_offset_from_wall_m - design.fire.footprint.width_m / 2)
 
 
 def test_nozzle_line_connects_each_rows_real_heads_in_x_order(design, geom):

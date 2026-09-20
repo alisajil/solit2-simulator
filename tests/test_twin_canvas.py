@@ -79,7 +79,34 @@ def test_instrument_layer_has_one_mast_per_station_and_one_dot_per_thermocouple(
     in_window = [n for n, x in STATIONS.items() if tc.WINDOW_M[0] <= x <= tc.WINDOW_M[1]]
     assert len(_shapes_of_type(shapes, "line")) == len(in_window)
     assert len(traces[0].x) == sum(len(step.stations[n].heights_m) for n in in_window)
-    assert len(traces) == 3 and list(traces[2].text) == sorted(in_window, key=STATIONS.get)
+    names = next(t for t in traces if t.name == "stations")
+    assert list(names.text) == sorted(in_window, key=STATIONS.get)
+
+
+def test_flux_gauges_draw_at_1_5_m_and_co_at_breathing_height_where_table_5_puts_them(design, geom, trace):
+    # Annex 7 6.4.2: heat-flux gauges at 1.5 m (U15, D15); 6.4.5: opacimeters
+    # at 1.5 m. CO and the toxic dose are breathing-height quantities. The FDS
+    # deck measures at exactly these heights, so the drawing must too -- one
+    # diamond at 1.8 m for everything was 0.3 m off for the flux gauges.
+    from solit2.engines.reduced.criteria import HEAT_FLUX_HEIGHT_M, INSTRUMENTS
+    step = trace.steps[len(trace.steps) // 2]
+    traces, _ = tc.instrument_layer(design, geom, step, tc.WINDOW_M, 400.0)
+    flux = next(t for t in traces if t.name.startswith("flux"))
+    gas = next(t for t in traces if t.name.startswith("CO"))
+    assert set(flux.y) == {HEAT_FLUX_HEIGHT_M} and set(gas.y) == {tc.BREATHING_HEIGHT_M}
+    assert set(flux.x) == {STATIONS[n] for n, k in INSTRUMENTS.items() if k.heat_flux or k.visibility}
+    assert set(gas.x) == {STATIONS[n] for n, k in INSTRUMENTS.items() if k.carbon_monoxide > 0}
+
+
+def test_heat_detectors_draw_where_the_fds_deck_trips_on_them(design, geom, trace):
+    from solit2.engines.fds import deck
+    step = trace.steps[0]
+    traces, _ = tc.instrument_layer(design, geom, step, tc.WINDOW_M, 400.0)
+    det = next(t for t in traces if t.name == "heat detectors")
+    assert list(det.x) == deck.detector_x_m(design)
+    assert set(det.y) == {geom.crown_height_m - deck.CEILING_OFFSET_M}
+    zoomed, _ = tc.instrument_layer(design, geom, step, (-20.0, 20.0), 400.0)
+    assert all(-20.0 <= x <= 20.0 for x in next(t for t in zoomed if t.name == "heat detectors").x)
 
 
 def test_fire_marker_grows_with_heat_release(design, geom, trace):

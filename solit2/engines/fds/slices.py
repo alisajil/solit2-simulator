@@ -165,3 +165,32 @@ def load_centreline(run_dir: Path, quantity: str) -> Slice | None:
         blocks.append(frames[:n, :, drop:])
     return Slice(quantity, parts[0][4], np.concatenate(xs), z, parts[0][2][:n],
                  np.concatenate(blocks, axis=2))
+
+
+DIFFERENCE_PREFIX = "Δ "
+
+
+def difference(minuend: Slice, subtrahend: Slice, label: str) -> Slice:
+    """`minuend - subtrahend`, frame by frame, on the minuend's clock.
+
+    Each minuend frame is paired with the subtrahend frame nearest in time, and
+    only frames the subtrahend actually reaches are kept: holding its last
+    frame flat past its end would manufacture a difference nothing computed.
+    The two runs must share a grid -- they do when they come from the same
+    design's mist and free-burn decks, and nothing else is a valid pair.
+    """
+    if (minuend.x_m.shape != subtrahend.x_m.shape or minuend.z_m.shape != subtrahend.z_m.shape
+            or not np.allclose(minuend.x_m, subtrahend.x_m)
+            or not np.allclose(minuend.z_m, subtrahend.z_m)):
+        raise ValueError("the two slices are on different grids and cannot be differenced")
+    if minuend.quantity != subtrahend.quantity:
+        raise ValueError(f"{minuend.quantity!r} minus {subtrahend.quantity!r} is not a difference")
+    if len(subtrahend.t_s) == 0:
+        raise ValueError("the subtrahend has no complete frame yet")
+    keep = minuend.t_s <= subtrahend.t_s[-1] + 1e-6
+    if not keep.any():
+        raise ValueError("the subtrahend has not reached the minuend's first frame")
+    t_s = minuend.t_s[keep]
+    nearest = np.abs(subtrahend.t_s[None, :] - t_s[:, None]).argmin(axis=1)
+    return Slice(f"{DIFFERENCE_PREFIX}{minuend.quantity} ({label})", minuend.unit,
+                 minuend.x_m, minuend.z_m, t_s, minuend.frames[keep] - subtrahend.frames[nearest])

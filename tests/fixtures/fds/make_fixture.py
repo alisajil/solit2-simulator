@@ -1,4 +1,4 @@
-"""Regenerate sample_devc.csv from the committed golden deck.
+"""Regenerate the golden decks and the sample FDS output that the reader tests parse.
 
 Run: uv run python tests/fixtures/fds/make_fixture.py
 The values are deliberately simple -- ambient, then rising -- because this
@@ -25,7 +25,28 @@ def unit_of(device: str) -> str:
     raise ValueError(f"no unit rule for device {device!r}")
 
 
+def write_goldens() -> None:
+    from solit2.engines.fds import deck
+    from solit2.schema.design import Design
+    for name, path in (("og-dbr-rev0", "designs/og-dbr-rev0.json"),
+                       ("solit2-test-protocol", "examples/designs/solit2-test-protocol.json")):
+        (HERE / f"{name}.fds").write_text(deck.generate(Design.load(path)))
+
+
+def write_ctrl() -> None:
+    """FDS's `<CHID>_ctrl.csv`: control status -1 until it fires, 1 after.
+
+    Detection at the second sample and activation at the third, so the reader
+    tests can see water arrive at a time FDS recorded rather than one the
+    design's timetable assumed.
+    """
+    lines = ["s,status,status", "Time,DETECT,ACT", "0.0,-1,-1", "1.0,1,-1", "2.0,1,1"]
+    (HERE / "sample_ctrl.csv").write_text("\n".join(lines) + "\n")
+
+
 def main() -> None:
+    write_goldens()
+    write_ctrl()
     deck_text = (HERE / "og-dbr-rev0.fds").read_text()
     ids = [d for d in re.findall(r"&DEVC ID='([^']+)'", deck_text)
            if not d.startswith(("NOZ", "LHD"))]

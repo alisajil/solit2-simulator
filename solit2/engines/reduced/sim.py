@@ -16,7 +16,8 @@ from solit2.engines.reduced.criteria import (BREATHING_HEIGHT_M, FLAME_CONTACT_F
                                              WOOD_PILOTED_IGNITION_KWM2,
                                              thermocouple_heights_m)
 from solit2.engines.reduced.geometry import (NozzlePosition, SectionGeometry,
-                                             nozzle_positions, section_geometry)
+                                             fire_lateral_m, nozzle_positions,
+                                             section_geometry)
 from solit2.engines.reduced.state import (FireState, MistEffect, RunTrace, StationSample,
                                           StepRecord)
 from solit2.engines.reduced.thermal import ThermalField
@@ -111,7 +112,7 @@ def _build_scene(design: Design, section: str, velocity_ms: float) -> _Scene:
     tunnel = design.tunnel.model_copy(update={"section": section})
     scoped = design.model_copy(update={"tunnel": tunnel})
     geom = section_geometry(scoped)
-    fire_y = scoped.fire.lane_centre_offset_from_wall_m - geom.road_width_m / 2.0
+    fire_y = fire_lateral_m(scoped, geom)
     fire_top = scoped.fire.footprint.top_height_m
     fire_base = scoped.fire.footprint.base_height_m
     return _Scene(

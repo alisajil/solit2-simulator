@@ -134,3 +134,23 @@ def nozzle_positions(design: Design, geom: SectionGeometry,
         )
         for i in range(n)
     )
+
+
+def fire_lateral_m(design: Design, geom: SectionGeometry) -> float:
+    """The fuel load's centreline across the tunnel, in the deck's y (0 = tunnel centre).
+
+    Annex 7 section 5.2.3 sites the mock-up eccentric to the tunnel centreline,
+    near one side wall, precisely because a centred load flatters the system.
+    `lane_centre_offset_from_wall_m` is that offset measured from the near wall;
+    the standard names no side, so ONE convention is fixed here for every
+    consumer -- the Tier 1 mist envelope, the FDS deck and every drawing: the
+    near wall is the -y wall (the left wall looking downstream). The tunnel is
+    mirror-symmetric about y = 0, so the choice changes no physics, only which
+    way the picture is drawn.
+    """
+    offset = design.fire.lane_centre_offset_from_wall_m
+    if not 0.0 < offset < geom.road_width_m:
+        raise ValueError(
+            f"lane_centre_offset_from_wall_m={offset} does not sit inside the "
+            f"{geom.road_width_m:.2f} m carriageway")
+    return offset - geom.road_width_m / 2.0

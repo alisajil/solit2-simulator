@@ -12,18 +12,18 @@ data (`width_at`, `row_lateral_offsets_m`), so those are drawn to scale.
 
 Annex 7 section 5.2.3 sites the fuel load eccentrically, offset toward one
 side wall -- deliberately, so the fire-fighting medium is not delivered
-evenly on both sides by a centred position. This view does not draw the
-load's own cross-section: nothing in this schema records which wall it is
-offset toward, and guessing a side would misrepresent the standard rather
-than merely omit part of it.
+evenly on both sides by a centred position. Where the station's plane cuts
+the mock-up (U05 to D05) or the target, its section is drawn at
+`fire_lateral_m`: the lateral position the Tier 1 mist envelope and the FDS
+deck both use, so the picture shows the experiment the engines run.
 """
 from __future__ import annotations
 
 import plotly.graph_objects as go
 
 from app import palette
-from solit2.engines.reduced.criteria import INSTRUMENTS
-from solit2.engines.reduced.geometry import SectionGeometry
+from solit2.engines.reduced.criteria import HEAT_FLUX_HEIGHT_M, INSTRUMENTS, STATIONS
+from solit2.engines.reduced.geometry import SectionGeometry, fire_lateral_m
 from solit2.engines.reduced.state import StepRecord
 from solit2.schema.design import Design
 
@@ -60,26 +60,57 @@ def thermocouple_rake(name: str, step: StepRecord, cmax_c: float) -> go.Scatter:
                                            "x": 1.02, "len": 0.8, "thickness": 14}})
 
 
-def gas_marker(name: str, step: StepRecord) -> go.Scatter | None:
-    """The flux/visibility/CO instrument cluster, where Table 5 puts one --
-    breathing height, centreline, same placement as the longitudinal view.
-    `None` where this station carries none of those instruments."""
+def gas_markers(name: str, step: StepRecord) -> list[go.Scatter]:
+    """The instrument clusters where Table 5 puts them, at the heights it puts
+    them: heat flux and visibility at 1.5 m (Annex 7 6.4.2, 6.4.5), CO and the
+    toxic dose at breathing height -- the same heights the FDS deck measures.
+    Empty where this station carries none of those instruments."""
     kit = INSTRUMENTS[name]
     sample = step.stations[name]
-    readings = []
+    flux = []
     if kit.heat_flux and sample.flux_kwm2 is not None:
-        readings.append(f"{sample.flux_kwm2:.1f} kW/m²")
+        flux.append(f"{sample.flux_kwm2:.1f} kW/m²")
     if kit.visibility and sample.visibility_m is not None:
-        readings.append(f"visibility {sample.visibility_m:.0f} m")
+        flux.append(f"visibility {sample.visibility_m:.0f} m")
+    gas = []
     if kit.carbon_monoxide > 0 and sample.co_ppm is not None:
-        readings.append(f"CO {sample.co_ppm:.0f} ppm")
-    if not readings:
+        gas.append(f"CO {sample.co_ppm:.0f} ppm")
+    if kit.toxic_gas and sample.fed_tox is not None:
+        gas.append(f"FED {sample.fed_tox:.2f}")
+    out = []
+    if flux:
+        out.append(go.Scatter(x=[0.0], y=[HEAT_FLUX_HEIGHT_M], mode="markers",
+                              name="flux · visibility (1.5 m)", hoverinfo="text",
+                              text=[f"{name} · " + " · ".join(flux)],
+                              marker={"symbol": "diamond", "size": 13, "color": palette.PRIMARY,
+                                      "line": {"color": "#1C2432", "width": 1}}))
+    if gas:
+        out.append(go.Scatter(x=[0.0], y=[BREATHING_HEIGHT_M], mode="markers",
+                              name="CO · FED (1.8 m)", hoverinfo="text",
+                              text=[f"{name} · " + " · ".join(gas)],
+                              marker={"symbol": "square", "size": 11, "color": palette.PRIMARY,
+                                      "line": {"color": "#1C2432", "width": 1}}))
+    return out
+
+
+def fuel_section(design: Design, geom: SectionGeometry, station: str) -> dict | None:
+    """The mock-up's or the target's cross-section, where this station's plane
+    cuts one; `None` where it cuts neither. Same footprint, same lateral position
+    as the plan view and the FDS deck."""
+    x = STATIONS[station]
+    fp = design.fire.footprint
+    tx = design.fire.target_x_m
+    if -fp.length_m / 2 <= x <= fp.length_m / 2:
+        colour, name = palette.GREY, "fuel load"
+    elif tx <= x <= tx + fp.width_m:
+        colour, name = palette.FAIL, "target"
+    else:
         return None
-    return go.Scatter(x=[0.0], y=[BREATHING_HEIGHT_M], mode="markers",
-                      name="gas · flux · visibility", hoverinfo="text",
-                      text=[f"{name} · " + " · ".join(readings)],
-                      marker={"symbol": "diamond", "size": 13, "color": palette.PRIMARY,
-                              "line": {"color": "#1C2432", "width": 1}})
+    y = fire_lateral_m(design, geom)
+    return {"type": "rect", "x0": y - fp.width_m / 2, "x1": y + fp.width_m / 2,
+            "y0": fp.base_height_m, "y1": fp.top_height_m, "layer": "below", "name": name,
+            "line": {"color": colour, "dash": "dot" if name == "target" else "solid"},
+            "fillcolor": palette.rgba(colour, 0.25)}
 
 
 def nozzle_rows(design: Design, step: StepRecord) -> go.Scatter:
@@ -99,13 +130,12 @@ def figure(design: Design, geom: SectionGeometry, step: StepRecord, station: str
           cmax_c: float) -> go.Figure:
     """A static cross-section at `station`, for the one instant `step` describes."""
     traces = [tunnel_outline(geom), nozzle_rows(design, step),
-             thermocouple_rake(station, step, cmax_c)]
-    gas = gas_marker(station, step)
-    if gas is not None:
-        traces.append(gas)
+             thermocouple_rake(station, step, cmax_c), *gas_markers(station, step)]
     half_width = geom.road_width_m / 2.0 + MARGIN_M
+    section = fuel_section(design, geom, station)
     fig = go.Figure(data=traces)
     fig.update_layout(
+        shapes=[section] if section else [],
         height=420, margin={"l": 10, "r": 10, "t": 30, "b": 10},
         xaxis={"title": "across the tunnel (m)", "range": [-half_width, half_width],
               "scaleanchor": "y", "scaleratio": 1, "zeroline": False},

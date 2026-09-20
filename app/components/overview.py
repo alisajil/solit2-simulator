@@ -10,21 +10,24 @@ result"). The same trade-off applies here, so this view gives the same
 overview a 3-D schematic would, without the 3-D risk.
 
 Static and design-only: nothing here depends on a `RunTrace` or a test-clock
-instant, only on what the design itself specifies. Two things this repo has
-no source for are deliberately left out rather than guessed:
+instant, only on what the design itself specifies.
 
-- The pump's own position. The schema records its flow rate and ramp time,
-  never a location, so no pump marker is drawn.
-- Which side wall the fuel load and target sit eccentric to (Annex 7 5.2.3
-  states they are offset, not which way) -- both are drawn on the tunnel
-  centreline, same omission `cross_section.py` already discloses.
+The fuel load and the target are drawn where the engine puts them: eccentric
+toward one side wall, at `fire_lateral_m` -- the same lateral position the
+Tier 1 mist envelope and the FDS deck use, so this picture and both engines
+describe one experiment (Annex 7 5.2.3 sites the mock-up off-centre on
+purpose; the -y side is this repo's convention, see `geometry.fire_lateral_m`).
+
+One thing this repo has no source for is left out rather than guessed: the
+pump's own position. The schema records its flow rate and ramp time, never a
+location, so no pump marker is drawn.
 """
 from __future__ import annotations
 
 import plotly.graph_objects as go
 
 from app import palette
-from solit2.engines.reduced.geometry import SectionGeometry, nozzle_positions
+from solit2.engines.reduced.geometry import SectionGeometry, fire_lateral_m, nozzle_positions
 from solit2.schema.design import Design
 
 MARGIN_M = 15.0
@@ -42,17 +45,19 @@ def tunnel_outline(design: Design, geom: SectionGeometry, x_range: tuple[float, 
                 fillcolor=palette.rgba(palette.GREY, 0.06))
 
 
-def fire_and_target(design: Design) -> list[dict]:
+def fire_and_target(design: Design, geom: SectionGeometry) -> list[dict]:
     """Real footprints, real position -- the same figures `twin_canvas.tunnel_layer`
-    draws, in plan instead of elevation. `target_length_m` mirrors that module's own
-    reasoning: Annex 7 gives the target's width, never its along-tunnel length."""
+    draws, in plan instead of elevation, at the lateral position both engines burn
+    the fire. `target_length_m` mirrors that module's own reasoning: Annex 7 gives
+    the target's width, never its along-tunnel length."""
     fp = design.fire.footprint
+    y = fire_lateral_m(design, geom)
     target_length_m = fp.width_m
     return [
-        _rect(-fp.length_m / 2, fp.length_m / 2, -fp.width_m / 2, fp.width_m / 2,
+        _rect(-fp.length_m / 2, fp.length_m / 2, y - fp.width_m / 2, y + fp.width_m / 2,
               line={"color": palette.GREY}, fillcolor=palette.rgba(palette.GREY, 0.35)),
         _rect(design.fire.target_x_m, design.fire.target_x_m + target_length_m,
-              -fp.width_m / 2, fp.width_m / 2,
+              y - fp.width_m / 2, y + fp.width_m / 2,
               line={"color": palette.FAIL, "dash": "dot"}, fillcolor=palette.TRANSPARENT),
     ]
 
@@ -106,7 +111,7 @@ def figure(design: Design, geom: SectionGeometry) -> go.Figure:
     half = geom.road_width_m / 2.0
     fig.update_layout(
         height=300, margin={"l": 10, "r": 10, "t": 30, "b": 10},
-        shapes=[tunnel_outline(design, geom, x_range), *fire_and_target(design)],
+        shapes=[tunnel_outline(design, geom, x_range), *fire_and_target(design, geom)],
         xaxis={"title": "distance from mock-up centre (m)", "range": list(x_range)},
         yaxis={"title": "across the tunnel (m)", "range": [-half - 4.0, half + 4.0],
               "scaleanchor": "x", "scaleratio": 1},

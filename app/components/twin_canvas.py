@@ -16,10 +16,10 @@ import plotly.colors as pcolors
 import plotly.graph_objects as go
 
 from app import palette
-from solit2.engines.fds.deck import CORE_M, WINDOW_M
-from solit2.engines.fds.slices import Slice
+from solit2.engines.fds.deck import CEILING_OFFSET_M, CORE_M, WINDOW_M, detector_x_m
+from solit2.engines.fds.slices import DIFFERENCE_PREFIX, Slice
 from solit2.engines.reduced.criteria import (
-    FLAME_CONTACT_FLUX_KWM2, IGNITION_EXPOSURE_S, INSTRUMENTS, STATIONS,
+    FLAME_CONTACT_FLUX_KWM2, HEAT_FLUX_HEIGHT_M, IGNITION_EXPOSURE_S, INSTRUMENTS, STATIONS,
 )
 from solit2.engines.reduced.geometry import SectionGeometry, nozzle_positions, section_geometry
 from solit2.engines.reduced.state import RunTrace, StepRecord
@@ -157,21 +157,45 @@ def tunnel_layer(design: Design, geom: SectionGeometry, window_m: tuple[float, f
     return traces, shapes
 
 
-def _gas_readings(sample, kit) -> list[str]:
+def _flux_visibility_readings(sample, kit) -> list[str]:
+    """The 1.5 m instruments: Annex 7 6.4.2 puts the heat-flux gauges at 1.5 m and
+    6.4.5 the opacimeters at 1.5 m -- the same height the FDS deck measures them."""
     out = []
     if kit.heat_flux and sample.flux_kwm2 is not None:
         out.append(f"{sample.flux_kwm2:.1f} kW/m²")
     if kit.visibility and sample.visibility_m is not None:
         out.append(f"visibility {sample.visibility_m:.0f} m")
+    return out
+
+
+def _gas_readings(sample, kit) -> list[str]:
+    """The breathing-height instruments: CO and the toxic dose, at 1.8 m in both tiers."""
+    out = []
     if kit.carbon_monoxide > 0 and sample.co_ppm is not None:
         out.append(f"CO {sample.co_ppm:.0f} ppm")
+    if kit.toxic_gas and sample.fed_tox is not None:
+        out.append(f"FED {sample.fed_tox:.2f}")
     return out
+
+
+def detector_layer(design: Design, geom: SectionGeometry, window_m: tuple[float, float]) -> go.Scatter:
+    """The linear-heat sensors the FDS deck trips on: the same x positions
+    (`deck.detector_x_m`), just under the crown on the design's own geometry.
+    The deck places them under the STAIR-STEPPED ceiling, which sits lower."""
+    xs = [x for x in detector_x_m(design) if window_m[0] <= x <= window_m[1]]
+    z = geom.crown_height_m - CEILING_OFFSET_M
+    return go.Scatter(x=xs, y=[z] * len(xs), mode="markers", name="heat detectors",
+                      marker={"symbol": "line-ns", "size": 9, "color": STRUCTURE_COLOUR,
+                              "line": {"width": 2, "color": STRUCTURE_COLOUR}},
+                      hoverinfo="text",
+                      text=[f"heat detector · x {x:.0f} m · {design.detection.threshold_c:.0f} °C"
+                            for x in xs])
 
 
 def instrument_layer(design: Design, geom: SectionGeometry, step: StepRecord,
                      window_m: tuple[float, float], cmax_c: float) -> Layer:
     xs, zs, temps, hover = [], [], [], []
-    gx, gz, ghover, names_x, names = [], [], [], [], []
+    fx, fhover, gx, ghover, names_x, names = [], [], [], [], [], []
     shapes = []
     for name, x in sorted(STATIONS.items(), key=lambda kv: kv[1]):
         if not window_m[0] <= x <= window_m[1]:
@@ -186,20 +210,29 @@ def instrument_layer(design: Design, geom: SectionGeometry, step: StepRecord,
             zs.append(z)
             temps.append(t)
             hover.append(f"{name} · {z:.1f} m · {t:.0f} °C")
-        readings = _gas_readings(sample, INSTRUMENTS[name])
-        if readings:
+        flux = _flux_visibility_readings(sample, INSTRUMENTS[name])
+        if flux:
+            fx.append(x)
+            fhover.append(f"{name} · " + " · ".join(flux))
+        gas = _gas_readings(sample, INSTRUMENTS[name])
+        if gas:
             gx.append(x)
-            gz.append(BREATHING_HEIGHT_M)
-            ghover.append(f"{name} · " + " · ".join(readings))
+            ghover.append(f"{name} · " + " · ".join(gas))
     traces = [
         go.Scatter(x=xs, y=zs, mode="markers", name="thermocouples", text=hover, hoverinfo="text",
                    marker={"size": 8, "color": temps, "colorscale": TEMP_SCALE, "cmin": TEMP_MIN_C,
                            "cmax": cmax_c,
                            "colorbar": {"title": {"text": "gas<br>°C", "side": "top"},
                                         "x": 1.02, "len": 0.8, "thickness": 14}}),
-        go.Scatter(x=gx, y=gz, mode="markers", name="gas · flux · visibility", text=ghover,
-                   hoverinfo="text", marker={"symbol": "diamond", "size": 11, "color": MIST_COLOUR,
-                                             "line": {"color": "#1C2432", "width": 1}}),
+        go.Scatter(x=fx, y=[HEAT_FLUX_HEIGHT_M] * len(fx), mode="markers",
+                   name="flux · visibility (1.5 m)", text=fhover, hoverinfo="text",
+                   marker={"symbol": "diamond", "size": 11, "color": MIST_COLOUR,
+                           "line": {"color": "#1C2432", "width": 1}}),
+        go.Scatter(x=gx, y=[BREATHING_HEIGHT_M] * len(gx), mode="markers",
+                   name="CO · FED (1.8 m)", text=ghover, hoverinfo="text",
+                   marker={"symbol": "square", "size": 9, "color": MIST_COLOUR,
+                           "line": {"color": "#1C2432", "width": 1}}),
+        detector_layer(design, geom, window_m),
         go.Scatter(x=names_x, y=[geom.crown_height_m + 0.35] * len(names_x), mode="text",
                    text=names, textfont={"size": 10, "color": STRUCTURE_COLOUR},
                    showlegend=False, hoverinfo="skip", name="stations"),
@@ -268,7 +301,11 @@ def mist_layer(design: Design, geom: SectionGeometry, step: StepRecord) -> Layer
     return [hover], shapes
 
 
-CFD_SCALES = {"TEMPERATURE": "Inferno", "SOOT DENSITY": "Greys", "MPUV": "Blues"}
+# Keyed by the quantity string FDS writes into the .smv header: a particle field
+# carries its PART_ID, so the deck's MPUV of the FINE class arrives as "FINE MPUV".
+CFD_SCALES = {"TEMPERATURE": "Inferno", "SOOT DENSITY": "Greys", "FINE MPUV": "Blues"}
+# A difference of two fields is signed, so it gets a diverging scale centred on zero.
+DIFFERENCE_SCALE = "RdBu_r"
 CFD_MAX_FRAMES = 120
 FRAME_MS = 150
 
@@ -306,15 +343,28 @@ def cfd_scale(quantity: str) -> list[list]:
     bright purple and an ambient tunnel read as the hottest thing on screen. Starting
     a shade above black keeps the ramp intact and leaves nothing for it to rewrite.
     """
+    if quantity.startswith(DIFFERENCE_PREFIX):
+        return pcolors.get_colorscale(DIFFERENCE_SCALE)
     stops = pcolors.get_colorscale(CFD_SCALES.get(quantity, "Viridis"))
     return [[p, _OFF_BLACK if _is_near_black(c) else c] for p, c in stops]
 
 
+def _cfd_range(slice_: Slice) -> tuple[float, float]:
+    """A difference field is centred on zero so its diverging scale reads as a
+    sign: cooler-than-free-burn one colour, hotter the other, unchanged white."""
+    lo, hi = float(slice_.frames.min()), float(slice_.frames.max())
+    if slice_.quantity.startswith(DIFFERENCE_PREFIX):
+        span = max(abs(lo), abs(hi))
+        return -span, span
+    return lo, hi
+
+
 def cfd_layer(slice_: Slice, frame_index: int) -> Layer:
+    zmin, zmax = _cfd_range(slice_)
     heat = go.Heatmap(
         x=slice_.x_m, y=slice_.z_m, z=slice_.frames[frame_index], name=slice_.quantity,
         colorscale=cfd_scale(slice_.quantity),
-        zmin=float(slice_.frames.min()), zmax=float(slice_.frames.max()),
+        zmin=zmin, zmax=zmax,
         # Translucent so the mock-up, heads and instrument masts stay readable underneath:
         # the CFD field is laid over the twin, not in place of it.
         opacity=0.72, zsmooth="best",

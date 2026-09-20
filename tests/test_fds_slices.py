@@ -94,3 +94,51 @@ def test_load_centreline_stitches_meshes_in_x_and_trims_to_the_common_time(run_d
 def test_load_centreline_is_none_when_nothing_matches(run_dir, tmp_path):
     assert slices.load_centreline(run_dir, "SOOT DENSITY") is None
     assert slices.load_centreline(tmp_path / "empty", "TEMPERATURE") is None
+
+
+def _slice(value: float, t_s, quantity: str = "TEMPERATURE"):
+    import numpy as np
+
+    from solit2.engines.fds.slices import Slice
+    x, z = np.linspace(-10.0, 10.0, 4), np.linspace(0.0, 6.0, 3)
+    t = np.asarray(t_s, dtype=float)
+    return Slice(quantity, "C", x, z, t, np.full((len(t), len(z), len(x)), value))
+
+
+def test_difference_subtracts_frame_by_frame_on_the_minuends_clock():
+    import numpy as np
+
+    from solit2.engines.fds import slices
+    mist = _slice(100.0, [0.0, 600.0, 1200.0])
+    free = _slice(400.0, [0.0, 300.0, 600.0, 900.0, 1200.0])
+    diff = slices.difference(mist, free, "mist − free burn")
+    assert list(diff.t_s) == [0.0, 600.0, 1200.0], "the minuend's clock, not the subtrahend's"
+    assert np.all(diff.frames == -300.0)
+    assert diff.quantity.startswith(slices.DIFFERENCE_PREFIX) and "mist" in diff.quantity
+    assert diff.unit == mist.unit
+
+
+def test_difference_keeps_only_frames_the_subtrahend_actually_reached():
+    # Holding the free burn's last frame flat past its end would manufacture a
+    # difference nothing computed.
+    from solit2.engines.fds import slices
+    mist = _slice(100.0, [0.0, 600.0, 1200.0])
+    short = _slice(400.0, [0.0, 600.0])
+    diff = slices.difference(mist, short, "x")
+    assert list(diff.t_s) == [0.0, 600.0]
+    with pytest.raises(ValueError, match="has not reached"):
+        slices.difference(_slice(100.0, [1200.0]), short, "x")
+
+
+def test_difference_refuses_mismatched_grids_and_quantities():
+    import numpy as np
+
+    from solit2.engines.fds import slices
+    from solit2.engines.fds.slices import Slice
+    mist = _slice(100.0, [0.0, 600.0])
+    other_grid = Slice("TEMPERATURE", "C", np.linspace(-10.0, 10.0, 5), mist.z_m, mist.t_s,
+                       np.zeros((2, 3, 5)))
+    with pytest.raises(ValueError, match="different grids"):
+        slices.difference(mist, other_grid, "x")
+    with pytest.raises(ValueError, match="not a difference"):
+        slices.difference(mist, _slice(1.0, [0.0, 600.0], quantity="SOOT DENSITY"), "x")

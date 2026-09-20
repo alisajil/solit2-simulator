@@ -42,7 +42,8 @@ def _cmd_fds_deck(args: argparse.Namespace) -> int:
                      "correct the design JSON and try again", EXIT_BAD_INPUT)
     try:
         text = fds_deck.generate(design, dx_m=args.dx,
-                                 t_end_s=(args.minutes * 60.0 if args.minutes else None))
+                                 t_end_s=(args.minutes * 60.0 if args.minutes else None),
+                                 suppression=not args.free_burn)
     except ValueError as exc:
         return _fail(str(exc), "--dx",
                      "choose a cell size that tiles the window into equal "
@@ -215,6 +216,9 @@ def build_parser() -> argparse.ArgumentParser:
                             "the RUN, not the system: zones.duration_min sizes "
                             "the water tank and the cost index, so editing it "
                             "to cut a run short would redesign the system")
+    fdeck.add_argument("--free-burn", action="store_true",
+                       help="the same fire in the same tunnel with no mist system: "
+                            "the reference the mist run is compared against")
     fdeck.add_argument("--out")
     fdeck.set_defaults(func=_cmd_fds_deck)
 

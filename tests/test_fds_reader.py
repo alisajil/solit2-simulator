@@ -17,7 +17,22 @@ def run_dir(tmp_path):
     chid = _design_sha(Design.load(BASELINE))
     shutil.copy(FIXTURES / "sample_devc.csv", tmp_path / f"{chid}_devc.csv")
     shutil.copy(FIXTURES / "sample_hrr.csv", tmp_path / f"{chid}_hrr.csv")
+    shutil.copy(FIXTURES / "sample_ctrl.csv", tmp_path / f"{chid}_ctrl.csv")
     return tmp_path
+
+
+def _free_burn_dir(tmp_path, t_end: float = 2.0, scale: float = 1.5):
+    """A finished free-burn run: the same clock, a larger HRR."""
+    from solit2.engines.fds import deck as deck_mod
+    free = tmp_path / "free"
+    free.mkdir()
+    lines = (FIXTURES / "sample_hrr.csv").read_text().splitlines()
+    rows = [ln for ln in lines[2:] if float(ln.split(",")[0]) <= t_end]
+    scaled = [",".join([r.split(",")[0]] + [f"{float(v) * scale:.3f}" for v in r.split(",")[1:]])
+              for r in rows]
+    chid = deck_mod.chid(Design.load(BASELINE), suppression=False)
+    (free / f"{chid}_hrr.csv").write_text("\n".join(lines[:2] + scaled) + "\n")
+    return free
 
 
 def test_the_reader_fills_the_same_result_contract_tier_1_does(run_dir):
@@ -122,3 +137,88 @@ def test_the_engine_version_comes_from_the_fds_log_when_it_names_one(run_dir):
     result = reader.read(run_dir, Design.load(BASELINE))
     assert result.meta["engine_version"] == "fds-6.9.1"
     assert not any("unverified" in w for w in result.warnings)
+
+
+def test_activation_comes_from_fds_own_control_log_not_the_design_timetable(run_dir):
+    # The design says "60 s after detection"; the reader used to write
+    # activation_delay_s measured from t=0, as if the fire tripped the detector
+    # at ignition. FDS records when its controls changed state.
+    result = reader.read(run_dir, Design.load(BASELINE))
+    assert result.events["t_detect_s"] == pytest.approx(1.0)
+    assert result.events["t_activate_s"] == pytest.approx(2.0)
+    design = Design.load(BASELINE)
+    assert result.events["t_full_pressure_s"] == pytest.approx(2.0 + design.zones.pump_ramp_s)
+    assert "t_activation_s" not in result.events, "Tier 1's key names, so the timeline and HMI light up"
+
+
+def test_water_arrives_at_the_recorded_activation_and_ramps_with_the_pumps():
+    # Tier 1's `_flow_fraction`, on FDS's recorded activation instant: nothing
+    # before the valves open, full flow only after the pumps' ramp.
+    ramp = 30.0
+    assert reader._flow_fraction(1.0, 2.0, ramp) == 0.0
+    assert reader._flow_fraction(2.0, 2.0, ramp) == 0.0
+    assert reader._flow_fraction(17.0, 2.0, ramp) == pytest.approx(0.5)
+    assert reader._flow_fraction(32.0, 2.0, ramp) == 1.0
+    assert reader._flow_fraction(100.0, None, ramp) == 0.0, "no activation, no water"
+    assert reader._flow_fraction(2.0, 2.0, 0.0) == 1.0, "no ramp: full flow at once"
+
+
+def test_a_run_whose_detectors_never_tripped_is_refused_as_a_mist_result(run_dir):
+    from solit2.engines.reduced.envelope import _design_sha
+    chid = _design_sha(Design.load(BASELINE))
+    ctrl = run_dir / f"{chid}_ctrl.csv"
+    ctrl.write_text("s,status,status\nTime,DETECT,ACT\n0.0,-1,-1\n1.0,-1,-1\n2.0,-1,-1\n")
+    with pytest.raises(ValueError, match="never tripped"):
+        reader.read(run_dir, Design.load(BASELINE))
+
+
+def test_a_missing_control_log_is_fatal(run_dir):
+    from solit2.engines.reduced.envelope import _design_sha
+    chid = _design_sha(Design.load(BASELINE))
+    (run_dir / f"{chid}_ctrl.csv").unlink()
+    with pytest.raises(FileNotFoundError):
+        reader.read(run_dir, Design.load(BASELINE))
+
+
+def test_without_a_free_burn_run_the_free_hrr_mirrors_and_says_so(run_dir):
+    result = reader.read(run_dir, Design.load(BASELINE))
+    assert result.timeseries["hrr_free_mw"] == result.timeseries["hrr_mw"]
+    assert any("mirrors hrr_mw" in w for w in result.warnings)
+
+
+def test_a_free_burn_run_supplies_the_free_hrr_and_the_mirror_warning_goes(run_dir, tmp_path):
+    free = _free_burn_dir(tmp_path)
+    result = reader.read(run_dir, Design.load(BASELINE), free_burn_dir=free)
+    assert result.peaks["hrr_free_burn_mw"] == pytest.approx(1.5 * result.peaks["hrr_mw"])
+    assert all(f == pytest.approx(1.5 * m) for f, m in
+               zip(result.timeseries["hrr_free_mw"], result.timeseries["hrr_mw"]))
+    assert not any("mirrors hrr_mw" in w for w in result.warnings)
+    assert any("free-burn FDS run" in w for w in result.warnings)
+
+
+def test_a_free_burn_run_shorter_than_the_mist_run_is_refused(run_dir, tmp_path):
+    free = _free_burn_dir(tmp_path, t_end=0.5)
+    with pytest.raises(ValueError, match="not comparable"):
+        reader.read(run_dir, Design.load(BASELINE), free_burn_dir=free)
+
+
+def test_the_result_names_every_stand_in_the_deck_makes(run_dir):
+    result = reader.read(run_dir, Design.load(BASELINE))
+    text = " ".join(result.warnings)
+    for phrase in ("E_COEFFICIENT", "snapped to the", "target flux gauge sits", "burner segments",
+                   "ceiling thermocouple line runs over the fuel load"):
+        assert phrase in text, phrase
+
+
+def test_the_hrr_column_is_found_by_name_not_by_position(run_dir):
+    # FDS's _hrr.csv carries a different column count with and without
+    # particles, so a fixed index is a guess that happens to hold.
+    from solit2.engines.reduced.envelope import _design_sha
+    chid = _design_sha(Design.load(BASELINE))
+    path = run_dir / f"{chid}_hrr.csv"
+    lines = path.read_text().splitlines()
+    shifted = [",".join([p.split(",")[0], "0.0"] + p.split(",")[1:]) for p in lines[2:]]
+    path.write_text("\n".join([lines[0] + ",kW", "Time,DUMMY," + lines[1].split(",", 1)[1]]
+                               + shifted))
+    result = reader.read(run_dir, Design.load(BASELINE))
+    assert result.peaks["hrr_mw"] == pytest.approx(22.0)
