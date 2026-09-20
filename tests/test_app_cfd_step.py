@@ -108,3 +108,16 @@ def test_a_failed_run_never_captions_its_field_as_complete(run_view, monkeypatch
     assert any("did not finish" in c for c in captions), captions
     assert not any(c.startswith("Preliminary") for c in captions), captions
     assert not any("frames to t =" in c for c in captions), captions
+
+
+def test_a_failed_run_with_no_slice_says_the_run_died_not_that_the_field_is_absent(
+        run_view, monkeypatch, tmp_path):
+    """Absence of a slice after a crash is not the same claim as a run that simply has none."""
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    _fake_run(run_dir, "Total Time: 300.0 s\n ERROR: Numerical instability\n")
+    at = run_view("cfd")
+
+    assert not at.exception
+    notes = [i.value for i in at.info]
+    assert any("did not finish and never wrote" in n for n in notes), notes
+    assert not any("holds no" in n for n in notes), notes

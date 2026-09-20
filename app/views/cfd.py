@@ -93,14 +93,21 @@ def _slice_caption(run_state: str, slice_) -> str:
             f"this field is not a completed simulation.")
 
 
+def _missing_slice_note(run_state: str, label: str) -> str:
+    """Absence means different things while running, when finished, and when crashed."""
+    if run_state == "running":
+        return "FDS has not written this slice yet."
+    if run_state == "done":
+        return f"This run holds no {label.lower()} slice."
+    return f"The run did not finish and never wrote a {label.lower()} slice."
+
+
 def _canvas(design: Design, trace: RunTrace, run_dir: Path, run_state: str) -> None:
-    running = run_state == "running"
     for tab, (label, quantity) in zip(st.tabs([label for label, _ in QUANTITIES]), QUANTITIES):
         with tab:
             slice_ = _load_slice(str(run_dir), quantity, stamp(run_dir))
             if slice_ is None:
-                st.info("FDS has not written this slice yet." if running
-                        else f"This run holds no {label.lower()} slice.")
+                st.info(_missing_slice_note(run_state, label))
                 continue
             st.plotly_chart(twin_canvas.figure(design, trace, cfd=slice_), key=f"cfd_{quantity}")
             st.caption(_slice_caption(run_state, slice_))
