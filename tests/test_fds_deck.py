@@ -520,3 +520,29 @@ def test_the_free_burn_deck_is_the_same_fire_with_no_mist_system():
     fire = lambda text: [ln for ln in text.splitlines() if "FIRE" in ln or ln.startswith("&OBST")]  # noqa: E731
     assert fire(mist) == fire(free), "same fire, same tunnel, same target"
     assert "&CTRL ID='DETECT'" in free, "detection is still timed in the free burn"
+
+
+def test_a_run_knows_whether_its_deck_is_still_the_one_this_design_generates(tmp_path):
+    """The run directory is named after the DESIGN, so a run made before this
+    module changed keeps its name while describing a different experiment. That
+    is how a result gets attributed to geometry it never simulated."""
+    design = Design.load(BASELINE)
+    assert deck.matches_design(tmp_path, design) is None, "no deck to compare"
+
+    (tmp_path / "deck.fds").write_text(deck.generate(design))
+    assert deck.matches_design(tmp_path, design) is True
+
+    # a deliberately shortened window is the same deck, not a different one
+    (tmp_path / "deck.fds").write_text(deck.generate(design, t_end_s=300.0))
+    assert deck.matches_design(tmp_path, design) is True
+
+    # the free-burn variant is compared against the free-burn deck
+    (tmp_path / "deck.fds").write_text(deck.generate(design, suppression=False))
+    assert deck.matches_design(tmp_path, design) is True
+
+    # anything else is stale, however plausible it looks
+    stale = deck.generate(design).replace("E_COEFFICIENT=0.4", "E_COEFFICIENT=0.9")
+    (tmp_path / "deck.fds").write_text(stale)
+    assert deck.matches_design(tmp_path, design) is False
+    (tmp_path / "deck.fds").write_text(deck.generate(Design.load(TEST_RIG)))
+    assert deck.matches_design(tmp_path, design) is False

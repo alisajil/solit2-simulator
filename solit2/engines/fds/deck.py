@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
+from pathlib import Path
 from functools import lru_cache
 
 from solit2.engines.reduced import fire as fire_mod
@@ -705,6 +706,35 @@ def _output(design: Design, geom: SectionGeometry, dx_m: float, suppression: boo
     if suppression:
         lines.append(f"&SLCF PBY={y:.2f}, QUANTITY='MPUV', PART_ID='FINE' /")
     return lines + [""]
+
+
+def _without_run_window(text: str) -> str:
+    """The deck minus the one line a shortened run is allowed to differ on."""
+    return "\n".join(ln for ln in text.splitlines() if not ln.startswith("&TIME "))
+
+
+def matches_design(run_dir: Path, design: Design) -> bool | None:
+    """Whether a run's own deck is still the deck this design generates.
+
+    None when the run kept no deck to compare. The design's sha names the run
+    directory, so a run made BEFORE a change to this module keeps its name and
+    reads as current while describing a different experiment -- which is how a
+    result gets attributed to geometry it never simulated. `T_END` is excluded
+    because a deliberately shortened window is not a different deck.
+    """
+    deck_path = Path(run_dir) / "deck.fds"
+    if not deck_path.exists():
+        return None
+    try:
+        stored = deck_path.read_text()
+    except OSError:
+        return None
+    # Which variant this run is, from its own CHID rather than from a substring
+    # that a design's title could also carry.
+    head = stored.split("\n", 1)[0]
+    suppression = f"CHID='{chid(design, suppression=False)}'" not in head
+    return (_without_run_window(stored)
+            == _without_run_window(generate(design, suppression=suppression)))
 
 
 def generate(design: Design, dx_m: float = DX_M,

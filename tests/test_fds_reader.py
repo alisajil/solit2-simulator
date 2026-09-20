@@ -222,3 +222,20 @@ def test_the_hrr_column_is_found_by_name_not_by_position(run_dir):
                                + shifted))
     result = reader.read(run_dir, Design.load(BASELINE))
     assert result.peaks["hrr_mw"] == pytest.approx(22.0)
+
+
+def test_a_result_says_when_its_run_came_from_a_different_deck(run_dir):
+    from solit2.engines.fds import deck as deck_mod
+    design = Design.load(BASELINE)
+    # no deck at all: the reader cannot check, and says so
+    assert any("kept no deck.fds" in w for w in reader.read(run_dir, design).warnings)
+
+    (run_dir / "deck.fds").write_text(deck_mod.generate(design))
+    current = reader.read(run_dir, design).warnings
+    assert not any("deck" in w and "NOT" in w for w in current)
+    assert not any("kept no deck.fds" in w for w in current)
+
+    (run_dir / "deck.fds").write_text(
+        deck_mod.generate(design).replace("E_COEFFICIENT=0.4", "E_COEFFICIENT=0.9"))
+    assert any("NOT the deck this design generates now" in w
+               for w in reader.read(run_dir, design).warnings)

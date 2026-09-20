@@ -238,7 +238,7 @@ def _peaks_of(steps: list[StepRecord], modelled: list[str],
 
 
 def _warnings(design: Design, geom: SectionGeometry, velocity_ms: float, engine_version: str,
-              skipped: list[str], free_burn: bool) -> list[str]:
+              skipped: list[str], free_burn: bool, deck_current: bool | None) -> list[str]:
     """Everything a reader must know that the numbers do not say themselves.
 
     A Tier 2 result is interchangeable with a Tier 1 one downstream, so every
@@ -289,6 +289,15 @@ def _warnings(design: Design, geom: SectionGeometry, velocity_ms: float, engine_
         f"{velocity_ms:.2f} m/s, not Tier 1's section x velocity envelope; "
         f"criteria_cases is empty for the same reason",
     ]
+    if deck_current is False:
+        warnings.append(
+            "this run's own deck is NOT the deck this design generates now: the run "
+            "directory is named after the design, so a run made before the deck changed "
+            "keeps its name while describing a different experiment. Re-run before "
+            "reporting these numbers as this design's.")
+    elif deck_current is None:
+        warnings.append("this run kept no deck.fds, so what it actually simulated "
+                        "cannot be checked against this design")
     if engine_version == ENGINE_VERSION_UNKNOWN:
         warnings.append("the FDS log does not name a build, so the engine "
                         "version on this result is unverified")
@@ -358,5 +367,6 @@ def read(run_dir: Path, design: Design, *, free_burn_dir: Path | None = None) ->
                     "hrr_free_mw": [s.hrr_free_mw for s in steps],
                     "ceiling_temp_c": [s.ceiling_temp_c for s in steps]},
         warnings=_warnings(design, geom, trace.velocity_ms, engine_version,
-                           sorted(set(STATIONS) - set(modelled)), free is not None),
+                           sorted(set(STATIONS) - set(modelled)), free is not None,
+                           deck_mod.matches_design(run_dir, design)),
     )
