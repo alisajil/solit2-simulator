@@ -45,9 +45,10 @@ def render() -> None:
     k_factor, pressure_bar, rows, pitch_m = _render_nozzle_hydraulics_inputs()
     section_length_m, sections_simultaneous = _render_zoning_inputs()
     velocity_lo, velocity_hi = _render_ventilation_inputs()
+    ahj = _render_ahj_inputs()
     raw = _assemble(tunnel_preset, fire_preset, nozzle_preset, hydraulics_preset,
                     k_factor, pressure_bar, int(rows), pitch_m,
-                    section_length_m, int(sections_simultaneous), velocity_lo, velocity_hi)
+                    section_length_m, int(sections_simultaneous), velocity_lo, velocity_hi, ahj)
     _render_summary(raw)
     if st.button("Build & continue →", key="build_design", type="primary"):
         try:
@@ -155,10 +156,54 @@ def _render_ventilation_inputs() -> tuple[float, float]:
     return velocity_lo, velocity_hi
 
 
+AHJ_COLUMNS = 4
+
+AHJ_FIELDS = (
+    ("tvs_design_fire_mw", "ahj_tvs", "Ventilation design fire (MW)", 0.0, 500.0, 1.0),
+    ("max_air_temp_c", "ahj_air_temp", "Max air temperature (°C)", 0.0, 2000.0, 1.0),
+    ("max_heat_flux_kwm2", "ahj_flux", "Max heat flux (kW/m²)", 0.0, 200.0, 0.1),
+    ("min_visibility_m", "ahj_visibility", "Min visibility (m)", 0.0, 500.0, 1.0),
+    ("max_fed", "ahj_fed", "Max fractional effective dose", 0.0, 1.0, 0.01),
+    ("max_co_ppm", "ahj_co", "Max carbon monoxide (ppm)", 0.0, 10000.0, 10.0),
+    ("max_structure_exposure_length_m", "ahj_struct_len",
+     "Max structure exposed above threshold (m)", 0.0, 2000.0, 1.0),
+    ("max_structure_exposure_duration_s", "ahj_struct_dur",
+     "Max structure exposure duration (s)", 0.0, 10000.0, 10.0),
+)
+
+
+def _render_ahj_inputs() -> dict:
+    """The acceptance limits, which belong to the authority and to nobody else.
+
+    Annex 7 section 7.1 gives the categories but not the numbers: "the detailed
+    acceptance criteria shall be defined by authorities having jurisdiction based on
+    the risk analysis of every individual tunnel". So every field starts empty and an
+    empty field stays unset — this tool never supplies a limit nobody set, and a
+    criterion with no limit is reported as unjudged rather than as a pass.
+    """
+    st.subheader("Acceptance limits")
+    st.caption("From the project's own authority — the tender, the fire strategy or the "
+               "AHJ's risk analysis. Leave a field empty and that criterion is reported "
+               "as not judged; it is never treated as passed.")
+    values: dict[str, float] = {}
+    columns = st.columns(AHJ_COLUMNS)
+    for i, (field, key, caption, low, high, step) in enumerate(AHJ_FIELDS):
+        entered = columns[i % AHJ_COLUMNS].number_input(
+            caption, min_value=low, max_value=high, value=None, step=step, key=key,
+            placeholder="not set")
+        if entered is not None:
+            values[field] = float(entered)
+    unset = len(AHJ_FIELDS) - len(values)
+    if unset:
+        st.caption(f"{unset} of {len(AHJ_FIELDS)} limits still unset.")
+    return values
+
+
 def _assemble(tunnel_preset: str, fire_preset: str, nozzle_preset: str,
              hydraulics_preset: str, k_factor: float, pressure_bar: float,
              rows: int, pitch_m: float, section_length_m: float,
-             sections_simultaneous: int, velocity_lo: float, velocity_hi: float) -> dict:
+             sections_simultaneous: int, velocity_lo: float, velocity_hi: float,
+             ahj: dict) -> dict:
     """Every override lands inside its own block, on top of the chosen preset."""
     offsets = {1: [0.0], 2: [-2.5, 2.5], 3: [-2.8, 0.0, 2.8]}[rows]
     return {
@@ -185,4 +230,5 @@ def _assemble(tunnel_preset: str, fire_preset: str, nozzle_preset: str,
         },
         "detection": {"type": "linear_heat", "threshold_c": 60.0, "sensor_spacing_m": 25.0},
         "hydraulics": {"preset": hydraulics_preset},
+        "ahj": ahj,
     }
