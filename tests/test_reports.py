@@ -1,5 +1,5 @@
 from solit2.engines.reduced import envelope
-from solit2.reports import correlation, test_plan
+from solit2.reports import correlation, labels, test_plan
 from solit2.schema.design import Design
 
 SITE_DESIGN = "examples/designs/road-tunnel-twin-bore.json"
@@ -55,7 +55,8 @@ def test_correlation_reports_each_criterion_from_both_sides():
     site_result = envelope.run(Design.load(SITE_DESIGN))
     md = correlation.render(test_result, site_result)
     for name in set(test_result.criteria) | set(site_result.criteria):
-        assert name in md
+        # The table names criteria the way a fire engineer does, not by identifier.
+        assert labels.label(name) in md
 
 
 def test_correlation_handles_a_criterion_present_on_only_one_side():

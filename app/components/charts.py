@@ -4,6 +4,7 @@ from __future__ import annotations
 import pandas as pd
 import plotly.graph_objects as go
 
+from solit2.reports import labels
 from solit2.schema.result import Criterion
 
 
@@ -19,13 +20,23 @@ def criteria_table(criteria: dict[str, Criterion]) -> pd.DataFrame:
     rows = []
     for name, c in criteria.items():
         rows.append({
-            "criterion": name,
-            "value": str(c.value),
-            "limit": str(c.limit) if c.limit is not None else "—",
+            "criterion": labels.label(name),
+            "unit": labels.unit(name) or "—",
+            "value": labels.value(name, c.value),
+            "limit": _limit_text(name, c.limit),
             "status": c.status,
-            "margin": round(c.margin, 3),
+            "margin": labels.value("", c.margin),
         })
     return pd.DataFrame(rows)
+
+
+def _limit_text(name: str, limit: object) -> str:
+    """A range limit reads as a range; an unset one stays a dash, never a zero."""
+    if limit is None:
+        return "—"
+    if isinstance(limit, tuple):
+        return " – ".join(labels.value(name, v) for v in limit)
+    return labels.value(name, limit)
 
 
 def timeseries_chart(timeseries: dict[str, list[float]], keys: list[str]) -> go.Figure:
@@ -38,6 +49,7 @@ def timeseries_chart(timeseries: dict[str, list[float]], keys: list[str]) -> go.
     t = timeseries["t_s"]
     fig = go.Figure()
     for key in keys:
-        fig.add_trace(go.Scatter(x=t, y=timeseries[key], mode="lines", name=key))
-    fig.update_layout(xaxis_title="time (s)", height=350, margin=dict(l=10, r=10, t=30, b=10))
+        fig.add_trace(go.Scatter(x=t, y=timeseries[key], mode="lines", name=labels.heading(key)))
+    fig.update_layout(xaxis_title="test clock (s)", height=350,
+                      margin=dict(l=10, r=10, t=30, b=10))
     return fig

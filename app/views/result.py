@@ -13,6 +13,7 @@ from app import state
 from app.components.charts import criteria_table, timeseries_chart
 from solit2 import history
 from solit2.engines.reduced import envelope
+from solit2.reports import labels
 from solit2.schema.design import Design
 from solit2.schema.result import Result
 
@@ -61,7 +62,7 @@ def _calibration(result: Result) -> None:
 
 
 def _chips(result: Result) -> None:
-    chips = "".join(f'<span class="chip {c.status}">{name}</span>'
+    chips = "".join(f'<span class="chip {c.status}">{labels.label(name)}</span>'
                     for name, c in result.criteria.items() if c.hard)
     st.markdown(chips, unsafe_allow_html=True)
 
@@ -92,8 +93,8 @@ def render() -> None:
     _chips(result)
 
     st.subheader("Peaks")
-    for col, (name, value) in zip(st.columns(PEAK_TILES), list(result.peaks.items())[:PEAK_TILES]):
-        col.metric(name, f"{value:.1f}")
+    for col, (name, peak) in zip(st.columns(PEAK_TILES), list(result.peaks.items())[:PEAK_TILES]):
+        col.metric(labels.label(name), labels.with_unit(name, peak))
     st.subheader("Acceptance criteria")
     st.dataframe(criteria_table(result.criteria), key="criteria", hide_index=True)
     if result.constraints:
@@ -102,7 +103,8 @@ def render() -> None:
 
     st.subheader("Timeseries")
     available = [k for k in result.timeseries if k != "t_s"]
-    chosen = st.multiselect("Series", available, default=available[:SERIES_DEFAULT], key="series")
+    chosen = st.multiselect("Series", available, default=available[:SERIES_DEFAULT],
+                            key="series", format_func=labels.heading)
     if chosen:
         st.plotly_chart(timeseries_chart(result.timeseries, chosen), key="timeseries")
     for warning in result.warnings:

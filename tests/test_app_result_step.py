@@ -4,6 +4,7 @@ from pathlib import Path
 from streamlit.testing.v1 import AppTest
 
 from solit2 import history
+from solit2.reports import labels
 from tests.conftest import EXAMPLE_DESIGN
 
 
@@ -39,7 +40,7 @@ def test_gate_chips_carry_each_hard_criterions_status(run_view, monkeypatch, tmp
     chips = next(m.value for m in at.markdown if 'class="chip' in m.value)
     for name, c in result.criteria.items():
         if c.hard:
-            assert f'class="chip {c.status}">{name}<' in chips
+            assert f'class="chip {c.status}">{labels.label(name)}<' in chips
 
 
 def test_leaderboard_marks_the_current_design(run_view, monkeypatch, tmp_path):

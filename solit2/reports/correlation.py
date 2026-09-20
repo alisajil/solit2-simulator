@@ -3,6 +3,7 @@ side -- typically the SOLIT2 test-facility geometry against the real site.
 """
 from __future__ import annotations
 
+from solit2.reports import labels
 from solit2.schema.result import Result
 
 
@@ -29,7 +30,8 @@ def render(test_result: Result, site_result: Result) -> str:
         t = test_result.criteria.get(name)
         s = site_result.criteria.get(name)
         lines.append(
-            f"| {name} | {t.value if t else '—'} | {t.status if t else '—'} | "
-            f"{s.value if s else '—'} | {s.status if s else '—'} |"
+            f"| {labels.heading(name)} "
+            f"| {labels.value(name, t.value) if t else '—'} | {t.status if t else '—'} "
+            f"| {labels.value(name, s.value) if s else '—'} | {s.status if s else '—'} |"
         )
     return "\n".join(lines)

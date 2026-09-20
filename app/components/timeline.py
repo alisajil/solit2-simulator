@@ -5,6 +5,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from app.components.twin_canvas import MIST_COLOUR, STRUCTURE_COLOUR, mmss
+from solit2.reports import labels
 from solit2.schema.result import Criterion
 
 EVENT_LABELS = (("t_detect_s", "Detection"), ("t_activate_s", "Activation"),
@@ -40,9 +41,9 @@ def render(events: dict, criteria: dict[str, Criterion], t_end_s: float) -> None
     failed = [name for name, c in criteria.items() if c.status == "fail"]
     unset = [name for name, c in criteria.items() if c.status == "unset"]
     if failed:
-        chips = "".join(f'<span class="chip fail">{n}</span>' for n in failed)
+        chips = "".join(f'<span class="chip fail">{labels.label(n)}</span>' for n in failed)
         st.markdown(f"Failed criteria: {chips}", unsafe_allow_html=True)
     # Without this, a run judged against almost nothing looks like a clean sheet.
     if unset:
-        chips = "".join(f'<span class="chip unset">{n}</span>' for n in unset)
+        chips = "".join(f'<span class="chip unset">{labels.label(n)}</span>' for n in unset)
         st.markdown(f"Not judged — no AHJ limit set: {chips}", unsafe_allow_html=True)
