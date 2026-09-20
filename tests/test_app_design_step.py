@@ -1,3 +1,4 @@
+import json
 from app.views import design as design_view
 from solit2.engines.reduced import envelope
 
@@ -53,3 +54,29 @@ def test_a_limit_the_authority_sets_is_carried_into_the_design_and_judged(run_vi
     result = envelope.run(design)
     assert "max_air_temp_c" in result.score["gates_failed"]
     assert "max_air_temp_c" not in result.score["criteria_unset"]
+
+
+def test_prefill_takes_a_files_limits_and_invents_none_of_the_others(run_view, monkeypatch,
+                                                                     tmp_path):
+    """A design file's own `ahj` block seeds the fields; a null it leaves stays empty.
+
+    This is the sanctioned way to carry real project limits: they live in the user's
+    `designs/` space with their provenance, not as defaults baked into the tool.
+    """
+    (tmp_path / "site.json").write_text(json.dumps({
+        "ahj": {"tvs_design_fire_mw": 50.0, "max_air_temp_c": None,
+                "note": "Section 6 of the tender requires 150 MW reduced to <= 50 MW."}}))
+    monkeypatch.setattr(design_view, "DESIGNS_DIR", tmp_path)
+
+    at = run_view("design", seed_design=False)
+    at.selectbox(key="ahj_source").set_value("site.json").run()
+
+    assert not at.exception
+    assert at.number_input(key="ahj_tvs").value == 50.0
+    assert at.number_input(key="ahj_air_temp").value is None
+    assert any("site.json" in c.value for c in at.caption)
+    assert any("tender" in c.value for c in at.caption), "the file's provenance note must show"
+
+    at.button(key="build_design").click().run()
+    ahj = at.session_state["design"].ahj
+    assert ahj.tvs_design_fire_mw == 50.0 and ahj.max_air_temp_c is None

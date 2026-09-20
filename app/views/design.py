@@ -9,6 +9,9 @@ shortcut, it is how this schema is meant to be driven.
 """
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import streamlit as st
 
 from app import state
@@ -172,6 +175,60 @@ AHJ_FIELDS = (
 )
 
 
+DESIGNS_DIR = Path("designs")
+NO_SOURCE = "— none —"
+_APPLIED_SOURCE = "_ahj_applied_source"
+
+
+def _design_files() -> list[str]:
+    """Design files the user keeps in their own project space.
+
+    `designs/` is the user's, and neither independence scan touches it by design —
+    so it is where real project limits belong, with their provenance beside them.
+    """
+    if not DESIGNS_DIR.is_dir():
+        return []
+    return sorted(p.name for p in DESIGNS_DIR.glob("*.json"))
+
+
+def _limits_from(name: str) -> tuple[dict, str]:
+    """The limits a design file declares, and whatever it says about where they came from."""
+    try:
+        raw = json.loads((DESIGNS_DIR / name).read_text())
+    except (OSError, ValueError) as exc:
+        st.warning(f"{name} could not be read: {exc}")
+        return {}, ""
+    block = raw.get("ahj") or {}
+    limits = {field: float(block[field]) for field, *_ in AHJ_FIELDS
+              if block.get(field) is not None}
+    return limits, str(block.get("note") or "")
+
+
+def _prefill_from_file() -> dict:
+    """Load the limits a design file declares, without inventing the ones it leaves out."""
+    names = _design_files()
+    if not names:
+        return {}
+    chosen = st.selectbox("Prefill from a design file", [NO_SOURCE, *names], key="ahj_source",
+                          help="Reads the file's own `ahj` block. A limit the file leaves "
+                               "null stays empty here — it is not invented.")
+    if chosen == NO_SOURCE:
+        st.session_state[_APPLIED_SOURCE] = None
+        return {}
+    limits, note = _limits_from(chosen)
+    # Re-seed the fields when the source changes; otherwise the widgets keep the old file's
+    # values, since Streamlit only honours `value=` on a key's first render.
+    if st.session_state.get(_APPLIED_SOURCE) != chosen:
+        for _field, key, *_rest in AHJ_FIELDS:
+            st.session_state.pop(key, None)
+        st.session_state[_APPLIED_SOURCE] = chosen
+    st.caption(f"{len(limits)} of {len(AHJ_FIELDS)} limits come from **{chosen}**; the rest are "
+               f"blank because that file declares none. Edit any of them for this run.")
+    if note:
+        st.caption(f"That file records: {note}")
+    return limits
+
+
 def _render_ahj_inputs() -> dict:
     """The acceptance limits, which belong to the authority and to nobody else.
 
@@ -185,12 +242,13 @@ def _render_ahj_inputs() -> dict:
     st.caption("From the project's own authority — the tender, the fire strategy or the "
                "AHJ's risk analysis. Leave a field empty and that criterion is reported "
                "as not judged; it is never treated as passed.")
+    prefill = _prefill_from_file()
     values: dict[str, float] = {}
     columns = st.columns(AHJ_COLUMNS)
     for i, (field, key, caption, low, high, step) in enumerate(AHJ_FIELDS):
         entered = columns[i % AHJ_COLUMNS].number_input(
-            caption, min_value=low, max_value=high, value=None, step=step, key=key,
-            placeholder="not set")
+            caption, min_value=low, max_value=high, value=prefill.get(field), step=step,
+            key=key, placeholder="not set")
         if entered is not None:
             values[field] = float(entered)
     unset = len(AHJ_FIELDS) - len(values)
