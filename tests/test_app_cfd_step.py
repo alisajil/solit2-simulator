@@ -194,3 +194,22 @@ def test_only_the_selected_field_is_built(run_view, monkeypatch, tmp_path):
 
     assert not at.exception
     assert asked == ["TEMPERATURE"], asked
+
+
+def test_the_cfd_chart_opts_out_of_streamlits_theme(run_view, monkeypatch, tmp_path):
+    """Same bug class as the fire-test twin: Streamlit rewrites a sequential
+    colourscale's near-black stop to an accent colour unless the chart carries
+    theme=None, which would make a cold cell read as the hottest thing on screen."""
+    import numpy as np
+
+    from app.views import cfd
+    from solit2.engines.fds.slices import Slice
+
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    _fake_run(run_dir, "Total Time: 1200.0 s\nSTOP: FDS completed successfully\n", t_end=1200.0)
+    partial = Slice("TEMPERATURE", "C", np.linspace(-10.0, 10.0, 4), np.linspace(0.0, 6.0, 3),
+                    np.array([0.0, 600.0, 1200.0]), np.zeros((3, 3, 4)))
+    monkeypatch.setattr(cfd, "_load_slice", lambda *a, **kw: partial)
+    at = run_view("cfd")
+    chart = next(e for e in at.get("plotly_chart") if e.key == "cfd_TEMPERATURE")
+    assert chart.proto.theme == ""

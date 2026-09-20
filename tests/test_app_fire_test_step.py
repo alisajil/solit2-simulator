@@ -52,3 +52,28 @@ def test_zoom_toggle_uses_a_window_derived_from_the_design_not_a_fixed_constant(
     design = Design.load(EXAMPLE_DESIGN)
     assert rendered_range == fire_test.twin_canvas.core_window_m(design)
     assert rendered_range != fire_test.twin_canvas.CORE_WINDOW_M
+
+
+def test_cross_section_renders_and_follows_the_station_picker(run_view, monkeypatch, tmp_path):
+    monkeypatch.setattr(history, "DEFAULT_PATH", tmp_path / "h.jsonl")
+    at = run_view("fire_test")
+    assert not at.exception
+    assert any(e.key == "cross_section" for e in at.get("plotly_chart"))
+
+    at.selectbox(key="station").set_value("D15").run()
+    assert not at.exception
+    cross = next(e for e in at.get("plotly_chart") if e.key == "cross_section")
+    assert "D15" in cross.proto.spec
+
+
+def test_charts_with_a_temperature_colourscale_opt_out_of_streamlits_theme(
+        run_view, monkeypatch, tmp_path):
+    """Streamlit's own theme rewrites a sequential colourscale's near-black stop to an
+    accent colour unless the chart opts out with theme=None -- caught live when a 30 C
+    thermocouple reading rendered the same bright colour as a genuinely hot one. Every
+    chart using Inferno (twin_canvas, cross_section) must carry that flag."""
+    monkeypatch.setattr(history, "DEFAULT_PATH", tmp_path / "h.jsonl")
+    at = run_view("fire_test")
+    for key in ("twin_canvas", "cross_section"):
+        chart = next(e for e in at.get("plotly_chart") if e.key == key)
+        assert chart.proto.theme == "", f"{key} must pass theme=None or Inferno's cold end breaks"

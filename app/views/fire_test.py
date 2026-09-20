@@ -6,13 +6,13 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from app import state
-from app.components import hmi, timeline, twin_canvas
+from app.components import cross_section, hmi, timeline, twin_canvas
 from app.views.result import ensure_result
 from solit2.engines.reduced.criteria import INSTRUMENTS, STATIONS
-from solit2.engines.reduced.geometry import section_geometry
+from solit2.engines.reduced.geometry import SectionGeometry, section_geometry
 from solit2.engines.reduced.hydraulics import size_system
 from solit2.engines.reduced.sim import run_once
-from solit2.engines.reduced.state import RunTrace
+from solit2.engines.reduced.state import RunTrace, StepRecord
 from solit2.schema.design import Design
 from solit2.schema.result import Result
 
@@ -39,7 +39,8 @@ def _kit_caption(name: str) -> str:
             f"{kit.thermocouples} thermocouples" + "".join(f", {e}" for e in extras))
 
 
-def _station_chart(trace: RunTrace) -> None:
+def _station_chart(design: Design, geom: SectionGeometry, trace: RunTrace,
+                   step: StepRecord, cmax_c: float) -> None:
     names = sorted(STATIONS, key=STATIONS.get)
     first_downstream = next(i for i, n in enumerate(names) if STATIONS[n] > 0)
     name = st.selectbox("Station", names, index=first_downstream, key="station")
@@ -55,6 +56,12 @@ def _station_chart(trace: RunTrace) -> None:
     st.plotly_chart(fig, key="station_chart")
     st.caption(_kit_caption(name))
 
+    st.plotly_chart(cross_section.figure(design, geom, step, name, cmax_c),
+                    key="cross_section", theme=None)
+    st.caption("Thermocouples read on the tunnel centreline: the reduced-order engine models "
+               "a vertical temperature profile, not a lateral one, so no left/right position "
+               "is shown for them. Nozzle rows and the tunnel outline are real lateral data.")
+
 
 def render() -> None:
     st.header("Fire test — digital twin")
@@ -66,13 +73,14 @@ def render() -> None:
         return
     result = ensure_result(design)
     trace = ensure_trace(design, result)
+    geom = section_geometry(design)
 
     steps = twin_canvas.sample_steps(trace, twin_canvas.TWIN_FRAME_STRIDE_S)
     labels = [twin_canvas.mmss(s.t_s) for s in steps]
     chosen = st.select_slider("Test clock", options=labels, value=labels[len(labels) // 3],
                               key="twin_clock")
     k = labels.index(chosen)
-    hmi.render(steps[k], trace, design, size_system(design, section_geometry(design)))
+    hmi.render(steps[k], trace, design, size_system(design, geom))
 
     zoom = st.toggle("Zoom to the fire zone", key="twin_zoom")
     window = twin_canvas.core_window_m(design) if zoom else twin_canvas.WINDOW_M
@@ -84,4 +92,4 @@ def render() -> None:
 
     timeline.render(trace.events, result.criteria, trace.steps[-1].t_s)
     st.subheader("Station readings")
-    _station_chart(trace)
+    _station_chart(design, geom, trace, steps[k], twin_canvas.temp_max_c(trace))
