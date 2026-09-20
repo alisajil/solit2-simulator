@@ -149,8 +149,21 @@ def fire_lateral_m(design: Design, geom: SectionGeometry) -> float:
     way the picture is drawn.
     """
     offset = design.fire.lane_centre_offset_from_wall_m
-    if not 0.0 < offset < geom.road_width_m:
+    half_load = design.fire.footprint.width_m / 2.0
+    # The whole load, not just its centreline. `lane_centre_offset_from_wall_m`
+    # is measured to the load's CENTRE, so an offset under half its width puts
+    # its near face beyond the wall. Nothing downstream would say so: FDS snaps
+    # the obstruction into the wall solid and burns a surface that is buried,
+    # which reads as a quietly weak fire rather than as an error. Annex 7 5.2.3
+    # asks for under 1.5 m of clearance at the near FACE, so an offset in that
+    # range is exactly the plausible misreading this catches.
+    if not half_load <= offset <= geom.road_width_m - half_load:
         raise ValueError(
-            f"lane_centre_offset_from_wall_m={offset} does not sit inside the "
-            f"{geom.road_width_m:.2f} m carriageway")
+            f"lane_centre_offset_from_wall_m={offset} m puts the "
+            f"{design.fire.footprint.width_m} m wide fuel load outside the "
+            f"{geom.road_width_m:.2f} m carriageway: the offset is measured to the load's "
+            f"CENTRE, so it must be between {half_load:.2f} and "
+            f"{geom.road_width_m - half_load:.2f} m. Annex 7 5.2.3's 'less than 1.5 m' is "
+            f"the clearance at the load's near face, which is this offset minus "
+            f"{half_load:.2f} m")
     return offset - geom.road_width_m / 2.0
