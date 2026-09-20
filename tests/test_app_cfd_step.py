@@ -330,3 +330,29 @@ def test_a_finished_free_burn_feeds_the_tier_two_reader(run_view, monkeypatch, t
     at = run_view("cfd")
     assert not at.exception
     assert seen.get("free_burn_dir") == _free_dir(run_dir)
+
+
+def test_switching_to_the_free_burn_while_the_mist_field_is_selected_does_not_break(
+        run_view, monkeypatch, tmp_path):
+    """The Mist field exists only for the suppressed run. A viewer who selects it
+    and then switches scenario leaves a held widget value that is no longer an
+    option -- the widget-state trap this project has been bitten by before."""
+    from app.views import cfd
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    done = "Total Time: 1200.0 s\nSTOP: FDS completed successfully\n"
+    _fake_run(run_dir, done)
+    _fake_run(_free_dir(run_dir), done)
+    asked: list[str] = []
+
+    def record(run_dir_str, quantity, stamp_key):
+        asked.append(quantity)
+        return None
+
+    monkeypatch.setattr(cfd, "_load_slice", record)
+    monkeypatch.setattr(fds_reader, "read", lambda d, design, **kw: envelope.run(Design.load(EXAMPLE)))
+    at = run_view("cfd")
+    _control(at, "cfd_quantity").set_value("Mist").run()
+    assert not at.exception and asked[-1] == "FINE MPUV"
+    _control(at, "cfd_scenario").set_value("Free burn").run()
+    assert not at.exception, "a held field that the new scenario does not offer must not crash"
+    assert asked[-1] != "FINE MPUV", "a free burn has no particles to show"
