@@ -75,7 +75,7 @@ def core_window_m(design: Design) -> tuple[float, float]:
     position instead, so it always contains what it is meant to zoom to.
     """
     half_active = design.active_length_m / 2.0
-    target_far_edge = design.fire.target_x_m + design.fire.footprint.length_m
+    target_far_edge = design.fire.target_x_m + design.fire.footprint.width_m
     right = max(half_active, target_far_edge) + CORE_WINDOW_MARGIN_M
     return -half_active - CORE_WINDOW_MARGIN_M, right
 
@@ -115,10 +115,17 @@ def tunnel_layer(design: Design, geom: SectionGeometry, window_m: tuple[float, f
         target_fill = palette.rgba(FAIL_COLOUR, 0.5 * progress)
     else:
         target_fill = TRANSPARENT
+    # Annex 7 5.2.6 gives the target's width, height and combustibility as the
+    # mock-up's own -- not its along-tunnel length, and the engine itself never
+    # models one either (target_x_m feeds a single-point flux check, nothing wider).
+    # Drawing it fp.width_m long -- the one figure the standard actually states for
+    # it -- is an honest stand-in; drawing it fp.length_m long, as if it were a
+    # second full mock-up, would have been the invented number.
+    target_length_m = fp.width_m
     shapes = [
         _rect(-fp.length_m / 2, fp.length_m / 2, fp.base_height_m, fp.top_height_m,
               line=structure, fillcolor=palette.rgba(STRUCTURE_COLOUR, 0.35)),
-        _rect(design.fire.target_x_m, design.fire.target_x_m + fp.length_m,
+        _rect(design.fire.target_x_m, design.fire.target_x_m + target_length_m,
               fp.base_height_m, fp.top_height_m,
               line={"color": FAIL_COLOUR if target_ignited else STRUCTURE_COLOUR, "dash": "dot"},
               fillcolor=target_fill),
@@ -135,7 +142,7 @@ def tunnel_layer(design: Design, geom: SectionGeometry, window_m: tuple[float, f
                    name="nozzle heads", marker={"symbol": "triangle-down", "size": 7,
                                                 "color": head_colour},
                    hovertemplate="head · x %{x:.1f} m · z %{y:.2f} m<extra></extra>"),
-        go.Scatter(x=[design.fire.target_x_m + fp.length_m / 2, -half_active, x1 - 0.05 * (x1 - x0)],
+        go.Scatter(x=[design.fire.target_x_m + target_length_m / 2, -half_active, x1 - 0.05 * (x1 - x0)],
                    y=[fp.top_height_m + 0.4, crown - 0.5, crown + 0.35], mode="text",
                    text=[f"target — {design.fire.target_distance_m:.0f} m",
                          f"{design.detection.type} {design.detection.threshold_c:.0f} °C",

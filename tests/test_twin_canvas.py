@@ -278,3 +278,28 @@ def test_core_window_is_symmetric_for_the_default_design(design):
     half_active = design.active_length_m / 2.0
     assert x0 == -half_active - tc.CORE_WINDOW_MARGIN_M
     assert x1 == half_active + tc.CORE_WINDOW_MARGIN_M
+
+
+def test_the_target_box_is_drawn_the_targets_own_width_not_the_fire_loads_length(design, geom, trace):
+    """Annex 7 5.2.6 states the target's width, height and combustibility as the
+    mock-up's own -- never its along-tunnel length, and the engine itself never
+    models one either (target_x_m feeds a single-point flux check). Drawing the
+    box fp.length_m long would silently claim a second 10 m mock-up that nothing
+    in the standard or the engine supports.
+    """
+    fp = design.fire.footprint
+    step = trace.steps[0]
+    _, shapes = tc.tunnel_layer(design, geom, tc.WINDOW_M, step)
+    target = _shapes_of_type(shapes, "rect")[1]
+    width = target["x1"] - target["x0"]
+    assert width == pytest.approx(fp.width_m)
+    assert width < fp.length_m
+    assert target["x0"] == pytest.approx(design.fire.target_x_m)
+
+
+def test_core_window_reaches_the_target_by_its_own_width(design):
+    """core_window_m's target-visibility margin must track the same width the
+    target is actually drawn with, not the fire load's length."""
+    fp = design.fire.footprint
+    window = tc.core_window_m(design)
+    assert window[1] >= design.fire.target_x_m + fp.width_m
