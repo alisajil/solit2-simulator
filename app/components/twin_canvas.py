@@ -190,7 +190,8 @@ def mmss(t_s: float) -> str:
 
 
 def sample_steps(trace: RunTrace, stride_s: float) -> list[StepRecord]:
-    """One step per `stride_s`, starting at t = 0 (the engine steps every second)."""
+    """One step per `stride_s`, starting at the trace's first record (t = 1 s: the
+    engine steps every second and advances before it records)."""
     out, next_t = [], 0.0
     for step in trace.steps:
         if step.t_s + 1e-9 >= next_t:
