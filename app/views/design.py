@@ -187,19 +187,21 @@ DESIGNS_DIR = Path("designs")
 NO_SOURCE = "— none —"
 _APPLIED_SOURCE = "_applied_source"
 
-# widget key -> where the value lives in a design file, and the range the form allows.
-# `None` bounds mark a preset name rather than a number.
+# widget key -> where the value lives in a design file, this form's own default, and
+# the range it allows. `None` bounds mark a preset name rather than a number.
 SEEDED_FIELDS = (
-    ("d_tunnel", ("tunnel", "preset"), None, None),
-    ("d_fire", ("fire", "preset"), None, None),
-    ("d_nozzle", ("nozzles", "preset"), None, None),
-    ("d_hydraulics", ("hydraulics", "preset"), None, None),
-    ("d_k", ("nozzles", "k_factor_lpm_bar05"), 0.6, 20.0),
-    ("d_pressure", ("nozzles", "pressure_bar"), 34.5, 140.0),
-    ("d_rows", ("nozzles", "mounting", "rows"), 1, 3),
-    ("d_pitch", ("nozzles", "mounting", "pitch_m"), 0.1, 10.0),
-    ("d_section_len", ("zones", "section_length_m"), 8.0, 100.0),
-    ("d_sections", ("zones", "sections_simultaneous"), 1, 6),
+    ("d_tunnel", ("tunnel", "preset"), "twin_bore_11m", None, None),
+    ("d_fire", ("fire", "preset"), "hgv_150mw", None, None),
+    ("d_nozzle", ("nozzles", "preset"), "single_mode_fine_example", None, None),
+    ("d_hydraulics", ("hydraulics", "preset"), "example", None, None),
+    ("d_k", ("nozzles", "k_factor_lpm_bar05"), 4.1, 0.6, 20.0),
+    ("d_pressure", ("nozzles", "pressure_bar"), 50.0, 34.5, 140.0),
+    ("d_rows", ("nozzles", "mounting", "rows"), 2, 1, 3),
+    ("d_pitch", ("nozzles", "mounting", "pitch_m"), 2.4, 0.1, 10.0),
+    ("d_section_len", ("zones", "section_length_m"), 30.0, 8.0, 100.0),
+    ("d_sections", ("zones", "sections_simultaneous"), 3, 1, 6),
+    ("d_v_lo", ("ventilation", "velocity_range_ms", 0), 3.88, 0.0, 8.0),
+    ("d_v_hi", ("ventilation", "velocity_range_ms", 1), 5.08, 0.0, 8.0),
 )
 
 def _design_files() -> list[str]:
@@ -213,14 +215,19 @@ def _design_files() -> list[str]:
     return sorted(p.name for p in DESIGNS_DIR.glob("*.json"))
 
 
-def _dig(raw: dict, *path: str):
+def _dig(raw: dict, *path):
     """The value at `path`, or None if any step of it is missing."""
     node = raw
     for step in path:
-        if not isinstance(node, dict) or node.get(step) is None:
+        if isinstance(step, int):
+            if not isinstance(node, (list, tuple)) or len(node) <= step:
+                return None
+            node = node[step]
+        elif isinstance(node, dict) and node.get(step) is not None:
+            node = node[step]
+        else:
             return None
-        node = node[step]
-    return node
+    return None if node is None else node
 
 
 def _seed(raw: dict, path: tuple[str, ...], fallback, low, high):
@@ -253,21 +260,20 @@ def _apply_to_widgets(raw: dict) -> None:
     showing 50, so the form disagreed with the file it said it was showing. (AppTest
     does not reproduce this, which is why no unit test catches it.)
     """
-    for key, path, low, high in SEEDED_FIELDS:
+    for key, path, default, low, high in SEEDED_FIELDS:
         found = _dig(raw, *path)
+        # A field this file is silent on returns to the form's default rather than
+        # keeping the last file's value: the caption says every field starts here.
         if found is None:
-            continue
-        st.session_state[key] = (found if low is None
-                                 else min(max(type(low)(found), low), high))
+            st.session_state[key] = default
+        else:
+            st.session_state[key] = (found if low is None
+                                     else min(max(type(low)(found), low), high))
     declared = (raw.get("ahj") or {})
     for field, key, *_rest in AHJ_FIELDS:
         value = declared.get(field)
         # A limit this file does not declare is cleared, not carried over from the last.
         st.session_state[key] = float(value) if value is not None else None
-    velocities = _dig(raw, "ventilation", "velocity_range_ms") or ()
-    if len(velocities) >= 2:
-        st.session_state["d_v_lo"] = min(max(float(velocities[0]), 0.0), 8.0)
-        st.session_state["d_v_hi"] = min(max(float(velocities[1]), 0.0), 8.0)
 
 
 def _render_source_picker() -> dict:

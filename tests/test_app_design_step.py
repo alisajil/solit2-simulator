@@ -111,3 +111,45 @@ def test_a_value_outside_the_form_range_is_clamped_not_crashed(run_view, monkeyp
     assert not at.exception
     assert at.number_input(key="d_pressure").value == 140.0
     assert at.number_input(key="d_sections").value == 6
+
+
+def test_a_file_overwrites_stale_widget_state_rather_than_clearing_the_key(monkeypatch):
+    """The fields are assigned, not released — and this is the one guard on that.
+
+    Deleting a widget's key does not reset it once the widget has rendered in a live
+    browser: with a file declaring 40 bar selected, a pressure field that had already
+    drawn its 50 bar default went on showing 50, so the form silently disagreed with
+    the file it said it was showing. `AppTest` does not reproduce that (a rendered
+    AppTest widget *does* re-read `value=` after its key is popped), so a view-level
+    test cannot catch it. This pins the mechanism instead: whatever is already in
+    widget state is overwritten, so the browser has nothing stale left to show.
+    """
+    stale = {"d_pressure": 50.0, "d_k": 7.7, "d_tunnel": "template",
+             "d_v_lo": 9.9, "d_v_hi": 9.9,
+             "ahj_tvs": 999.0, "ahj_air_temp": 123.0}
+    monkeypatch.setattr(design_view.st, "session_state", stale)
+
+    design_view._apply_to_widgets({
+        "nozzles": {"pressure_bar": 40.0},
+        "ventilation": {"velocity_range_ms": [2.0, 3.0]},
+        "ahj": {"tvs_design_fire_mw": 50.0},
+    })
+
+    assert stale["d_pressure"] == 40.0, "a declared value must replace what was on screen"
+    assert stale["d_v_lo"] == 2.0 and stale["d_v_hi"] == 3.0
+    assert stale["ahj_tvs"] == 50.0, "a declared limit must be carried"
+    assert stale["ahj_air_temp"] is None, "a limit this file omits must be cleared, not kept"
+    # Fields this file is silent on return to the form's default, not the last file's value.
+    assert stale["d_k"] == 4.1
+    assert stale["d_tunnel"] == "twin_bore_11m"
+
+
+def test_every_seeded_widget_is_written_so_none_can_go_stale(monkeypatch):
+    """A field added to the form but forgotten here would keep the previous file's value."""
+    written: dict = {}
+    monkeypatch.setattr(design_view.st, "session_state", written)
+    design_view._apply_to_widgets({})
+
+    expected = {key for key, *_rest in design_view.SEEDED_FIELDS}
+    expected |= {key for _field, key, *_rest in design_view.AHJ_FIELDS}
+    assert set(written) == expected
