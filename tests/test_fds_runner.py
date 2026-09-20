@@ -1,4 +1,5 @@
 import shutil
+import time
 
 import pytest
 
@@ -136,6 +137,8 @@ def test_run_launches_one_mpi_rank_per_mesh(ready, monkeypatch, tmp_path):
     captured = {}
 
     class FakePopen:
+        pid = 1234
+
         def __init__(self, argv, **kwargs):
             captured["argv"] = argv
 
@@ -183,3 +186,81 @@ def test_open_smokeview_names_what_is_missing(monkeypatch, tmp_path):
     monkeypatch.setattr(runner, "smokeview_binary", lambda: "/usr/bin/smv")
     with pytest.raises(FileNotFoundError, match=r"\.smv"):
         runner.open_smokeview(tmp_path)
+
+
+def _unfinished(tmp_path, total_time_s: float = 250.0):
+    """A run dir that looks like FDS got part way and stopped writing."""
+    (tmp_path / "run.out").write_text(
+        f"Time Step       100   March 15, 2026  10:00:00\n"
+        f"Total Time:        {total_time_s:.3f} s\n")
+    (tmp_path / "deck.fds").write_text("&TIME T_END=1000.0 /\n")
+    return tmp_path
+
+
+def test_a_killed_run_is_not_reported_as_still_running(tmp_path):
+    # A killed run leaves its log behind looking exactly like a live one. The
+    # pid `run()` recorded is the evidence that it is gone.
+    _unfinished(tmp_path)
+    (tmp_path / runner.PID_NAME).write_text("999999")     # no such process
+    state = runner.status(tmp_path)
+    assert state["state"] == "failed"
+    assert "gone" in state["detail"] and "250 s of 1000 s" in state["detail"]
+    assert state["progress"] == pytest.approx(0.25), "how far it got is still reported"
+
+
+def test_a_live_pid_keeps_the_run_running(tmp_path):
+    import os
+    _unfinished(tmp_path)
+    (tmp_path / runner.PID_NAME).write_text(str(os.getpid()))
+    assert runner.status(tmp_path)["state"] == "running"
+
+
+def test_a_wedged_run_is_caught_by_its_silence_even_with_live_processes(tmp_path):
+    # The case this exists for: a deadlocked MPI run keeps every process ALIVE.
+    # One real run sat at 935.8 s of 3600 s for seven hours with nine ranks
+    # spinning at 100% CPU while the app reported "running -- 26%".
+    import os
+    _unfinished(tmp_path)
+    (tmp_path / runner.PID_NAME).write_text(str(os.getpid()))   # alive, and still wedged
+    old = time.time() - (runner.STALL_AFTER_S + 600.0)
+    for f in tmp_path.glob("*"):
+        os.utime(f, (old, old))
+    state = runner.status(tmp_path)
+    assert state["state"] == "failed"
+    assert "not advancing" in state["detail"] and "minutes" in state["detail"]
+
+
+def test_a_run_writing_output_now_is_running_however_long_it_has_been_going(tmp_path):
+    _unfinished(tmp_path)
+    assert runner.silent_for_s(tmp_path) < runner.STALL_AFTER_S
+    assert runner.status(tmp_path)["state"] == "running"
+
+
+def test_silence_is_measured_from_the_newest_file_not_just_the_log(tmp_path):
+    # FDS dumps its CSVs on their own schedule, so a log that has gone quiet
+    # while the CSVs keep growing is a slow run, not a dead one.
+    import os
+    _unfinished(tmp_path)
+    old = time.time() - (runner.STALL_AFTER_S + 600.0)
+    for f in tmp_path.glob("*"):
+        os.utime(f, (old, old))
+    (tmp_path / "x_devc.csv").write_text("s\nTime\n0.0\n")      # written just now
+    assert runner.silent_for_s(tmp_path) < 60.0
+    assert runner.status(tmp_path)["state"] == "running"
+
+
+def test_run_records_the_pid_it_launched(ready, monkeypatch, tmp_path):
+    launched = {}
+
+    class _Fake:
+        pid = 4242
+
+    def fake_popen(cmd, **kw):
+        launched["cmd"] = cmd
+        return _Fake()
+
+    monkeypatch.setattr(runner.subprocess, "Popen", fake_popen)
+    deck = tmp_path / "deck.fds"
+    deck.write_text("&MESH IJK=1,1,1, XB=0,1,0,1,0,1 /\n&TIME T_END=10.0 /\n")
+    runner.run(deck, tmp_path)
+    assert (tmp_path / runner.PID_NAME).read_text() == "4242"

@@ -10,9 +10,20 @@ import os
 import re
 import shutil
 import subprocess
+import time
 from pathlib import Path
 
 BIN_ENV = "SOLIT2_FDS_BIN"
+PID_NAME = "fds.pid"
+# How long a run may write nothing before it is reported as not advancing.
+# FDS writes a progress line every 100 time steps; a 220k-cell road-tunnel deck
+# on an 11-core machine managed about one line every five minutes, so this is
+# generous enough not to trip a merely slow run and short enough to catch a
+# wedged one within one sitting.
+# It exists because a deadlocked MPI run keeps every process ALIVE: one real run
+# sat at 935.8 s of 3600 s for seven hours with nine ranks spinning at 100% CPU,
+# and the app reported "running -- 26%" for all of it.
+STALL_AFTER_S = 900.0
 REMOTE_ENV = "SOLIT2_FDS_HOST"
 SMV_ENV = "SOLIT2_SMV_BIN"
 MIN_FREE_BYTES = 10 * 1024**3          # parent spec: 10 GB floor
@@ -78,10 +89,13 @@ def run(deck_path: Path, out_dir: Path) -> str:
         shutil.copy(deck_path, local_deck)
     ranks = max(mesh_count(local_deck), 1)
     with (out_dir / LOG_NAME).open("w") as log:
-        subprocess.Popen([shutil.which("mpiexec"), "-np", str(ranks),
-                          _binary(), local_deck.name],
-                         cwd=out_dir, stdout=log, stderr=subprocess.STDOUT,
-                         start_new_session=True)
+        process = subprocess.Popen([shutil.which("mpiexec"), "-np", str(ranks),
+                                    _binary(), local_deck.name],
+                                   cwd=out_dir, stdout=log, stderr=subprocess.STDOUT,
+                                   start_new_session=True)
+    # So `status` can tell "still going" from "gone". A run launched from the
+    # terminal writes no pid file, which is why `status` also watches the clock.
+    (out_dir / PID_NAME).write_text(str(process.pid))
     return out_dir.name
 
 
@@ -114,6 +128,39 @@ def fds_version(run_dir: Path) -> str | None:
     return found.group(1) if found else None
 
 
+def _launcher_alive(run_dir: Path) -> bool | None:
+    """Whether the process `run()` launched is still there; None if unknown.
+
+    Unknown covers a run launched from the terminal, or one whose pid was
+    recycled onto another process -- neither is evidence either way, and this
+    returns None rather than guessing at it.
+    """
+    pid_file = Path(run_dir) / PID_NAME
+    if not pid_file.exists():
+        return None
+    try:
+        pid = int(pid_file.read_text().strip())
+    except ValueError:
+        return None
+    try:
+        os.kill(pid, 0)          # signal 0 tests for existence, sends nothing
+    except ProcessLookupError:
+        return False
+    except PermissionError:      # alive, owned by someone else
+        return True
+    return True
+
+
+def silent_for_s(run_dir: Path, now_s: float | None = None) -> float | None:
+    """Seconds since this run last wrote ANY of its own output, or None if it
+    has written nothing. Every file counts, not just the log: FDS dumps its
+    CSVs on their own schedule, so the newest write is the honest signal."""
+    times = [p.stat().st_mtime for p in Path(run_dir).glob("*") if p.is_file()]
+    if not times:
+        return None
+    return (time.time() if now_s is None else now_s) - max(times)
+
+
 def status(run_dir: Path) -> dict:
     """Progress from FDS's own log, against the deck's T_END."""
     log = log_path(run_dir)
@@ -132,14 +179,29 @@ def status(run_dir: Path) -> dict:
         return {"state": "failed", "progress": 0.0,
                 "detail": "no deck.fds carrying a T_END to measure progress against"}
     elapsed = _TOTAL_TIME.findall(text)
+    progress = min(float(elapsed[-1]) / float(end.group(1)), 1.0) if elapsed else 0.0
+    # A run is only "running" while something says it still is. Neither check
+    # below can be skipped: a killed run leaves a live-looking log behind, and a
+    # DEADLOCKED run leaves live processes behind, so one catches what the other
+    # cannot. Reported as failed rather than as a fourth state, because what a
+    # caller does with it is exactly what it does with any unfinished run --
+    # read the partial output and say it is incomplete.
+    if _launcher_alive(run_dir) is False:
+        return {"state": "failed", "progress": progress,
+                "detail": f"the FDS process is gone and never reported success; it stopped "
+                          f"at {float(elapsed[-1]):.0f} s of {float(end.group(1)):.0f} s"
+                          if elapsed else "the FDS process is gone and never started stepping"}
+    silence_s = silent_for_s(run_dir)
+    if silence_s is not None and silence_s > STALL_AFTER_S:
+        return {"state": "failed", "progress": progress,
+                "detail": f"no output for {silence_s / 60:.0f} minutes, so the run is not "
+                          f"advancing; its processes may still be alive but wedged"}
     if not elapsed:
         # A run launched seconds ago has an open log and no time step in it yet.
         # Calling that "failed" made `run --engine fds` impossible to complete.
         return {"state": "running", "progress": 0.0,
                 "detail": "launched; no simulated time reported yet"}
-    return {"state": "running",
-            "progress": min(float(elapsed[-1]) / float(end.group(1)), 1.0),
-            "detail": ""}
+    return {"state": "running", "progress": progress, "detail": ""}
 
 
 def smokeview_binary() -> str | None:

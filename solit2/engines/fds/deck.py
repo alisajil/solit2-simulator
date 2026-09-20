@@ -136,8 +136,8 @@ def _time(design: Design, t_end_s: float | None = None) -> list[str]:
 
     `zones.duration_min` is how long the system discharges, and it sizes the
     water tank (`hydraulics.size_system`) and the cost index. Editing it to cut
-    a CFD run short would shrink the tank -- 60 min to 20 min takes the Orange
-    Gate baseline from 92.4 m3 to 30.8 m3 -- and break Annex 7 5.2.8's
+    a CFD run short would shrink the tank -- on a 2175 lpm system, 60 min to
+    20 min takes it from 92.4 m3 to 30.8 m3 -- and break Annex 7 5.2.8's
     30-minute minimum discharge. The simulated window is a property of the
     run, not of the system, so it is a separate knob.
     """
