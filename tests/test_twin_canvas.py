@@ -151,3 +151,14 @@ def test_figure_honours_the_window_and_initial_frame(design, trace):
     fig = tc.figure(design, trace, window_m=tc.CORE_WINDOW_M, initial_frame=2)
     assert list(fig.layout.xaxis.range) == list(tc.CORE_WINDOW_M)
     assert fig.layout.sliders[0].active == 2
+
+
+def test_the_cfd_scale_starts_just_off_black():
+    """Streamlit substitutes near-black in a dark theme, which repainted the coldest
+    cells in an accent colour — an ambient tunnel then read as the hottest thing on
+    screen. Starting a shade above black leaves nothing for it to rewrite."""
+    stops = tc.cfd_scale("TEMPERATURE")
+    positions = [p for p, _ in stops]
+    assert positions == sorted(positions) and positions[0] == 0.0 and positions[-1] == 1.0
+    assert not any(tc._is_near_black(c) for _, c in stops)
+    assert stops[-1][1] == "#fcffa4", "the warm end of Inferno must be untouched"

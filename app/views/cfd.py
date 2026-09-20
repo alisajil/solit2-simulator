@@ -117,7 +117,8 @@ def _canvas(design: Design, trace: RunTrace, run_dir: Path, run_state: str) -> N
             if slice_ is None:
                 st.info(_missing_slice_note(run_state, label))
                 continue
-            st.plotly_chart(twin_canvas.figure(design, trace, cfd=slice_), key=f"cfd_{quantity}")
+            st.plotly_chart(twin_canvas.figure(design, trace, cfd=slice_),
+                            key=f"cfd_{quantity}", theme=None)
             st.caption(_slice_caption(run_state, slice_))
 
 

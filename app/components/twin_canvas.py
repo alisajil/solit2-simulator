@@ -12,6 +12,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
+import plotly.colors as pcolors
 import plotly.graph_objects as go
 
 from solit2.engines.fds.deck import CORE_M, WINDOW_M
@@ -34,6 +35,7 @@ FAIL_COLOUR = "#C4452B"
 STRUCTURE_COLOUR = "#8A94A6"
 IDLE_HEAD_COLOUR = "#8A94A6"
 TRANSPARENT = "rgba(0,0,0,0)"
+_OFF_BLACK = "#0B0614"
 CORE_WINDOW_M = CORE_M
 
 __all__ = ["Layer", "WINDOW_M", "CORE_WINDOW_M", "TEMP_SCALE", "TEMP_MIN_C", "TWIN_FRAME_STRIDE_S",
@@ -206,10 +208,27 @@ def nearest_step(trace: RunTrace, t_s: float) -> StepRecord:
     return min(trace.steps, key=lambda s: abs(s.t_s - t_s))
 
 
+def _is_near_black(colour: str) -> bool:
+    c = colour.lstrip("#")
+    return len(c) == 6 and sum(int(c[i:i + 2], 16) for i in (0, 2, 4)) < 40
+
+
+def cfd_scale(quantity: str) -> list[list]:
+    """The named scale with any near-black stop nudged just off black.
+
+    Streamlit substitutes near-black for an accent colour when it renders a Plotly
+    figure in a dark theme. Inferno starts at #000004, so the coldest cells came out
+    bright purple and an ambient tunnel read as the hottest thing on screen. Starting
+    a shade above black keeps the ramp intact and leaves nothing for it to rewrite.
+    """
+    stops = pcolors.get_colorscale(CFD_SCALES.get(quantity, "Viridis"))
+    return [[p, _OFF_BLACK if _is_near_black(c) else c] for p, c in stops]
+
+
 def cfd_layer(slice_: Slice, frame_index: int) -> Layer:
     heat = go.Heatmap(
         x=slice_.x_m, y=slice_.z_m, z=slice_.frames[frame_index], name=slice_.quantity,
-        colorscale=CFD_SCALES.get(slice_.quantity, "Viridis"),
+        colorscale=cfd_scale(slice_.quantity),
         zmin=float(slice_.frames.min()), zmax=float(slice_.frames.max()),
         # Translucent so the mock-up, heads and instrument masts stay readable underneath:
         # the CFD field is laid over the twin, not in place of it.

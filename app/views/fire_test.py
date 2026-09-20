@@ -78,7 +78,7 @@ def render() -> None:
     window = twin_canvas.CORE_WINDOW_M if zoom else twin_canvas.WINDOW_M
     fig = twin_canvas.figure(design, trace, initial_frame=k, window_m=window,
                              target_ignited=bool(result.criteria["target_ignited"].value))
-    st.plotly_chart(fig, key="twin_canvas")
+    st.plotly_chart(fig, key="twin_canvas", theme=None)
     st.caption("▶ Play runs the twin on its own clock inside the picture; the Test clock "
                "slider above sets the instant the readouts describe.")
 
