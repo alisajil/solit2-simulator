@@ -406,9 +406,14 @@ def _stations(design: Design, geom: SectionGeometry) -> list[str]:
 
 
 def _output() -> list[str]:
+    # Four centreline slices feed the twin canvas: gas temperature and axial
+    # velocity as before, soot density for the smoke layer, and the water mass
+    # per unit volume of the FINE particle class for the mist layer.
     return [f"&DUMP DT_DEVC={DEVC_DT_S:.1f}, DT_HRR={DEVC_DT_S:.1f} /",
             "&SLCF PBY=0.0, QUANTITY='TEMPERATURE' /",
-            "&SLCF PBY=0.0, QUANTITY='U-VELOCITY' /", ""]
+            "&SLCF PBY=0.0, QUANTITY='U-VELOCITY' /",
+            "&SLCF PBY=0.0, QUANTITY='SOOT DENSITY' /",
+            "&SLCF PBY=0.0, QUANTITY='MPUV', PART_ID='FINE' /", ""]
 
 
 def generate(design: Design, dx_m: float = DX_M,

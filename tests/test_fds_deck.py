@@ -341,3 +341,10 @@ def test_the_spray_particle_count_is_set_and_far_below_the_fds_default():
     prop = next(ln for ln in text.splitlines() if ln.startswith("&PROP"))
     assert f"PARTICLES_PER_SECOND={deck.PARTICLES_PER_SECOND}" in prop
     assert deck.PARTICLES_PER_SECOND < 5000, "must stay below the FDS default"
+
+
+def test_output_carries_centreline_slices_for_temperature_smoke_and_mist():
+    text = deck.generate(Design.load("examples/designs/road-tunnel-twin-bore.json"))
+    assert "&SLCF PBY=0.0, QUANTITY='TEMPERATURE' /" in text
+    assert "&SLCF PBY=0.0, QUANTITY='SOOT DENSITY' /" in text
+    assert "&SLCF PBY=0.0, QUANTITY='MPUV', PART_ID='FINE' /" in text

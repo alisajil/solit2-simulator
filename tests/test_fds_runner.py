@@ -153,3 +153,33 @@ def test_mesh_count_reads_the_deck(tmp_path):
     deck = tmp_path / "d.fds"
     deck.write_text("&HEAD /\n&MESH a /\n&MESH b /\n&MESH c /\n&TAIL /\n")
     assert runner.mesh_count(deck) == 3
+
+
+def test_smokeview_binary_prefers_the_env_var_then_path(monkeypatch, tmp_path):
+    fake = tmp_path / "smokeview"
+    fake.write_text("")
+    monkeypatch.setenv(runner.SMV_ENV, str(fake))
+    assert runner.smokeview_binary() == str(fake)
+    monkeypatch.delenv(runner.SMV_ENV)
+    monkeypatch.setattr(runner.shutil, "which",
+                        lambda name: "/usr/bin/smv" if name == "smokeview" else None)
+    assert runner.smokeview_binary() == "/usr/bin/smv"
+
+
+def test_open_smokeview_launches_on_the_run_dirs_smv(monkeypatch, tmp_path):
+    (tmp_path / "abc.smv").write_text("")
+    monkeypatch.setattr(runner, "smokeview_binary", lambda: "/usr/bin/smv")
+    calls = []
+    monkeypatch.setattr(runner.subprocess, "Popen", lambda *a, **kw: calls.append((a, kw)))
+    runner.open_smokeview(tmp_path)
+    (args,), kw = calls[0]
+    assert args == ["/usr/bin/smv", "abc.smv"] and kw["cwd"] == tmp_path
+
+
+def test_open_smokeview_names_what_is_missing(monkeypatch, tmp_path):
+    monkeypatch.setattr(runner, "smokeview_binary", lambda: None)
+    with pytest.raises(FileNotFoundError, match="smokeview"):
+        runner.open_smokeview(tmp_path)
+    monkeypatch.setattr(runner, "smokeview_binary", lambda: "/usr/bin/smv")
+    with pytest.raises(FileNotFoundError, match=r"\.smv"):
+        runner.open_smokeview(tmp_path)

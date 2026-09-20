@@ -14,6 +14,7 @@ from pathlib import Path
 
 BIN_ENV = "SOLIT2_FDS_BIN"
 REMOTE_ENV = "SOLIT2_FDS_HOST"
+SMV_ENV = "SOLIT2_SMV_BIN"
 MIN_FREE_BYTES = 10 * 1024**3          # parent spec: 10 GB floor
 LOG_NAME = "run.out"
 _TOTAL_TIME = re.compile(r"Total Time:\s+([\d.]+)\s*s")
@@ -139,3 +140,26 @@ def status(run_dir: Path) -> dict:
     return {"state": "running",
             "progress": min(float(elapsed[-1]) / float(end.group(1)), 1.0),
             "detail": ""}
+
+
+def smokeview_binary() -> str | None:
+    """`$SOLIT2_SMV_BIN` if it points at a file, else `smokeview` on PATH."""
+    explicit = os.environ.get(SMV_ENV)
+    if explicit and Path(explicit).exists():
+        return explicit
+    return shutil.which("smokeview")
+
+
+def open_smokeview(run_dir: Path) -> None:
+    """Open the run's `.smv` in the desktop Smokeview, detached.
+
+    Smokeview is a GL desktop application; it is launched beside the app, not
+    embedded in it. Raises `FileNotFoundError` naming the missing piece.
+    """
+    binary = smokeview_binary()
+    if binary is None:
+        raise FileNotFoundError(f"no smokeview binary on PATH and {SMV_ENV} is not set")
+    smv = sorted(Path(run_dir).glob("*.smv"))
+    if not smv:
+        raise FileNotFoundError(f"no .smv file in {run_dir} yet")
+    subprocess.Popen([binary, smv[0].name], cwd=Path(run_dir), start_new_session=True)
