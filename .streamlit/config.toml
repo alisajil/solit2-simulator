@@ -1,0 +1,33 @@
+[theme]
+font = "IBM Plex Sans, sans-serif"
+headingFont = "IBM Plex Sans, sans-serif"
+codeFont = "IBM Plex Mono, monospace"
+baseRadius = "0.375rem"
+buttonRadius = "0.375rem"
+metricValueFontSize = "1.6rem"
+# Inferno, so Streamlit-native sequential charts match the twin's temperature scale.
+chartSequentialColors = ["#000004", "#1B0C41", "#4A0C6B", "#781C6D", "#A52C60",
+                         "#CF4446", "#ED6925", "#FB9B06", "#F7D13D", "#FCFFA4"]
+
+[theme.light]
+backgroundColor = "#F3F5F8"
+secondaryBackgroundColor = "#E6EAF0"
+textColor = "#1C2432"
+primaryColor = "#1D8F8A"
+borderColor = "#CBD3DE"
+redColor = "#C4452B"
+greenColor = "#2E8B57"
+orangeColor = "#C98A1E"
+
+[theme.dark]
+backgroundColor = "#1B2230"
+secondaryBackgroundColor = "#242D3D"
+textColor = "#E4E9F0"
+primaryColor = "#3FB8B0"
+borderColor = "#34405A"
+redColor = "#E0654A"
+greenColor = "#4FB57C"
+orangeColor = "#E0A73A"
+
+[server]
+headless = true

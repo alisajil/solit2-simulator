@@ -6,7 +6,7 @@
       "runtimeExecutable": "/bin/zsh",
       "runtimeArgs": [
         "-c",
-        "export PATH=\"$HOME/FDS/native/bin:/opt/homebrew/bin:$PATH\"; exec uv run streamlit run app/streamlit_app.py --server.headless true"
+        "export PATH=\"$HOME/FDS/native/bin:$HOME/FDS/FDS6/smvbin:/opt/homebrew/bin:$PATH\"; exec uv run streamlit run app/streamlit_app.py --server.headless true"
       ],
       "port": 8501
     }
