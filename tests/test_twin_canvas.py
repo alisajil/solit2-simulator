@@ -117,10 +117,12 @@ def test_mmss_formats_the_test_clock():
     assert tc.mmss(0) == "00:00" and tc.mmss(90) == "01:30" and tc.mmss(3599.6) == "60:00"
 
 
-def test_sample_steps_takes_one_step_per_stride_starting_at_zero(trace):
+def test_sample_steps_takes_one_step_per_stride_from_the_first_recorded_step(trace):
     steps = tc.sample_steps(trace, 30.0)
     t_end = trace.steps[-1].t_s
-    assert steps[0].t_s == 0.0 and len(steps) == int(t_end // 30.0) + 1
+    # run_once advances by DT_S before recording, so the trace opens at t = 1 s, not 0.
+    assert steps[0] is trace.steps[0]
+    assert len(steps) == int(t_end // 30.0) + 1
     assert all(b.t_s - a.t_s == pytest.approx(30.0, abs=1.0) for a, b in zip(steps, steps[1:]))
 
 

@@ -9,7 +9,6 @@ the engine, `STATIONS` and the FDS deck share.
 """
 from __future__ import annotations
 
-import dataclasses
 import math
 from typing import Any
 
@@ -191,18 +190,11 @@ def mmss(t_s: float) -> str:
 
 
 def sample_steps(trace: RunTrace, stride_s: float) -> list[StepRecord]:
-    """One step per `stride_s`, starting at t = 0.
-
-    `run_once` advances the model by `DT_S` before it records the first
-    `StepRecord`, so `trace.steps[0].t_s` is one engine tick (1 s) after the
-    true start, never 0.0 itself. That first recorded step stands in for the
-    t = 0 frame, so its reported clock is relabelled to 0.0; every later
-    bucket keeps the trace's own `t_s`.
-    """
+    """One step per `stride_s`, starting at t = 0 (the engine steps every second)."""
     out, next_t = [], 0.0
     for step in trace.steps:
         if step.t_s + 1e-9 >= next_t:
-            out.append(dataclasses.replace(step, t_s=next_t) if next_t == 0.0 else step)
+            out.append(step)
             next_t += stride_s
     return out
 
