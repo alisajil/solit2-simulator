@@ -15,6 +15,7 @@ from pathlib import Path
 import streamlit as st
 
 from app import state
+from app.components import overview
 from solit2.engines.reduced.geometry import section_geometry
 from solit2.engines.reduced.hydraulics import size_system
 from solit2.schema.design import Design
@@ -29,7 +30,8 @@ def _render_summary(raw: dict) -> None:
     except Exception as exc:  # noqa: BLE001 -- shown inline, so the user can fix the input
         st.caption(f"Not a valid design yet: {exc}")
         return
-    hyd = size_system(design, section_geometry(design))
+    geom = section_geometry(design)
+    hyd = size_system(design, geom)
     per_head_lpm = design.nozzles.k_factor_lpm_bar05 * design.nozzles.pressure_bar ** 0.5
     cols = st.columns(6)
     cols[0].metric("Active heads", f"{hyd.active_heads}")
@@ -38,6 +40,7 @@ def _render_summary(raw: dict) -> None:
     cols[3].metric("Pump power", f"{hyd.power_kw:.0f} kW")
     cols[4].metric("Tank", f"{hyd.tank_m3:.1f} m³")
     cols[5].metric("Density", f"{hyd.density_mm_min:.2f} mm/min")
+    st.plotly_chart(overview.figure(design, geom), key="design_overview", theme=None)
 
 
 def render() -> None:
