@@ -20,6 +20,7 @@ from solit2.schema.presets import EXAMPLE_PRESET_DIR, PRESET_DIR, load_preset
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PACKAGE_DIR = REPO_ROOT / "solit2"
+APP_DIR = REPO_ROOT / "app"
 EXAMPLES_DIR = REPO_ROOT / "examples"
 EXAMPLE_DESIGN = "examples/designs/road-tunnel-twin-bore.json"
 
@@ -64,7 +65,9 @@ SKIP_DIRS = {"__pycache__", ".pytest_cache", ".ruff_cache"}
 
 
 def _package_files() -> list[Path]:
-    return sorted(p for p in PACKAGE_DIR.rglob("*")
+    # `app/` is scanned too: it is now the primary surface, and a vendor name reaching
+    # a screen is exactly what this rule exists to prevent.
+    return sorted(p for root in (PACKAGE_DIR, APP_DIR) for p in root.rglob("*")
                   if p.is_file() and not SKIP_DIRS & set(p.parts))
 
 

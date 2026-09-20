@@ -46,6 +46,18 @@ def _verdict(result: Result) -> None:
         f'<div class="verdict {cls}"><span class="verdict-label">{label}</span>'
         f'<span class="verdict-score">score {result.score["total"]:.2f} / 10</span>'
         f'<span class="verdict-note">{note}</span></div>', unsafe_allow_html=True)
+    _calibration(result)
+
+
+def _calibration(result: Result) -> None:
+    """What the number rests on. INDEPENDENCE rule 3: a result states this itself.
+
+    Without it a green PASS reads as a measurement, when it is an extrapolation from an
+    engine fitted against reference cases that used a different nozzle.
+    """
+    note = result.meta.get("calibration_note")
+    if note:
+        st.caption(f"Tier 1 — reduced-order prediction, not a measurement. {note}")
 
 
 def _chips(result: Result) -> None:

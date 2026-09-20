@@ -121,3 +121,51 @@ def test_a_failed_run_with_no_slice_says_the_run_died_not_that_the_field_is_abse
     notes = [i.value for i in at.info]
     assert any("did not finish and never wrote" in n for n in notes), notes
     assert not any("holds no" in n for n in notes), notes
+
+
+def test_an_unreadable_slice_is_reported_without_taking_the_step_down(
+        run_view, monkeypatch, tmp_path):
+    """A real run can hold meshes the reader cannot stitch; that must not crash the page."""
+    from app.views import cfd
+
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    _fake_run(run_dir, "Total Time: 1200.0 s\nSTOP: FDS completed successfully\n")
+
+    def unreadable(*a, **kw):
+        raise ValueError("meshes on the centreline do not share a z grid")
+
+    monkeypatch.setattr(cfd, "_load_slice", unreadable)
+    monkeypatch.setattr(fds_reader, "read", lambda d, design: envelope.run(Design.load(EXAMPLE)))
+    at = run_view("cfd")
+
+    assert not at.exception
+    assert any("could not be read" in w.value for w in at.warning)
+
+
+def test_a_shortened_tier_two_window_is_named_beside_the_correlation(
+        run_view, monkeypatch, tmp_path):
+    """A truncated FDS run is biased toward passing; the table must say the windows differ.
+
+    Peak and dose criteria (max_air_temp_c, max_fed, max_co_ppm, exposure duration) are
+    evaluated over whatever trace exists, so comparing a 20-minute Tier 2 against a
+    full-length Tier 1 without saying so overstates the agreement.
+    """
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    _fake_run(run_dir, "Total Time: 1200.0 s\nSTOP: FDS completed successfully\n", t_end=1200.0)
+    monkeypatch.setattr(fds_reader, "read", lambda d, design: envelope.run(Design.load(EXAMPLE)))
+    at = run_view("cfd")
+
+    assert not at.exception
+    warnings = [w.value for w in at.warning]
+    assert any("not comparable" in w and "1200" in w for w in warnings), warnings
+
+
+def test_a_full_length_window_carries_no_caveat(monkeypatch, tmp_path):
+    from app.views import cfd
+
+    design = Design.load(EXAMPLE)
+    run_dir = tmp_path / "full"
+    run_dir.mkdir()
+    full_s = design.zones.duration_min * 60.0
+    (run_dir / "deck.fds").write_text(f"&HEAD CHID='x' /\n&TIME T_END={full_s} /\n")
+    assert cfd.window_caveat(run_dir, design) is None

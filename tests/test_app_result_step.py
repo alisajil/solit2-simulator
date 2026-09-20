@@ -79,3 +79,17 @@ def test_a_failed_gate_never_reads_pass(monkeypatch, tmp_path):
     banner = next(m.value for m in at.markdown if 'class="verdict' in m.value)
     assert "FAIL" in banner and "PASS" not in banner
     assert f'{len(result.score["criteria_unset"])} criteria not judged' in banner
+
+
+def test_the_verdict_states_what_the_engine_rests_on(run_view, monkeypatch, tmp_path):
+    """INDEPENDENCE rule 3: a green PASS must not read as a measurement.
+
+    The engine's constants were fitted against reference cases that used a different
+    nozzle, so every number here is an extrapolation until a full-scale test exists.
+    The result carries that sentence in its own meta; the screen has to show it.
+    """
+    _redirect_history(monkeypatch, tmp_path)
+    at = run_view("result")
+    captions = [c.value for c in at.caption]
+    assert any("not a measurement" in c for c in captions), captions
+    assert any(at.session_state["result"].meta["calibration_note"] in c for c in captions)

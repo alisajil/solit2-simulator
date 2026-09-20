@@ -135,7 +135,9 @@ def instrument_layer(design: Design, geom: SectionGeometry, step: StepRecord,
     traces = [
         go.Scatter(x=xs, y=zs, mode="markers", name="thermocouples", text=hover, hoverinfo="text",
                    marker={"size": 8, "color": temps, "colorscale": TEMP_SCALE, "cmin": TEMP_MIN_C,
-                           "cmax": cmax_c, "colorbar": {"title": "°C", "x": 1.02, "len": 0.8}}),
+                           "cmax": cmax_c,
+                           "colorbar": {"title": {"text": "gas<br>°C", "side": "top"},
+                                        "x": 1.02, "len": 0.8, "thickness": 14}}),
         go.Scatter(x=gx, y=gz, mode="markers", name="gas · flux · visibility", text=ghover,
                    hoverinfo="text", marker={"symbol": "diamond", "size": 11, "color": MIST_COLOUR,
                                              "line": {"color": "#1C2432", "width": 1}}),
@@ -209,7 +211,11 @@ def cfd_layer(slice_: Slice, frame_index: int) -> Layer:
         x=slice_.x_m, y=slice_.z_m, z=slice_.frames[frame_index], name=slice_.quantity,
         colorscale=CFD_SCALES.get(slice_.quantity, "Viridis"),
         zmin=float(slice_.frames.min()), zmax=float(slice_.frames.max()),
-        colorbar={"title": f"{slice_.quantity} ({slice_.unit})", "x": 1.12, "len": 0.8},
+        # Translucent so the mock-up, heads and instrument masts stay readable underneath:
+        # the CFD field is laid over the twin, not in place of it.
+        opacity=0.72, zsmooth="best",
+        colorbar={"title": {"text": f"{slice_.quantity}<br>({slice_.unit})", "side": "top"},
+                  "x": 1.16, "len": 0.8, "thickness": 14},
         hovertemplate="x %{x:.1f} m · z %{y:.1f} m · %{z:.3g}<extra></extra>")
     return [heat], []
 

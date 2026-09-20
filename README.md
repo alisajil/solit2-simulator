@@ -144,10 +144,22 @@ recommendations, and safe to ignore.
 
     uv run streamlit run app/streamlit_app.py
 
-Opens the Streamlit UI: Design (build a configuration), Run (execute the
-engine), Tunnel (thermal-field visualization), Leaderboard (run history),
-Verify (Tier 2 FDS pre-flight, deck generation, run, and a Tier 1 vs Tier 2 comparison), Reports
-(test-plan and correlation markdown, matching `solit2 report`).
+Opens a five-step wizard, each step computed from the one before it -- nothing
+is downloaded or uploaded in between:
+
+1. **Design** -- pick presets and the parameters an engineer varies, with a live
+   hydraulics summary of what they add up to.
+2. **Result** -- the Tier 1 verdict, which runs on arrival: banner, per-criterion
+   chips, peaks, acceptance table, timeseries and the run-history leaderboard.
+3. **Fire test** -- the worst case replayed as a to-scale digital twin: HMI
+   readouts and status lamps, an animated tunnel section with the mock-up,
+   target, heads, mist and Annex 7 instrument masts, an event timeline and
+   per-station temperatures.
+4. **CFD verify** -- Tier 2. Pre-flight, a simulated-window picker, the FDS run
+   in the background with live progress, its temperature/smoke/mist slices drawn
+   on the same twin, a button to open the desktop Smokeview, and Tier 1 vs Tier 2.
+5. **Reports** -- the test plan, a correlation against an automatically built
+   test-facility twin of the same system, and every export.
 
 Views call the engine in-process -- the same Python functions the CLI
 (`solit2 run`, `solit2 validate`, `solit2 report`) uses. There is no

@@ -38,6 +38,11 @@ def figure(events: dict, t_end_s: float) -> go.Figure:
 def render(events: dict, criteria: dict[str, Criterion], t_end_s: float) -> None:
     st.plotly_chart(figure(events, t_end_s), key="timeline")
     failed = [name for name, c in criteria.items() if c.status == "fail"]
+    unset = [name for name, c in criteria.items() if c.status == "unset"]
     if failed:
         chips = "".join(f'<span class="chip fail">{n}</span>' for n in failed)
         st.markdown(f"Failed criteria: {chips}", unsafe_allow_html=True)
+    # Without this, a run judged against almost nothing looks like a clean sheet.
+    if unset:
+        chips = "".join(f'<span class="chip unset">{n}</span>' for n in unset)
+        st.markdown(f"Not judged — no AHJ limit set: {chips}", unsafe_allow_html=True)

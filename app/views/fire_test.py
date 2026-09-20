@@ -58,6 +58,8 @@ def _station_chart(trace: RunTrace) -> None:
 
 def render() -> None:
     st.header("Fire test — digital twin")
+    st.caption("A Tier 1 reduced-order prediction replayed to scale — not a measurement "
+               "and not a record of a test that was run.")
     design = state.get_design()
     if design is None:
         st.info("Build a design first.")

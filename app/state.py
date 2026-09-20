@@ -61,5 +61,9 @@ def get_tier2_result() -> Result | None:
     return st.session_state.get(_TIER2_KEY)
 
 
-def set_tier2_result(result: Result) -> None:
+def set_tier2_result(result: Result | None) -> None:
+    """`None` clears it — a relaunched run invalidates the previous run's result."""
+    if result is None:
+        st.session_state.pop(_TIER2_KEY, None)
+        return
     st.session_state[_TIER2_KEY] = result

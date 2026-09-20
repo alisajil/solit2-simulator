@@ -6,6 +6,7 @@ from __future__ import annotations
 import streamlit as st
 
 from app import state
+from app.views import cfd
 from app.views.result import ensure_result
 from solit2.engines.reduced import envelope
 from solit2.reports import correlation, test_plan, twin
@@ -76,6 +77,11 @@ def render() -> None:
         st.caption("Run the CFD step to add the Tier 2 comparison.")
     else:
         tiers = correlation.render(result, tier2)
+        # The caveat travels with the export: off-screen the table loses all its context.
+        caveat = cfd.window_caveat(cfd.run_dir_for(design), design)
+        if caveat:
+            tiers = f"{tiers}\n\n> **{caveat}**\n"
+            st.warning(caveat)
         st.markdown(tiers)
         exports += [("correlation-tier1-vs-tier2.md", tiers, "Tier 1 vs Tier 2 (.md)"),
                     (f"{name}-fds-result.json", tier2.model_dump_json(indent=2),

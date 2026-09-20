@@ -61,7 +61,7 @@ def mesh_count(deck_path: Path) -> int:
 def run(deck_path: Path, out_dir: Path) -> str:
     """Launch FDS detached, one MPI rank per mesh, and return immediately.
 
-    A run is hours long; the Verify view polls `status()` rather than blocking
+    A run is hours long; the CFD step polls `status()` rather than blocking
     on it, and the CLI does its own waiting.
 
     `mpiexec -np N` with N = the deck's mesh count is the standard FDS mapping:

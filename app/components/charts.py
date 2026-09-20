@@ -1,4 +1,4 @@
-"""Plotly and pandas builders shared by the Run and Tunnel views."""
+"""Plotly and pandas builders shared by the wizard steps."""
 from __future__ import annotations
 
 import pandas as pd

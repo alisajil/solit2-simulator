@@ -68,6 +68,8 @@ def _start_controls(design: Design, run_dir: Path, verb: str) -> None:
         deck_path = run_dir / "deck.fds"
         deck_path.write_text(fds_deck.generate(
             design, t_end_s=None if minutes is None else minutes * 60.0))
+        # The previous run's Tier 2 result describes a deck that no longer exists here.
+        state.set_tier2_result(None)
         fds_runner.run(deck_path, run_dir)
         st.rerun()
 
@@ -105,7 +107,13 @@ def _missing_slice_note(run_state: str, label: str) -> str:
 def _canvas(design: Design, trace: RunTrace, run_dir: Path, run_state: str) -> None:
     for tab, (label, quantity) in zip(st.tabs([label for label, _ in QUANTITIES]), QUANTITIES):
         with tab:
-            slice_ = _load_slice(str(run_dir), quantity, stamp(run_dir))
+            try:
+                slice_ = _load_slice(str(run_dir), quantity, stamp(run_dir))
+            except (OSError, ValueError) as exc:
+                # A real run can carry meshes this reader cannot stitch. Say so and keep
+                # the other quantities usable rather than taking the whole step down.
+                st.warning(f"This run's {label.lower()} slice could not be read: {exc}")
+                continue
             if slice_ is None:
                 st.info(_missing_slice_note(run_state, label))
                 continue
@@ -122,6 +130,32 @@ def _smokeview(run_dir: Path) -> None:
                    f"and a smokeview binary is on PATH (or {fds_runner.SMV_ENV} is set).")
 
 
+def deck_window_s(run_dir: Path) -> float | None:
+    """The T_END the deck was actually run to, read back from the deck itself."""
+    deck = Path(run_dir) / "deck.fds"
+    if not deck.exists():
+        return None
+    match = fds_runner._T_END.search(deck.read_text())
+    return float(match.group(1)) if match else None
+
+
+def window_caveat(run_dir: Path, design: Design) -> str | None:
+    """Named whenever Tier 2 covers less exposure than the design discharges for.
+
+    A shortened FDS window does not shorten the criteria: peak and dose criteria
+    (`max_air_temp_c`, `max_fed`, `max_co_ppm`, exposure duration) are evaluated over
+    whatever trace exists, so a truncated run is biased toward passing. Comparing that
+    column against a full-length Tier 1 without saying so overstates the agreement.
+    """
+    ran_s = deck_window_s(run_dir)
+    full_s = design.zones.duration_min * 60.0
+    if ran_s is None or ran_s >= full_s - 1.0:
+        return None
+    return (f"Tier 2 covers 0–{ran_s:.0f} s of the design's {full_s:.0f} s discharge. "
+            f"Peak and dose criteria are evaluated over that shorter exposure, so they "
+            f"are not comparable with the full-length Tier 1 column.")
+
+
 def _tier2(design: Design, run_dir: Path, tier1: Result) -> None:
     tier2 = state.get_tier2_result()
     if tier2 is None:
@@ -134,6 +168,9 @@ def _tier2(design: Design, run_dir: Path, tier1: Result) -> None:
     st.subheader("Tier 1 vs Tier 2")
     for warning in tier2.warnings:
         st.warning(warning)
+    caveat = window_caveat(run_dir, design)
+    if caveat:
+        st.warning(caveat)
     st.markdown(correlation.render(tier1, tier2))
 
 
