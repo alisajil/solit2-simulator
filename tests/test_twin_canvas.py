@@ -1,8 +1,11 @@
 """Layer functions are pure: every assertion here is on traces/shapes, no browser."""
+import numpy as np
 import pytest
+import plotly.graph_objects as go
 from plotly.basedatatypes import BaseTraceType
 
 from app.components import twin_canvas as tc
+from solit2.engines.fds.slices import Slice
 from solit2.engines.reduced.criteria import STATIONS
 from solit2.engines.reduced.geometry import nozzle_positions, section_geometry
 from solit2.engines.reduced.sim import run_once
@@ -100,3 +103,49 @@ def test_every_layer_returns_plotly_traces(design, geom, trace):
                       tc.fire_layer(design, geom, step, 400.0),
                       tc.mist_layer(design, geom, step)):
         assert all(isinstance(t, BaseTraceType) for t in traces)
+
+
+def _fake_slice(n_frames=30):
+    x = np.linspace(-360.0, 240.0, 11)
+    z = np.linspace(0.0, 7.0, 4)
+    t = np.arange(n_frames, dtype=float) * 10.0
+    frames = np.tile(z[:, None] * 10.0, (n_frames, 1, len(x))) + t[:, None, None]
+    return Slice("TEMPERATURE", "C", x, z, t, frames)
+
+
+def test_mmss_formats_the_test_clock():
+    assert tc.mmss(0) == "00:00" and tc.mmss(90) == "01:30" and tc.mmss(3599.6) == "60:00"
+
+
+def test_sample_steps_takes_one_step_per_stride_starting_at_zero(trace):
+    steps = tc.sample_steps(trace, 30.0)
+    t_end = trace.steps[-1].t_s
+    assert steps[0].t_s == 0.0 and len(steps) == int(t_end // 30.0) + 1
+    assert all(b.t_s - a.t_s == pytest.approx(30.0, abs=1.0) for a, b in zip(steps, steps[1:]))
+
+
+def test_figure_has_one_frame_per_sample_and_a_constant_trace_count(design, trace):
+    fig = tc.figure(design, trace)
+    assert len(fig.frames) == len(tc.sample_steps(trace, tc.TWIN_FRAME_STRIDE_S))
+    n = len(fig.data)
+    assert all(len(f.data) == n and list(f.traces) == list(range(n)) for f in fig.frames)
+    assert fig.frames[3].name == tc.mmss(90.0)
+    assert fig.layout.updatemenus and fig.layout.sliders
+
+
+def test_figure_with_a_slice_leads_with_a_heatmap_on_the_slice_time_base(design, trace):
+    fig = tc.figure(design, trace, cfd=_fake_slice(30))
+    assert isinstance(fig.data[0], go.Heatmap)
+    assert len(fig.frames) == 30
+    assert fig.frames[-1].name == tc.mmss(290.0)
+
+
+def test_figure_caps_cfd_frames(design, trace):
+    fig = tc.figure(design, trace, cfd=_fake_slice(500))
+    assert len(fig.frames) <= tc.CFD_MAX_FRAMES
+
+
+def test_figure_honours_the_window_and_initial_frame(design, trace):
+    fig = tc.figure(design, trace, window_m=tc.CORE_WINDOW_M, initial_frame=2)
+    assert list(fig.layout.xaxis.range) == list(tc.CORE_WINDOW_M)
+    assert fig.layout.sliders[0].active == 2

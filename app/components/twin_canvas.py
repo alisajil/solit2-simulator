@@ -9,14 +9,16 @@ the engine, `STATIONS` and the FDS deck share.
 """
 from __future__ import annotations
 
+import dataclasses
 import math
 from typing import Any
 
 import plotly.graph_objects as go
 
 from solit2.engines.fds.deck import CORE_M, WINDOW_M
+from solit2.engines.fds.slices import Slice
 from solit2.engines.reduced.criteria import INSTRUMENTS, STATIONS
-from solit2.engines.reduced.geometry import SectionGeometry, nozzle_positions
+from solit2.engines.reduced.geometry import SectionGeometry, nozzle_positions, section_geometry
 from solit2.engines.reduced.state import RunTrace, StepRecord
 from solit2.schema.design import Design
 
@@ -36,7 +38,9 @@ TRANSPARENT = "rgba(0,0,0,0)"
 CORE_WINDOW_M = CORE_M
 
 __all__ = ["Layer", "WINDOW_M", "CORE_WINDOW_M", "TEMP_SCALE", "TEMP_MIN_C", "TWIN_FRAME_STRIDE_S",
-           "temp_max_c", "tunnel_layer", "instrument_layer", "fire_layer", "mist_layer"]
+           "temp_max_c", "tunnel_layer", "instrument_layer", "fire_layer", "mist_layer",
+           "CFD_SCALES", "CFD_MAX_FRAMES", "mmss", "sample_steps", "nearest_step", "cfd_layer",
+           "figure"]
 
 
 def temp_max_c(trace: RunTrace) -> float:
@@ -174,3 +178,121 @@ def mist_layer(design: Design, geom: SectionGeometry, step: StepRecord) -> Layer
                              f"radiant transmission {step.mist.tau_mist:.0%}"])
     return [hover], [_rect(-half, half, 0.0, top, line={"width": 0},
                            fillcolor=f"rgba(29,143,138,{alpha:.2f})")]
+
+
+CFD_SCALES = {"TEMPERATURE": "Inferno", "SOOT DENSITY": "Greys", "MPUV": "Blues"}
+CFD_MAX_FRAMES = 120
+FRAME_MS = 150
+
+
+def mmss(t_s: float) -> str:
+    minutes, seconds = divmod(int(round(t_s)), 60)
+    return f"{minutes:02d}:{seconds:02d}"
+
+
+def sample_steps(trace: RunTrace, stride_s: float) -> list[StepRecord]:
+    """One step per `stride_s`, starting at t = 0.
+
+    `run_once` advances the model by `DT_S` before it records the first
+    `StepRecord`, so `trace.steps[0].t_s` is one engine tick (1 s) after the
+    true start, never 0.0 itself. That first recorded step stands in for the
+    t = 0 frame, so its reported clock is relabelled to 0.0; every later
+    bucket keeps the trace's own `t_s`.
+    """
+    out, next_t = [], 0.0
+    for step in trace.steps:
+        if step.t_s + 1e-9 >= next_t:
+            out.append(dataclasses.replace(step, t_s=next_t) if next_t == 0.0 else step)
+            next_t += stride_s
+    return out
+
+
+def nearest_step(trace: RunTrace, t_s: float) -> StepRecord:
+    return min(trace.steps, key=lambda s: abs(s.t_s - t_s))
+
+
+def cfd_layer(slice_: Slice, frame_index: int) -> Layer:
+    heat = go.Heatmap(
+        x=slice_.x_m, y=slice_.z_m, z=slice_.frames[frame_index], name=slice_.quantity,
+        colorscale=CFD_SCALES.get(slice_.quantity, "Viridis"),
+        zmin=float(slice_.frames.min()), zmax=float(slice_.frames.max()),
+        colorbar={"title": f"{slice_.quantity} ({slice_.unit})", "x": 1.12, "len": 0.8},
+        hovertemplate="x %{x:.1f} m · z %{y:.1f} m · %{z:.3g}<extra></extra>")
+    return [heat], []
+
+
+def _instant(design: Design, geom: SectionGeometry, step: StepRecord, cmax_c: float,
+             window_m: tuple[float, float], target_ignited: bool) -> Layer:
+    """Every Tier 1 layer for one step, traces in a fixed order."""
+    traces, shapes = [], []
+    for layer in (tunnel_layer(design, geom, window_m, step, target_ignited),
+                  instrument_layer(design, geom, step, window_m, cmax_c),
+                  fire_layer(design, geom, step, cmax_c),
+                  mist_layer(design, geom, step)):
+        traces += layer[0]
+        shapes += layer[1]
+    return traces, shapes
+
+
+def _cfd_indices(n_frames: int) -> list[int]:
+    if n_frames <= CFD_MAX_FRAMES:
+        return list(range(n_frames))
+    return sorted({round(i * (n_frames - 1) / (CFD_MAX_FRAMES - 1)) for i in range(CFD_MAX_FRAMES)})
+
+
+def _play_menu() -> dict:
+    return {"type": "buttons", "showactive": False, "x": 0.0, "y": 1.14, "xanchor": "left",
+            "buttons": [
+                {"label": "▶ Play", "method": "animate",
+                 "args": [None, {"frame": {"duration": FRAME_MS, "redraw": True},
+                                 "fromcurrent": True, "transition": {"duration": 0}}]},
+                {"label": "❚❚ Pause", "method": "animate",
+                 "args": [[None], {"frame": {"duration": 0, "redraw": False},
+                                   "mode": "immediate"}]}]}
+
+
+def _slider(names: list[str], active: int) -> dict:
+    return {"active": active, "x": 0.12, "len": 0.88, "y": 1.1, "pad": {"t": 0},
+            "currentvalue": {"prefix": "t = ", "visible": True},
+            "steps": [{"label": n, "method": "animate",
+                       "args": [[n], {"frame": {"duration": 0, "redraw": True},
+                                      "mode": "immediate"}]} for n in names]}
+
+
+def figure(design: Design, trace: RunTrace, *, cfd: Slice | None = None, initial_frame: int = 0,
+           window_m: tuple[float, float] = WINDOW_M, target_ignited: bool = False,
+           stride_s: float = TWIN_FRAME_STRIDE_S) -> go.Figure:
+    """The animated twin. Without `cfd` the frames are Tier 1 steps every `stride_s`;
+    with it they follow the slice's own time base and each frame pairs a heatmap with
+    the Tier 1 step nearest in time, so both tiers sit on one picture."""
+    geom, cmax_c = section_geometry(design), temp_max_c(trace)
+    if cfd is None:
+        steps = sample_steps(trace, stride_s)
+        times, cfd_idx = [s.t_s for s in steps], [None] * len(steps)
+    else:
+        cfd_idx = _cfd_indices(len(cfd.t_s))
+        times = [float(cfd.t_s[i]) for i in cfd_idx]
+        steps = [nearest_step(trace, t) for t in times]
+
+    def instant(k: int) -> Layer:
+        traces, shapes = _instant(design, geom, steps[k], cmax_c, window_m, target_ignited)
+        if cfd is not None:
+            traces = cfd_layer(cfd, cfd_idx[k])[0] + traces
+        return traces, shapes
+
+    k0 = min(max(initial_frame, 0), len(steps) - 1)
+    traces0, shapes0 = instant(k0)
+    names = [mmss(t) for t in times]
+    frames = []
+    for k in range(len(steps)):
+        traces_k, shapes_k = instant(k)
+        frames.append(go.Frame(data=traces_k, traces=list(range(len(traces_k))), name=names[k],
+                               layout=go.Layout(shapes=shapes_k)))
+    fig = go.Figure(data=traces0, frames=frames)
+    fig.update_layout(
+        shapes=shapes0, height=540, margin={"l": 10, "r": 10, "t": 60, "b": 10},
+        xaxis={"title": "distance from mock-up centre (m)", "range": list(window_m), "zeroline": False},
+        yaxis={"title": "height (m)", "range": [-0.3, geom.crown_height_m + 1.0]},
+        legend={"orientation": "h", "y": -0.2}, updatemenus=[_play_menu()],
+        sliders=[_slider(names, k0)])
+    return fig
