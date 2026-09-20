@@ -28,3 +28,27 @@ def test_zoom_toggle_and_station_pick_rerender_cleanly(run_view, monkeypatch, tm
     at.toggle(key="twin_zoom").set_value(True).run()
     at.selectbox(key="station").set_value("U45").run()
     assert not at.exception
+
+
+def test_zoom_toggle_uses_a_window_derived_from_the_design_not_a_fixed_constant(
+        run_view, monkeypatch, tmp_path):
+    """`CORE_WINDOW_M` is a fixed constant borrowed from the FDS deck's simulation
+    domain; the zoom toggle must derive its window from the actual design instead,
+    or a design with a wider active zone gets its own heads and mist clipped."""
+    import json
+
+    from app.views import fire_test
+    from tests.conftest import EXAMPLE_DESIGN
+    from solit2.schema.design import Design
+
+    monkeypatch.setattr(history, "DEFAULT_PATH", tmp_path / "h.jsonl")
+    at = run_view("fire_test")
+    at.toggle(key="twin_zoom").set_value(True).run()
+    assert not at.exception
+
+    canvas = next(e for e in at.get("plotly_chart") if e.key == "twin_canvas")
+    rendered_range = tuple(json.loads(canvas.proto.spec)["layout"]["xaxis"]["range"])
+
+    design = Design.load(EXAMPLE_DESIGN)
+    assert rendered_range == fire_test.twin_canvas.core_window_m(design)
+    assert rendered_range != fire_test.twin_canvas.CORE_WINDOW_M

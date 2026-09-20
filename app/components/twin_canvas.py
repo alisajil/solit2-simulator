@@ -47,11 +47,13 @@ IDLE_HEAD_COLOUR = palette.GREY
 TRANSPARENT = palette.TRANSPARENT
 _OFF_BLACK = "#0B0614"          # dark enough to read as the cold end, light enough to keep
 _NEAR_BLACK_SUM = 24            # observed: Streamlit rewrites #000004 but leaves #0B0614 alone
-CORE_WINDOW_M = CORE_M
+CORE_WINDOW_M = CORE_M      # fallback only -- callers zooming to a real design use core_window_m()
+CORE_WINDOW_MARGIN_M = 10.0
 
-__all__ = ["Layer", "WINDOW_M", "CORE_WINDOW_M", "TEMP_SCALE", "TEMP_MIN_C", "TWIN_FRAME_STRIDE_S",
-           "temp_max_c", "tunnel_layer", "instrument_layer", "fire_layer", "mist_layer",
-           "CFD_SCALES", "CFD_MAX_FRAMES", "mmss", "sample_steps", "nearest_step", "cfd_layer",
+__all__ = ["Layer", "WINDOW_M", "CORE_WINDOW_M", "core_window_m", "TEMP_SCALE", "TEMP_MIN_C",
+           "TWIN_FRAME_STRIDE_S", "temp_max_c", "tunnel_layer", "instrument_layer", "fire_layer",
+           "mist_layer", "CFD_SCALES", "CFD_MAX_FRAMES", "mmss", "sample_steps", "nearest_step",
+           "cfd_layer",
            "figure"]
 
 
@@ -60,6 +62,22 @@ def temp_max_c(trace: RunTrace) -> float:
     to the next 100 °C, never below 400 °C so a cool run still reads as cool."""
     peak = max(s.ceiling_temp_c for s in trace.steps)
     return max(400.0, math.ceil(peak / 100.0) * 100.0)
+
+
+def core_window_m(design: Design) -> tuple[float, float]:
+    """The window a "zoom to the fire zone" toggle should actually show.
+
+    `CORE_WINDOW_M` (borrowed from the FDS deck's fixed simulation domain) does not
+    move with the design: a user who widens `section_length_m` or raises
+    `sections_simultaneous` gets an active zone that no longer fits inside that fixed
+    span, so the "zoomed" picture can clip the very heads and mist it exists to show.
+    This derives the window from the design's own `active_length_m` and the target's
+    position instead, so it always contains what it is meant to zoom to.
+    """
+    half_active = design.active_length_m / 2.0
+    target_far_edge = design.fire.target_x_m + design.fire.footprint.length_m
+    right = max(half_active, target_far_edge) + CORE_WINDOW_MARGIN_M
+    return -half_active - CORE_WINDOW_MARGIN_M, right
 
 
 def _rect(x0: float, x1: float, z0: float, z1: float, **style: Any) -> dict:
@@ -88,7 +106,7 @@ def tunnel_layer(design: Design, geom: SectionGeometry, window_m: tuple[float, f
                  step: StepRecord, target_ignited: bool = False) -> Layer:
     x0, x1 = window_m
     crown, fp = geom.crown_height_m, design.fire.footprint
-    half_active = design.zones.section_length_m * design.zones.sections_simultaneous / 2.0
+    half_active = design.active_length_m / 2.0
     structure = {"color": STRUCTURE_COLOUR}
     progress = _target_ignition_progress(step)
     if target_ignited:
@@ -223,7 +241,7 @@ def mist_layer(design: Design, geom: SectionGeometry, step: StepRecord) -> Layer
     decorative animation. Shapes carry no frame-count invariant (a frame replaces
     the whole shapes list), so adding one here does not touch trace indexing.
     """
-    half = design.zones.section_length_m * design.zones.sections_simultaneous / 2.0
+    half = design.active_length_m / 2.0
     top = design.nozzles.mounting.height_above_carriageway_m
     if step.water_lpm <= 0:
         return [go.Scatter(x=[], y=[], mode="markers", name="mist", showlegend=False)], []

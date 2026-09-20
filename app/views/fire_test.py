@@ -75,7 +75,7 @@ def render() -> None:
     hmi.render(steps[k], trace, design, size_system(design, section_geometry(design)))
 
     zoom = st.toggle("Zoom to the fire zone", key="twin_zoom")
-    window = twin_canvas.CORE_WINDOW_M if zoom else twin_canvas.WINDOW_M
+    window = twin_canvas.core_window_m(design) if zoom else twin_canvas.WINDOW_M
     fig = twin_canvas.figure(design, trace, initial_frame=k, window_m=window,
                              target_ignited=bool(result.criteria["target_ignited"].value))
     st.plotly_chart(fig, key="twin_canvas", theme=None)

@@ -243,3 +243,38 @@ def test_steam_appears_above_the_spray_zone_once_evaporation_is_real(design, geo
     assert steam["y0"] == top and steam["y1"] > top
     assert steam["y1"] <= geom.crown_height_m
     assert steam["fillcolor"].startswith("rgba(216,238,236"), steam["fillcolor"]  # palette.STEAM
+
+
+def test_core_window_grows_with_the_configured_active_zone(design):
+    """`CORE_WINDOW_M` is a fixed constant borrowed from the FDS deck's simulation
+    domain; a design with a wider active zone than that constant assumes must not
+    have its own heads and mist clipped by a window that never moved to match it."""
+    bigger = design.model_copy(update={
+        "zones": design.zones.model_copy(update={"section_length_m": 60.0})})
+    assert bigger.active_length_m == 180.0
+
+    default_window = tc.core_window_m(design)
+    bigger_window = tc.core_window_m(bigger)
+    half_active = bigger.active_length_m / 2.0
+
+    assert bigger_window[0] < default_window[0] and bigger_window[1] > default_window[1]
+    assert bigger_window[0] <= -half_active and bigger_window[1] >= half_active
+    # The fixed constant would have clipped this design's own active zone.
+    assert tc.CORE_WINDOW_M[0] > -half_active
+
+
+def test_core_window_always_reaches_the_target(design):
+    """A target far downstream of the active zone must still be inside the window --
+    zooming to the fire zone should never hide the thing the fire is aimed at."""
+    far = design.model_copy(update={
+        "fire": design.fire.model_copy(update={"target_distance_m": 200.0})})
+    window = tc.core_window_m(far)
+    target_far_edge = far.fire.target_x_m + far.fire.footprint.length_m
+    assert window[1] >= target_far_edge
+
+
+def test_core_window_is_symmetric_for_the_default_design(design):
+    x0, x1 = tc.core_window_m(design)
+    half_active = design.active_length_m / 2.0
+    assert x0 == -half_active - tc.CORE_WINDOW_MARGIN_M
+    assert x1 == half_active + tc.CORE_WINDOW_MARGIN_M
