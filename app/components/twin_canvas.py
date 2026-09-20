@@ -35,7 +35,8 @@ FAIL_COLOUR = "#C4452B"
 STRUCTURE_COLOUR = "#8A94A6"
 IDLE_HEAD_COLOUR = "#8A94A6"
 TRANSPARENT = "rgba(0,0,0,0)"
-_OFF_BLACK = "#0B0614"
+_OFF_BLACK = "#0B0614"          # dark enough to read as the cold end, light enough to keep
+_NEAR_BLACK_SUM = 24            # observed: Streamlit rewrites #000004 but leaves #0B0614 alone
 CORE_WINDOW_M = CORE_M
 
 __all__ = ["Layer", "WINDOW_M", "CORE_WINDOW_M", "TEMP_SCALE", "TEMP_MIN_C", "TWIN_FRAME_STRIDE_S",
@@ -210,7 +211,7 @@ def nearest_step(trace: RunTrace, t_s: float) -> StepRecord:
 
 def _is_near_black(colour: str) -> bool:
     c = colour.lstrip("#")
-    return len(c) == 6 and sum(int(c[i:i + 2], 16) for i in (0, 2, 4)) < 40
+    return len(c) == 6 and sum(int(c[i:i + 2], 16) for i in (0, 2, 4)) < _NEAR_BLACK_SUM
 
 
 def cfd_scale(quantity: str) -> list[list]:
