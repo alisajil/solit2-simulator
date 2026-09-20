@@ -21,7 +21,6 @@ CSS = f"""
 <style>
 [class*="st-key-step_"] button {{ border-radius: 999px; font-weight: 500; }}
 [class*="st-key-step_"] button:disabled {{ opacity: 0.45; }}
-
 .verdict {{ display: flex; gap: 1.25rem; align-items: baseline; flex-wrap: wrap;
            padding: 0.9rem 1.2rem; border-radius: 0.5rem; margin-bottom: 1rem;
            border: 1px solid {GREY}55; }}
@@ -33,13 +32,11 @@ CSS = f"""
 .verdict-score {{ font-family: "IBM Plex Mono", monospace; font-size: 1.2rem;
                  font-variant-numeric: tabular-nums; }}
 .verdict-note {{ opacity: 0.8; }}
-
 .chip {{ display: inline-block; padding: 0.15rem 0.6rem; border-radius: 999px;
         font-size: 0.8rem; margin: 0 0.3rem 0.3rem 0; border: 1px solid transparent; }}
 .chip.pass {{ background: {PASS}26; color: {PASS}; border-color: {PASS}; }}
 .chip.fail {{ background: {FAIL}26; color: {FAIL}; border-color: {FAIL}; }}
 .chip.unset {{ background: {UNSET}26; color: {UNSET}; border-color: {UNSET}; }}
-
 .lamps {{ display: flex; gap: 1.5rem; font-size: 0.9rem; margin: 0.3rem 0 1rem; }}
 .lamp {{ display: inline-block; width: 0.8rem; height: 0.8rem; border-radius: 2px;
         margin-right: 0.4rem; vertical-align: middle; background: {GREY}; opacity: 0.4; }}

@@ -1,4 +1,5 @@
 """The theme is configuration; these tests pin the contract the views rely on."""
+import re
 import tomllib
 from pathlib import Path
 
@@ -24,3 +25,17 @@ def test_inject_renders_exactly_one_style_block():
     assert not at.exception
     assert sum("<style>" in m.value for m in at.markdown) == 1
     assert any("fonts.googleapis.com" in m.value for m in at.markdown)
+
+
+def test_the_style_block_has_no_blank_lines():
+    """Streamlit's markdown renderer ends a raw-HTML block at the first blank line.
+
+    A blank line inside `<style>` therefore pushes every later rule group out of the
+    stylesheet and renders it as visible CSS text at the top of the page — which the
+    "exactly one <style> block" check above cannot catch, since the source string is
+    still well-formed.
+    """
+    from app import theme
+
+    inner = theme.CSS[theme.CSS.index("<style>"):theme.CSS.index("</style>")]
+    assert re.search(r"\n[ \t]*\n", inner) is None
