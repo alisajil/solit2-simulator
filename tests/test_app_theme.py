@@ -39,3 +39,31 @@ def test_the_style_block_has_no_blank_lines():
 
     inner = theme.CSS[theme.CSS.index("<style>"):theme.CSS.index("</style>")]
     assert re.search(r"\n[ \t]*\n", inner) is None
+
+
+def test_the_toml_colours_match_the_palette():
+    """Streamlit reads TOML, not Python, so the tokens are necessarily stated twice.
+
+    Nothing but this test stops the two copies drifting — and a drift would show as a
+    chart disagreeing with the chip beside it, which reads as a bug in the numbers.
+    """
+    from app import palette
+
+    theme = tomllib.loads(Path(".streamlit/config.toml").read_text())["theme"]
+    wanted = {"primaryColor": palette.PRIMARY, "greenColor": palette.PASS,
+              "redColor": palette.FAIL, "orangeColor": palette.UNSET}
+    for key, token in wanted.items():
+        assert theme["light"][key].upper() == token.upper(), key
+    # Dark is deliberately not the same colour: the same token on a dark ground reads
+    # muddy, so each is brightened. It must still be *defined*, or a chip loses its
+    # meaning in dark mode.
+    for key in wanted:
+        assert theme["dark"][key].startswith("#"), key
+        assert theme["dark"][key].upper() != theme["light"][key].upper(), key
+
+
+def test_rgba_expands_a_token_without_changing_it():
+    from app import palette
+
+    assert palette.rgba("#1D8F8A", 0.5) == "rgba(29,143,138,0.5)"
+    assert palette.rgba(palette.GREY, 0.35) == "rgba(138,148,166,0.35)"

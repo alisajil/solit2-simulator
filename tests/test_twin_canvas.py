@@ -96,6 +96,24 @@ def test_temp_max_rounds_the_peak_up_to_the_next_hundred_but_never_below_400(tra
     assert tc.temp_max_c(trace) % 100 == 0
 
 
+def test_temp_max_rounds_up_so_the_peak_is_never_off_the_scale():
+    """`>= 400` and `% 100 == 0` hold for floor, round and ceil alike, so on their own
+    they do not pin the direction. Rounding *down* would put the hottest cell past the
+    top of the colour scale, where it reads as merely the hottest colour."""
+    class _Step:
+        def __init__(self, value):
+            self.ceiling_temp_c = value
+
+    class _Trace:
+        def __init__(self, peak):
+            self.steps = (_Step(20.0), _Step(peak))
+
+    assert tc.temp_max_c(_Trace(401.0)) == 500.0     # a hair over -> the next hundred up
+    assert tc.temp_max_c(_Trace(500.0)) == 500.0     # exactly on a boundary -> unchanged
+    assert tc.temp_max_c(_Trace(899.1)) == 900.0
+    assert tc.temp_max_c(_Trace(120.0)) == 400.0     # the floor still wins under 400
+
+
 def test_every_layer_returns_plotly_traces(design, geom, trace):
     step = trace.steps[-1]
     for traces, _ in (tc.tunnel_layer(design, geom, tc.WINDOW_M, step),

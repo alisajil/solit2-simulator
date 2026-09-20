@@ -15,6 +15,7 @@ from typing import Any
 import plotly.colors as pcolors
 import plotly.graph_objects as go
 
+from app import palette
 from solit2.engines.fds.deck import CORE_M, WINDOW_M
 from solit2.engines.fds.slices import Slice
 from solit2.engines.reduced.criteria import INSTRUMENTS, STATIONS
@@ -30,11 +31,11 @@ BREATHING_HEIGHT_M = 1.8
 TWIN_FRAME_STRIDE_S = 30.0
 BACKLAYER_MIN_M = 1.0
 FIRE_MARKER_MIN_PX, FIRE_MARKER_MAX_PX = 6.0, 60.0
-MIST_COLOUR = "#1D8F8A"
-FAIL_COLOUR = "#C4452B"
-STRUCTURE_COLOUR = "#8A94A6"
-IDLE_HEAD_COLOUR = "#8A94A6"
-TRANSPARENT = "rgba(0,0,0,0)"
+MIST_COLOUR = palette.PRIMARY
+FAIL_COLOUR = palette.FAIL
+STRUCTURE_COLOUR = palette.GREY
+IDLE_HEAD_COLOUR = palette.GREY
+TRANSPARENT = palette.TRANSPARENT
 _OFF_BLACK = "#0B0614"          # dark enough to read as the cold end, light enough to keep
 _NEAR_BLACK_SUM = 24            # observed: Streamlit rewrites #000004 but leaves #0B0614 alone
 CORE_WINDOW_M = CORE_M
@@ -68,11 +69,11 @@ def tunnel_layer(design: Design, geom: SectionGeometry, window_m: tuple[float, f
     structure = {"color": STRUCTURE_COLOUR}
     shapes = [
         _rect(-fp.length_m / 2, fp.length_m / 2, fp.base_height_m, fp.top_height_m,
-              line=structure, fillcolor="rgba(138,148,166,0.35)"),
+              line=structure, fillcolor=palette.rgba(STRUCTURE_COLOUR, 0.35)),
         _rect(design.fire.target_x_m, design.fire.target_x_m + fp.length_m,
               fp.base_height_m, fp.top_height_m,
               line={"color": FAIL_COLOUR if target_ignited else STRUCTURE_COLOUR, "dash": "dot"},
-              fillcolor="rgba(196,69,43,0.5)" if target_ignited else TRANSPARENT),
+              fillcolor=palette.rgba(FAIL_COLOUR, 0.5) if target_ignited else TRANSPARENT),
         _line(x0, x1, 0.0, 0.0, line={**structure, "width": 2}),
         _line(x0, x1, crown, crown, line={**structure, "width": 2}),
         _line(-half_active, half_active, crown - 0.15, crown - 0.15,
@@ -165,7 +166,7 @@ def fire_layer(design: Design, geom: SectionGeometry, step: StepRecord, cmax_c: 
     shapes = []
     if step.backlayer_m > BACKLAYER_MIN_M:
         shapes.append(_rect(-step.backlayer_m, 0.0, geom.crown_height_m * 2 / 3, geom.crown_height_m,
-                            line={"width": 0}, fillcolor="rgba(138,148,166,0.25)"))
+                            line={"width": 0}, fillcolor=palette.rgba(STRUCTURE_COLOUR, 0.25)))
     return [marker], shapes
 
 
@@ -181,7 +182,7 @@ def mist_layer(design: Design, geom: SectionGeometry, step: StepRecord) -> Layer
                        text=[f"{step.water_lpm:.0f} L/min · cooling {step.mist.chi_cool:.0%} · "
                              f"radiant transmission {step.mist.tau_mist:.0%}"])
     return [hover], [_rect(-half, half, 0.0, top, line={"width": 0},
-                           fillcolor=f"rgba(29,143,138,{alpha:.2f})")]
+                           fillcolor=palette.rgba(MIST_COLOUR, alpha))]
 
 
 CFD_SCALES = {"TEMPERATURE": "Inferno", "SOOT DENSITY": "Greys", "MPUV": "Blues"}

@@ -67,3 +67,21 @@ def test_correlation_handles_a_criterion_present_on_only_one_side():
                              if k != next(iter(test_result.criteria))}})
     md = correlation.render(trimmed, site_result)
     assert "—" in md
+
+
+def test_the_test_plan_never_calls_a_design_passed_without_saying_what_went_unjudged():
+    """CLAUDE.md: `gates_passed: true` is not approval while `criteria_unset` is not empty.
+
+    The outcome line is read on its own — in the report's summary and in the exported
+    markdown — so "all gates passed" standing alone would overstate a design that was
+    measured against almost nothing.
+    """
+    result = envelope.run(Design.load(SITE_DESIGN))
+    unset = result.score["criteria_unset"]
+    assert unset, "this fixture is meant to have unjudged criteria; pick another if it changes"
+
+    outcome_line = next(line for line in test_plan.render(Design.load(SITE_DESIGN), result)
+                        .splitlines() if "gates passed" in line or "gates failed" in line)
+    assert f"{len(unset)} of {len(result.criteria)} criteria were not judged" in outcome_line
+    for name in unset:
+        assert name in outcome_line

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import streamlit as st
 
-PASS, FAIL, UNSET, PRIMARY, GREY = "#2E8B57", "#C4452B", "#C98A1E", "#1D8F8A", "#8A94A6"
+from app.palette import FAIL, GREY, PASS, PRIMARY, UNSET  # noqa: F401 -- re-exported
 
 FONT_LINK = (
     '<link rel="stylesheet" href="https://fonts.googleapis.com/css2'

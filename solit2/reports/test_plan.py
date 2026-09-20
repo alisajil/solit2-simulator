@@ -24,8 +24,15 @@ def render(design: Design, result: Result) -> str:
                         design.zones, design.ventilation, design.detection)
     velocity = v.velocity_ms if v.velocity_ms is not None else v.velocity_range_ms
     score = result.score
+    # "All gates passed" alone would overstate a design most of whose criteria nobody
+    # has ruled on: CLAUDE.md forbids presenting `gates_passed` as approval while
+    # `criteria_unset` is non-empty, and this line is read on its own in the report.
+    unset = score["criteria_unset"]
     outcome = ("all gates passed" if score["gates_passed"]
               else "gates failed: " + ", ".join(score["gates_failed"]))
+    if unset:
+        outcome += (f" — but {len(unset)} of {len(result.criteria)} criteria were not judged, "
+                    f"no limit having been set for them: " + ", ".join(unset))
     lines = [
         f"# Test Plan — {design.meta.name}",
         "",
