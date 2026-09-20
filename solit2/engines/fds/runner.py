@@ -37,6 +37,17 @@ _ERROR = re.compile(r"^[ \t]*(?:ERROR|STOP: (?!FDS completed successfully))",
                     re.MULTILINE)
 # FDS banners its build as "Revision : FDS6.9.1-0-g..." or "Version : FDS 6.7.0".
 _VERSION = re.compile(r"(?:FDS|Version\s*:)\s*v?(\d+\.\d+(?:\.\d+)?)")
+# A build from source often stamps no release number at all -- one on this
+# machine banners "Revision : -master" with a date and nothing else. That is
+# still provenance, and a poorer answer than "unknown" only if it is dressed up
+# as a release, so it is reported in a shape that cannot be mistaken for one.
+_REVISION = re.compile(r"^\s*Revision\s*:\s*(\S+)\s*$", re.MULTILINE)
+# "Revision Date    : Thu Sep 17 12:46:53 2026 -0400": weekday, month, day,
+# clock, year. The clock is what a lazier pattern trips over.
+_REVISION_DATE = re.compile(
+    r"^\s*Revision Date\s*:\s*\w+\s+(\w+)\s+(\d+)\s+[\d:]+\s+(\d{4})", re.MULTILINE)
+_MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+           "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
 
 
 def _binary() -> str | None:
@@ -115,8 +126,27 @@ def log_path(run_dir: Path) -> Path | None:
     return captured if captured.exists() else None
 
 
+def _source_revision(text: str) -> str | None:
+    """A source build's own revision and date, e.g. "master@2026-09-17"."""
+    revision = _REVISION.search(text)
+    if revision is None:
+        return None
+    name = revision.group(1).strip("-") or "unnamed"
+    date = _REVISION_DATE.search(text)
+    if date is None:
+        return name
+    month, day, year = date.group(1), int(date.group(2)), date.group(3)
+    if month not in _MONTHS:
+        return name
+    return f"{name}@{year}-{_MONTHS.index(month) + 1:02d}-{day:02d}"
+
+
 def fds_version(run_dir: Path) -> str | None:
     """The FDS that wrote this run, or None when the log does not say.
+
+    A release number when the banner carries one. Otherwise the source
+    revision and its date, which is what a locally built FDS stamps instead --
+    returned in a form that reads as a revision, never as a release.
 
     Never guess: an unverified version in `Result.meta` is a provenance claim
     nothing measured.
@@ -124,8 +154,9 @@ def fds_version(run_dir: Path) -> str | None:
     log = log_path(run_dir)
     if log is None:
         return None
-    found = _VERSION.search(log.read_text())
-    return found.group(1) if found else None
+    text = log.read_text()
+    found = _VERSION.search(text)
+    return found.group(1) if found else _source_revision(text)
 
 
 def _launcher_alive(run_dir: Path) -> bool | None:

@@ -130,6 +130,34 @@ def test_the_fds_version_is_read_from_the_log_and_is_none_when_absent(tmp_path):
     assert runner.fds_version(tmp_path) == "6.9.1"
 
 
+def test_a_build_from_source_reports_its_revision_rather_than_nothing(tmp_path):
+    """A locally built FDS stamps no release number. The build on this machine
+    banners "Revision : -master" with a date and nothing else, which made every
+    Tier 2 result say its engine version was unverified. The revision and its
+    date identify the code that ran, in a shape no one can mistake for a release."""
+    (tmp_path / "abc.out").write_text(
+        " Fire Dynamics Simulator\n"
+        " Revision         : -master\n"
+        " Revision Date    : Thu Sep 17 12:46:53 2026 -0400\n"
+        " Compiler         : GCC version 16.2.0\n")
+    assert runner.fds_version(tmp_path) == "master@2026-09-17"
+
+
+def test_a_numbered_release_still_wins_over_the_revision(tmp_path):
+    (tmp_path / "abc.out").write_text(
+        " Revision         : FDS6.9.1-0-g889da6a-release\n"
+        " Revision Date    : Thu Sep 17 12:46:53 2026 -0400\n")
+    assert runner.fds_version(tmp_path) == "6.9.1"
+
+
+def test_a_revision_without_a_readable_date_is_still_reported(tmp_path):
+    (tmp_path / "abc.out").write_text(" Revision         : -master\n")
+    assert runner.fds_version(tmp_path) == "master"
+    (tmp_path / "abc.out").write_text(
+        " Revision         : -master\n Revision Date    : sometime last week\n")
+    assert runner.fds_version(tmp_path) == "master"
+
+
 def test_run_launches_one_mpi_rank_per_mesh(ready, monkeypatch, tmp_path):
     # A bare `fds` runs every mesh in one process -- valid, but measured at
     # 2.1x slower than one rank per mesh on a three-mesh deck. The launch must

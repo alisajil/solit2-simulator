@@ -150,13 +150,26 @@ def _hrr_mw(ids: list[str], rows: list[list[float]]) -> list[float]:
     return [r[col] / 1000.0 for r in rows]
 
 
+def hottest_ceiling(devc_ids: list[str], devc_rows: list[list[float]]) -> tuple[str, float]:
+    """(device, peak temperature) over the whole ceiling line and the whole run."""
+    ceiling = _ceiling_ids(devc_ids)
+    peaks = {c: max(_at(devc_ids, row, c) for row in devc_rows) for c in ceiling}
+    hottest = max(peaks, key=peaks.get)
+    return hottest, peaks[hottest]
+
+
+def ceiling_device_x_m(device: str) -> float:
+    """The x position the deck laid this ceiling device out at."""
+    index = int(device[len(deck_mod.CEILING_TC_PREFIX):])
+    return deck_mod.CORE_M[0] + index * deck_mod.CEILING_TC_SPACING_M
+
+
 def _step_records(devc_ids: list[str], devc_rows: list[list[float]],
                   hrr_mw_series: list[float], design: Design,
                   heights: dict[str, tuple[float, ...]], t_activate_s: float | None,
                   hrr_free_mw: list[float] | None) -> list[StepRecord]:
     """One StepRecord per sample. `heights` keys the stations this deck models."""
     ceiling = _ceiling_ids(devc_ids)
-    fire_ceiling = deck_mod.fire_ceiling_device_id()
     threshold_c = design.ahj.structure_temp_threshold_c
 
     steps: list[StepRecord] = []
@@ -177,10 +190,21 @@ def _step_records(devc_ids: list[str], devc_rows: list[list[float]],
             # Tier 1 number wearing a Tier 2 label.
             hrr_free_mw=hrr_free_mw[i] if hrr_free_mw is not None else hrr_mw,
             ceiling_temp_c=max(ceiling_temps),
-            # Tier 1's own definition: the ceiling gas above the fire -- read by
-            # device ID, not by position, so a reordered CSV cannot silently
-            # move the measurement somewhere else.
-            lining_temp_c=_at(devc_ids, row, fire_ceiling),
+            # The HOTTEST ceiling this run resolved, which is Tier 1's own
+            # identity: there `ceiling_temp_c` and `lining_temp_c` are the same
+            # variable, a correlation evaluated at x=0 whose longitudinal decay
+            # peaks there, so above-the-fire IS its hottest point.
+            #
+            # FDS is not obliged to agree about WHERE that is, and does not:
+            # longitudinal ventilation leans the plume downstream, so the
+            # hottest lining sits past the fire. Measured on a real 6.8 MW run
+            # at 5.08 m/s, the ceiling above the fire read 78.1 C while the
+            # device 5 m downstream read 132.6 C. Pinning the lining to x=0
+            # reported the cooler of the two into the structural score, which
+            # measures how far the peak lining sits below 1350 C -- overstating
+            # the margin, and growing with fire size. Where the peak actually
+            # sat is reported in `warnings` rather than thrown away.
+            lining_temp_c=max(ceiling_temps),
             # No pipe in the deck. A water-filled pipe that nothing has heated
             # reads ambient; 0.0 would be a colder-than-air measurement.
             pipe_temp_c=design.tunnel.ambient_temp_c,
@@ -238,7 +262,8 @@ def _peaks_of(steps: list[StepRecord], modelled: list[str],
 
 
 def _warnings(design: Design, geom: SectionGeometry, velocity_ms: float, engine_version: str,
-              skipped: list[str], free_burn: bool, deck_current: bool | None) -> list[str]:
+              skipped: list[str], free_burn: bool, deck_current: bool | None,
+              hottest: tuple[str, float], above_fire_c: float) -> list[str]:
     """Everything a reader must know that the numbers do not say themselves.
 
     A Tier 2 result is interchangeable with a Tier 1 one downstream, so every
@@ -289,6 +314,15 @@ def _warnings(design: Design, geom: SectionGeometry, velocity_ms: float, engine_
         f"{velocity_ms:.2f} m/s, not Tier 1's section x velocity envelope; "
         f"criteria_cases is empty for the same reason",
     ]
+    hottest_device, hottest_c = hottest
+    offset_m = ceiling_device_x_m(hottest_device) - deck_mod.FIRE_X_M
+    if abs(offset_m) > deck_mod.CEILING_TC_SPACING_M / 2.0:
+        warnings.append(
+            f"the hottest lining sat {offset_m:+.0f} m from the mock-up centre at "
+            f"{hottest_c:.0f} C, not above it, where the ceiling reached {above_fire_c:.0f} C: "
+            f"longitudinal ventilation leans the plume downstream. Tier 1 cannot place it "
+            f"anywhere but above the fire, so the two tiers agree on the value and not on "
+            f"where it is")
     if deck_current is False:
         warnings.append(
             "this run's own deck is NOT the deck this design generates now: the run "
@@ -299,8 +333,13 @@ def _warnings(design: Design, geom: SectionGeometry, velocity_ms: float, engine_
         warnings.append("this run kept no deck.fds, so what it actually simulated "
                         "cannot be checked against this design")
     if engine_version == ENGINE_VERSION_UNKNOWN:
-        warnings.append("the FDS log does not name a build, so the engine "
-                        "version on this result is unverified")
+        warnings.append("the FDS log names neither a release nor a source revision, "
+                        "so the engine version on this result is unverified")
+    elif "@" in engine_version:
+        warnings.append(
+            f"the engine is a build from source ({engine_version.removeprefix('fds-')}), "
+            f"not a numbered FDS release: it identifies the code that ran, and it is not "
+            f"a version anyone else can request by name")
     if skipped:
         warnings.append(f"stations outside the {deck_mod.WINDOW_M} m deck window "
                         f"were not modelled: {', '.join(skipped)}")
@@ -368,5 +407,8 @@ def read(run_dir: Path, design: Design, *, free_burn_dir: Path | None = None) ->
                     "ceiling_temp_c": [s.ceiling_temp_c for s in steps]},
         warnings=_warnings(design, geom, trace.velocity_ms, engine_version,
                            sorted(set(STATIONS) - set(modelled)), free is not None,
-                           deck_mod.matches_design(run_dir, design)),
+                           deck_mod.matches_design(run_dir, design),
+                           hottest_ceiling(devc_ids, devc_rows),
+                           max(_at(devc_ids, row, deck_mod.fire_ceiling_device_id())
+                               for row in devc_rows)),
     )

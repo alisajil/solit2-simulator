@@ -76,21 +76,75 @@ def test_the_result_round_trips_through_json(run_dir):
     assert Result.model_validate_json(result.model_dump_json()) == result
 
 
-def test_the_lining_temperature_comes_from_the_ceiling_device_above_the_fire(run_dir):
+def _set_ceiling(run_dir, values: dict[str, float], others_c: float = 40.0):
+    """Every ceiling device at `others_c`, then the named ones overridden.
+
+    The fixture puts the whole ceiling line on one series, so a test that moves
+    a single device proves nothing about which one the reader picked.
+    """
     from solit2.engines.fds import deck as deck_mod
     from solit2.engines.reduced.envelope import _design_sha
     chid = _design_sha(Design.load(BASELINE))
     devc = run_dir / f"{chid}_devc.csv"
     lines = devc.read_text().splitlines()
-    column = lines[1].split(",").index(deck_mod.fire_ceiling_device_id())
-    marked = []
+    header = [c.strip() for c in lines[1].split(",")]
+    wanted = {name: others_c for name in header
+              if name.startswith(deck_mod.CEILING_TC_PREFIX)}
+    wanted.update(values)
+    columns = {header.index(name): v for name, v in wanted.items()}
+    rows = []
     for row in lines[2:]:
         cells = row.split(",")
-        cells[column] = "911.0"
-        marked.append(",".join(cells))
-    devc.write_text("\n".join(lines[:2] + marked))
+        for index, value in columns.items():
+            cells[index] = f"{value}"
+        rows.append(",".join(cells))
+    devc.write_text("\n".join(lines[:2] + rows))
+
+
+def test_the_lining_temperature_is_the_hottest_ceiling_not_the_point_above_the_fire(run_dir):
+    """Tier 1 holds `ceiling_temp_c` and `lining_temp_c` as ONE variable, a
+    correlation evaluated at x=0 whose decay peaks there. FDS is not obliged to
+    agree about where the hottest lining is, and does not: at 5.08 m/s the plume
+    leans downstream, and a real run read 78.1 C above the fire against 132.6 C
+    five metres past it. Reading the cooler one into the structural score, which
+    measures how far the peak lining sits below 1350 C, overstates the margin.
+    """
+    from solit2.engines.fds import deck as deck_mod
+    above_fire = deck_mod.fire_ceiling_device_id()
+    downstream = f"{deck_mod.CEILING_TC_PREFIX}13"
+    assert deck_mod.CEILING_TC_PREFIX in downstream and downstream != above_fire
+    _set_ceiling(run_dir, {above_fire: 78.1, downstream: 132.6})
     result = reader.read(run_dir, Design.load(BASELINE))
-    assert result.peaks["lining_temp_c"] == pytest.approx(911.0)
+    assert result.peaks["lining_temp_c"] == pytest.approx(132.6)
+    assert result.peaks["ceiling_temp_c"] == pytest.approx(132.6), "Tier 1's identity holds"
+
+
+def test_the_result_says_where_the_hottest_lining_actually_sat(run_dir):
+    from solit2.engines.fds import deck as deck_mod
+    _set_ceiling(run_dir, {deck_mod.fire_ceiling_device_id(): 78.1,
+                           f"{deck_mod.CEILING_TC_PREFIX}13": 132.6})
+    named = [w for w in reader.read(run_dir, Design.load(BASELINE).model_copy())
+             .warnings if "hottest lining" in w]
+    assert named and "+5 m" in named[0] and "133 C" in named[0] and "78 C" in named[0]
+
+
+def test_no_such_warning_when_the_peak_really_is_above_the_fire(run_dir):
+    from solit2.engines.fds import deck as deck_mod
+    _set_ceiling(run_dir, {deck_mod.fire_ceiling_device_id(): 900.0})
+    result = reader.read(run_dir, Design.load(BASELINE))
+    assert result.peaks["lining_temp_c"] == pytest.approx(900.0)
+    assert not any("hottest lining" in w for w in result.warnings)
+
+
+def test_ceiling_device_positions_are_the_ones_the_deck_laid_out(run_dir):
+    from solit2.engines.fds import deck as deck_mod
+    text = deck_mod.generate(Design.load(BASELINE))
+    for index in (0, 12, 13, 20):
+        device = f"{deck_mod.CEILING_TC_PREFIX}{index}"
+        line = next(ln for ln in text.splitlines() if f"ID='{device}'" in ln)
+        assert reader.ceiling_device_x_m(device) == pytest.approx(
+            float(line.split("XYZ=")[1].split(",")[0]))
+
 
 
 def test_the_result_names_the_gap_between_the_stepped_and_the_smooth_section(run_dir):
@@ -239,3 +293,28 @@ def test_a_result_says_when_its_run_came_from_a_different_deck(run_dir):
         deck_mod.generate(design).replace("E_COEFFICIENT=0.4", "E_COEFFICIENT=0.9"))
     assert any("NOT the deck this design generates now" in w
                for w in reader.read(run_dir, design).warnings)
+
+
+def test_a_source_build_is_named_as_one_rather_than_passed_off_as_a_release(run_dir):
+    (run_dir / "x.out").write_text(
+        " Revision         : -master\n"
+        " Revision Date    : Thu Sep 17 12:46:53 2026 -0400\n")
+    result = reader.read(run_dir, Design.load(BASELINE))
+    assert result.meta["engine_version"] == "fds-master@2026-09-17"
+    assert any("build from source" in w and "not a numbered FDS release" in w
+               for w in result.warnings)
+    assert not any("unverified" in w for w in result.warnings)
+
+
+def test_a_numbered_release_carries_no_source_build_caveat(run_dir):
+    (run_dir / "x.out").write_text(" Revision         : FDS6.9.1-0-g889da6a-release\n")
+    result = reader.read(run_dir, Design.load(BASELINE))
+    assert result.meta["engine_version"] == "fds-6.9.1"
+    assert not any("build from source" in w for w in result.warnings)
+    assert not any("unverified" in w for w in result.warnings)
+
+
+def test_no_banner_at_all_is_still_reported_as_unverified(run_dir):
+    result = reader.read(run_dir, Design.load(BASELINE))
+    assert result.meta["engine_version"] == reader.ENGINE_VERSION_UNKNOWN
+    assert any("neither a release nor a source revision" in w for w in result.warnings)
