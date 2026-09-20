@@ -67,3 +67,15 @@ def test_rgba_expands_a_token_without_changing_it():
 
     assert palette.rgba("#1D8F8A", 0.5) == "rgba(29,143,138,0.5)"
     assert palette.rgba(palette.GREY, 0.35) == "rgba(138,148,166,0.35)"
+
+
+def test_rgba_never_emits_scientific_notation():
+    """`:g` formatting switches to exponential below 1e-4, which Plotly's own colour
+    parser rejects outright -- caught live via a real ignition-progress fraction that
+    landed at 4.8e-05. Any alpha a real fraction can produce must stay parseable."""
+    from app import palette
+
+    for alpha in (4.8271e-05, 1e-8, 0.0, 0.00001, 0.999999):
+        text = palette.rgba(palette.FAIL, alpha)
+        assert "e-" not in text and "e+" not in text, text
+        assert text.startswith("rgba(") and text.endswith(")")

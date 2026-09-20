@@ -18,7 +18,9 @@ import plotly.graph_objects as go
 from app import palette
 from solit2.engines.fds.deck import CORE_M, WINDOW_M
 from solit2.engines.fds.slices import Slice
-from solit2.engines.reduced.criteria import INSTRUMENTS, STATIONS
+from solit2.engines.reduced.criteria import (
+    FLAME_CONTACT_FLUX_KWM2, IGNITION_EXPOSURE_S, INSTRUMENTS, STATIONS,
+)
 from solit2.engines.reduced.geometry import SectionGeometry, nozzle_positions, section_geometry
 from solit2.engines.reduced.state import RunTrace, StepRecord
 from solit2.schema.design import Design
@@ -31,6 +33,13 @@ BREATHING_HEIGHT_M = 1.8
 TWIN_FRAME_STRIDE_S = 30.0
 BACKLAYER_MIN_M = 1.0
 FIRE_MARKER_MIN_PX, FIRE_MARKER_MAX_PX = 6.0, 60.0
+FLAME_GLOW_REACH = 1.6              # illustrative flame length, in fuel-heights, at design HRR
+FLAME_GLOW_CEILING_MARGIN_M = 0.3
+FLAME_GLOW_WIDTH_FRACTION = 0.3     # half-width, as a fraction of the fuel footprint length
+FLAME_GLOW_MIN_ALPHA, FLAME_GLOW_MAX_ALPHA = 0.12, 0.38
+STEAM_MIN_CHI_COOL = 0.02           # below this, evaporation is too small to draw
+STEAM_CEILING_MARGIN_M = 0.2
+STEAM_BAND_MIN_ALPHA, STEAM_BAND_MAX_ALPHA = 0.10, 0.45
 MIST_COLOUR = palette.PRIMARY
 FAIL_COLOUR = palette.FAIL
 STRUCTURE_COLOUR = palette.GREY
@@ -61,19 +70,40 @@ def _line(x0: float, x1: float, z0: float, z1: float, **style: Any) -> dict:
     return {"type": "line", "x0": x0, "x1": x1, "y0": z0, "y1": z1, "layer": "below", **style}
 
 
+def _target_ignition_progress(step: StepRecord) -> float:
+    """How close the wood target sits to Annex 7 section 7.2.1's ignition rule, right now.
+
+    The same two paths `_target_ignited` checks trace-wide -- flame-contact flux, or
+    sustained exposure above the piloted-ignition threshold -- read per step instead,
+    so the target visibly builds toward ignition rather than flipping once at the end.
+    `target_exposure_s` resets whenever the flux drops back (sim.py's own sustained-
+    exposure rule), so this can fall as well as rise -- e.g. when mist knocks the flux
+    down, which is an honest picture, not a bug.
+    """
+    return min(max(step.target_flux_kwm2 / FLAME_CONTACT_FLUX_KWM2,
+                   step.target_exposure_s / IGNITION_EXPOSURE_S), 1.0)
+
+
 def tunnel_layer(design: Design, geom: SectionGeometry, window_m: tuple[float, float],
                  step: StepRecord, target_ignited: bool = False) -> Layer:
     x0, x1 = window_m
     crown, fp = geom.crown_height_m, design.fire.footprint
     half_active = design.zones.section_length_m * design.zones.sections_simultaneous / 2.0
     structure = {"color": STRUCTURE_COLOUR}
+    progress = _target_ignition_progress(step)
+    if target_ignited:
+        target_fill = palette.rgba(FAIL_COLOUR, 0.5)
+    elif progress > 0:
+        target_fill = palette.rgba(FAIL_COLOUR, 0.5 * progress)
+    else:
+        target_fill = TRANSPARENT
     shapes = [
         _rect(-fp.length_m / 2, fp.length_m / 2, fp.base_height_m, fp.top_height_m,
               line=structure, fillcolor=palette.rgba(STRUCTURE_COLOUR, 0.35)),
         _rect(design.fire.target_x_m, design.fire.target_x_m + fp.length_m,
               fp.base_height_m, fp.top_height_m,
               line={"color": FAIL_COLOUR if target_ignited else STRUCTURE_COLOUR, "dash": "dot"},
-              fillcolor=palette.rgba(FAIL_COLOUR, 0.5) if target_ignited else TRANSPARENT),
+              fillcolor=target_fill),
         _line(x0, x1, 0.0, 0.0, line={**structure, "width": 2}),
         _line(x0, x1, crown, crown, line={**structure, "width": 2}),
         _line(-half_active, half_active, crown - 0.15, crown - 0.15,
@@ -153,17 +183,29 @@ def instrument_layer(design: Design, geom: SectionGeometry, step: StepRecord,
 
 
 def fire_layer(design: Design, geom: SectionGeometry, step: StepRecord, cmax_c: float) -> Layer:
+    """The seat of the fire sits at the fuel bed, not floating above it.
+
+    A fire starts at the base of its fuel load and the flame lengthens upward as HRR
+    grows -- the marker and the glow beneath it both anchor at `base_height_m`. The
+    glow's height is an illustrative scale from the real HRR fraction, not a computed
+    flame-height field: the engine does not model flame geometry, only heat release.
+    """
     fp = design.fire.footprint
     frac = min(step.hrr_mw / design.fire.design_hrr_mw, 1.0)
     size = FIRE_MARKER_MIN_PX + (FIRE_MARKER_MAX_PX - FIRE_MARKER_MIN_PX) * frac
+    fuel_height = max(fp.top_height_m - fp.base_height_m, 0.5)
+    glow_top = min(fp.base_height_m + frac * fuel_height * FLAME_GLOW_REACH,
+                   geom.crown_height_m - FLAME_GLOW_CEILING_MARGIN_M)
     marker = go.Scatter(
-        x=[0.0], y=[fp.top_height_m], mode="markers", name="fire", hoverinfo="text",
+        x=[0.0], y=[fp.base_height_m], mode="markers", name="fire", hoverinfo="text",
         text=[f"HRR {step.hrr_mw:.1f} MW (free burn {step.hrr_free_mw:.1f}) · "
               f"ceiling {step.ceiling_temp_c:.0f} °C"],
         marker={"symbol": "triangle-up", "size": size, "color": [step.ceiling_temp_c],
                 "colorscale": TEMP_SCALE, "cmin": TEMP_MIN_C, "cmax": cmax_c, "showscale": False,
                 "line": {"color": FAIL_COLOUR, "width": 1}})
-    shapes = []
+    shapes = [_rect(-fp.length_m * FLAME_GLOW_WIDTH_FRACTION, fp.length_m * FLAME_GLOW_WIDTH_FRACTION,
+                    fp.base_height_m, glow_top, line={"width": 0},
+                    fillcolor=palette.rgba(FAIL_COLOUR, FLAME_GLOW_MIN_ALPHA + FLAME_GLOW_MAX_ALPHA * frac))]
     if step.backlayer_m > BACKLAYER_MIN_M:
         shapes.append(_rect(-step.backlayer_m, 0.0, geom.crown_height_m * 2 / 3, geom.crown_height_m,
                             line={"width": 0}, fillcolor=palette.rgba(STRUCTURE_COLOUR, 0.25)))
@@ -171,18 +213,34 @@ def fire_layer(design: Design, geom: SectionGeometry, step: StepRecord, cmax_c: 
 
 
 def mist_layer(design: Design, geom: SectionGeometry, step: StepRecord) -> Layer:
-    """Always one (possibly empty) trace so frame trace indices stay stable."""
+    """Always one (possibly empty) trace so frame trace indices stay stable.
+
+    Two shapes when discharging: the spray zone from floor to the nozzles, and a
+    steam band from the nozzles up toward the crown once evaporation is doing
+    something worth showing. `chi_cool` -- the fraction of convective heat the
+    engine attributes to evaporation -- is the only honest signal for "how much of
+    this is turning to steam", so it drives the band's presence and depth, not a
+    decorative animation. Shapes carry no frame-count invariant (a frame replaces
+    the whole shapes list), so adding one here does not touch trace indexing.
+    """
     half = design.zones.section_length_m * design.zones.sections_simultaneous / 2.0
     top = design.nozzles.mounting.height_above_carriageway_m
     if step.water_lpm <= 0:
         return [go.Scatter(x=[], y=[], mode="markers", name="mist", showlegend=False)], []
-    alpha = min(max(0.10 + 0.40 * step.mist.chi_cool, 0.10), 0.50)
+    chi = step.mist.chi_cool
+    alpha = min(max(0.18 + 0.40 * chi, 0.18), 0.55)
     hover = go.Scatter(x=[0.0], y=[top / 2], mode="markers", name="mist", showlegend=False,
                        marker={"size": 40, "opacity": 0.0}, hoverinfo="text",
-                       text=[f"{step.water_lpm:.0f} L/min · cooling {step.mist.chi_cool:.0%} · "
+                       text=[f"{step.water_lpm:.0f} L/min · cooling {chi:.0%} · "
                              f"radiant transmission {step.mist.tau_mist:.0%}"])
-    return [hover], [_rect(-half, half, 0.0, top, line={"width": 0},
-                           fillcolor=palette.rgba(MIST_COLOUR, alpha))]
+    shapes = [_rect(-half, half, 0.0, top, line={"color": MIST_COLOUR, "width": 1},
+                    fillcolor=palette.rgba(MIST_COLOUR, alpha))]
+    band_top = geom.crown_height_m - STEAM_CEILING_MARGIN_M
+    if chi > STEAM_MIN_CHI_COOL and band_top > top:
+        steam_alpha = STEAM_BAND_MIN_ALPHA + (STEAM_BAND_MAX_ALPHA - STEAM_BAND_MIN_ALPHA) * min(chi / 0.6, 1.0)
+        shapes.append(_rect(-half, half, top, band_top,
+                            line={"width": 0}, fillcolor=palette.rgba(palette.STEAM, steam_alpha)))
+    return [hover], shapes
 
 
 CFD_SCALES = {"TEMPERATURE": "Inferno", "SOOT DENSITY": "Greys", "MPUV": "Blues"}

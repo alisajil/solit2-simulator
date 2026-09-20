@@ -33,6 +33,15 @@ def _wet_step(trace):
     return next(s for s in trace.steps if s.water_lpm > 0)
 
 
+def _steaming_step(trace):
+    return next(s for s in trace.steps if s.mist.chi_cool > tc.STEAM_MIN_CHI_COOL)
+
+
+def _exposed_target_step(trace):
+    return next(s for s in trace.steps
+               if 0.0 < tc._target_ignition_progress(s) < 1.0)
+
+
 def _shapes_of_type(shapes, kind):
     return [s for s in shapes if s["type"] == kind]
 
@@ -180,3 +189,57 @@ def test_the_cfd_scale_starts_just_off_black():
     assert positions == sorted(positions) and positions[0] == 0.0 and positions[-1] == 1.0
     assert not any(tc._is_near_black(c) for _, c in stops)
     assert stops[-1][1] == "#fcffa4", "the warm end of Inferno must be untouched"
+
+
+def test_fire_marker_sits_at_the_fuel_base_not_floating_above_it(design, geom, trace):
+    """A fire starts at the base of its fuel load, not at the top of the stack."""
+    traces, _ = tc.fire_layer(design, geom, trace.steps[0], 400.0)
+    assert traces[0].y[0] == design.fire.footprint.base_height_m
+
+
+def test_the_flame_glow_grows_from_the_base_with_heat_release(design, geom, trace):
+    cold = tc.fire_layer(design, geom, trace.steps[0], 400.0)[1][0]
+    peak = max(trace.steps, key=lambda s: s.hrr_mw)
+    hot = tc.fire_layer(design, geom, peak, 400.0)[1][0]
+    base = design.fire.footprint.base_height_m
+    assert cold["y0"] == base and hot["y0"] == base
+    assert hot["y1"] > cold["y1"], "more heat release must reach higher, not just glow brighter"
+    assert hot["y1"] <= geom.crown_height_m - tc.FLAME_GLOW_CEILING_MARGIN_M
+
+
+def test_target_fill_builds_up_with_real_exposure_before_it_fully_ignites(design, geom, trace):
+    """The box must not sit invisible right up to the instant it snaps to solid red --
+    a fire genuinely closing in on the wood target has to read as closing in."""
+    step = _exposed_target_step(trace)
+    _, shapes = tc.tunnel_layer(design, geom, tc.WINDOW_M, step)
+    target_fill = shapes[1]["fillcolor"]
+    assert target_fill != "rgba(0,0,0,0)"
+    assert "196,69,43" in target_fill, target_fill
+
+    progress = tc._target_ignition_progress(step)
+    assert 0.0 < progress < 1.0
+    # An explicit override still wins outright, regardless of the step's own progress.
+    _, forced = tc.tunnel_layer(design, geom, tc.WINDOW_M, step, target_ignited=True)
+    assert forced[1]["fillcolor"] == "rgba(196,69,43,0.5)"
+
+
+def test_the_spray_zone_has_a_visible_border(design, geom, trace):
+    _, shapes = tc.mist_layer(design, geom, _wet_step(trace))
+    assert shapes[0]["line"]["width"] > 0
+    assert shapes[0]["line"]["color"] == tc.MIST_COLOUR
+
+
+def test_steam_appears_above_the_spray_zone_once_evaporation_is_real(design, geom, trace):
+    dry_shapes = tc.mist_layer(design, geom, trace.steps[0])[1]
+    barely_wet_shapes = tc.mist_layer(design, geom, _wet_step(trace))[1]
+    steaming_shapes = tc.mist_layer(design, geom, _steaming_step(trace))[1]
+
+    assert dry_shapes == []
+    assert len(barely_wet_shapes) == 1, "no meaningful evaporation yet -- no steam shape"
+    assert len(steaming_shapes) == 2
+
+    spray, steam = steaming_shapes
+    top = design.nozzles.mounting.height_above_carriageway_m
+    assert steam["y0"] == top and steam["y1"] > top
+    assert steam["y1"] <= geom.crown_height_m
+    assert steam["fillcolor"].startswith("rgba(216,238,236"), steam["fillcolor"]  # palette.STEAM

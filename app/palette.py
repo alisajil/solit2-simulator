@@ -17,11 +17,19 @@ FAIL = "#C4452B"
 UNSET = "#C98A1E"
 PRIMARY = "#1D8F8A"      # the mist, and the app's accent
 GREY = "#8A94A6"         # tunnel structure, and anything idle
+STEAM = "#D8EEEC"        # evaporated water, near the ceiling -- pale, not the mist's own teal
 TRANSPARENT = "rgba(0,0,0,0)"
 
 
 def rgba(colour: str, alpha: float) -> str:
-    """A `#rrggbb` token as `rgba(...)`, so a fill and its outline cannot drift apart."""
+    """A `#rrggbb` token as `rgba(...)`, so a fill and its outline cannot drift apart.
+
+    Fixed-point, not `:g` -- `:g` switches to scientific notation below 1e-4
+    (`4.8e-05`), which Plotly's own colour parser rejects outright. A caller scaling
+    alpha by a small real quantity (an ignition-progress fraction, a cooling fraction)
+    can land there legitimately, so the formatter has to survive it.
+    """
     raw = colour.lstrip("#")
     red, green, blue = (int(raw[i:i + 2], 16) for i in (0, 2, 4))
-    return f"rgba({red},{green},{blue},{alpha:g})"
+    text = f"{alpha:.6f}".rstrip("0").rstrip(".") or "0"
+    return f"rgba({red},{green},{blue},{text})"
