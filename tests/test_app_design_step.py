@@ -56,27 +56,58 @@ def test_a_limit_the_authority_sets_is_carried_into_the_design_and_judged(run_vi
     assert "max_air_temp_c" not in result.score["criteria_unset"]
 
 
-def test_prefill_takes_a_files_limits_and_invents_none_of_the_others(run_view, monkeypatch,
-                                                                     tmp_path):
-    """A design file's own `ahj` block seeds the fields; a null it leaves stays empty.
+def test_a_design_file_seeds_every_field_and_invents_no_limit(run_view, monkeypatch, tmp_path):
+    """Selecting a file starts the whole form from it — presets, parameters and limits.
 
-    This is the sanctioned way to carry real project limits: they live in the user's
-    `designs/` space with their provenance, not as defaults baked into the tool.
+    The limits are the careful part: a limit the file declares is carried, and one it
+    leaves null stays empty. Real project values live in the user's `designs/` space
+    with their provenance, never as defaults baked into the tool.
     """
     (tmp_path / "site.json").write_text(json.dumps({
+        "tunnel": {"preset": "template"},
+        "nozzles": {"k_factor_lpm_bar05": 6.5, "pressure_bar": 80.0,
+                    "mounting": {"rows": 3, "pitch_m": 1.5}},
+        "zones": {"section_length_m": 42.0, "sections_simultaneous": 2},
+        "ventilation": {"velocity_range_ms": [2.5, 4.0]},
         "ahj": {"tvs_design_fire_mw": 50.0, "max_air_temp_c": None,
                 "note": "Section 6 of the tender requires 150 MW reduced to <= 50 MW."}}))
     monkeypatch.setattr(design_view, "DESIGNS_DIR", tmp_path)
 
     at = run_view("design", seed_design=False)
-    at.selectbox(key="ahj_source").set_value("site.json").run()
-
+    at.selectbox(key="design_source").set_value("site.json").run()
     assert not at.exception
+
+    assert at.number_input(key="d_k").value == 6.5
+    assert at.number_input(key="d_pressure").value == 80.0
+    assert at.number_input(key="d_rows").value == 3
+    assert at.number_input(key="d_pitch").value == 1.5
+    assert at.number_input(key="d_section_len").value == 42.0
+    assert at.number_input(key="d_sections").value == 2
+    assert at.number_input(key="d_v_lo").value == 2.5
+    assert at.number_input(key="d_v_hi").value == 4.0
+    assert at.selectbox(key="d_tunnel").value == "template"
+
     assert at.number_input(key="ahj_tvs").value == 50.0
     assert at.number_input(key="ahj_air_temp").value is None
     assert any("site.json" in c.value for c in at.caption)
     assert any("tender" in c.value for c in at.caption), "the file's provenance note must show"
 
     at.button(key="build_design").click().run()
-    ahj = at.session_state["design"].ahj
-    assert ahj.tvs_design_fire_mw == 50.0 and ahj.max_air_temp_c is None
+    design = at.session_state["design"]
+    assert design.ahj.tvs_design_fire_mw == 50.0 and design.ahj.max_air_temp_c is None
+    assert design.nozzles.pressure_bar == 80.0
+    assert design.zones.section_length_m == 42.0
+
+
+def test_a_value_outside_the_form_range_is_clamped_not_crashed(run_view, monkeypatch, tmp_path):
+    """A file may predate a bound this form imposes; loading it must not blow up."""
+    (tmp_path / "wide.json").write_text(json.dumps(
+        {"nozzles": {"pressure_bar": 999.0}, "zones": {"sections_simultaneous": 99}}))
+    monkeypatch.setattr(design_view, "DESIGNS_DIR", tmp_path)
+
+    at = run_view("design", seed_design=False)
+    at.selectbox(key="design_source").set_value("wide.json").run()
+
+    assert not at.exception
+    assert at.number_input(key="d_pressure").value == 140.0
+    assert at.number_input(key="d_sections").value == 6

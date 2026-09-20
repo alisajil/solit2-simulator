@@ -44,11 +44,12 @@ def render() -> None:
     st.header("Design")
     st.caption("Pick a starting preset for each block, then set the parameters an engineer "
                "actually varies. Everything else comes from the presets.")
-    tunnel_preset, fire_preset, nozzle_preset, hydraulics_preset = _render_preset_pickers()
-    k_factor, pressure_bar, rows, pitch_m = _render_nozzle_hydraulics_inputs()
-    section_length_m, sections_simultaneous = _render_zoning_inputs()
-    velocity_lo, velocity_hi = _render_ventilation_inputs()
-    ahj = _render_ahj_inputs()
+    raw_source = _render_source_picker()
+    tunnel_preset, fire_preset, nozzle_preset, hydraulics_preset = _render_preset_pickers(raw_source)
+    k_factor, pressure_bar, rows, pitch_m = _render_nozzle_hydraulics_inputs(raw_source)
+    section_length_m, sections_simultaneous = _render_zoning_inputs(raw_source)
+    velocity_lo, velocity_hi = _render_ventilation_inputs(raw_source)
+    ahj = _render_ahj_inputs(raw_source)
     raw = _assemble(tunnel_preset, fire_preset, nozzle_preset, hydraulics_preset,
                     k_factor, pressure_bar, int(rows), pitch_m,
                     section_length_m, int(sections_simultaneous), velocity_lo, velocity_hi, ahj)
@@ -76,7 +77,7 @@ def _default_index(options: list[str], name: str) -> int:
     return options.index(name) if name in options else 0
 
 
-def _render_preset_pickers() -> tuple[str, str, str, str]:
+def _render_preset_pickers(raw: dict) -> tuple[str, str, str, str]:
     """The four per-block preset selectors: tunnel, fire, nozzle, hydraulics.
 
     Each defaults to a verified-compatible combination (`examples/designs/
@@ -89,73 +90,80 @@ def _render_preset_pickers() -> tuple[str, str, str, str]:
     with col1:
         tunnel_options = list_presets("tunnel")
         tunnel_preset = st.selectbox(
-            "Tunnel preset", tunnel_options, index=_default_index(tunnel_options, "twin_bore_11m"),
+            "Tunnel preset", tunnel_options, index=_default_index(tunnel_options, _dig(raw, "tunnel", "preset") or "twin_bore_11m"),
             key="d_tunnel")
     with col2:
         fire_options = list_presets("fire")
         fire_preset = st.selectbox(
-            "Fire preset", fire_options, index=_default_index(fire_options, "hgv_150mw"),
+            "Fire preset", fire_options, index=_default_index(fire_options, _dig(raw, "fire", "preset") or "hgv_150mw"),
             key="d_fire")
     with col3:
         nozzle_options = list_presets("nozzle")
         nozzle_preset = st.selectbox(
             "Nozzle preset", nozzle_options,
-            index=_default_index(nozzle_options, "single_mode_fine_example"), key="d_nozzle")
+            index=_default_index(nozzle_options, _dig(raw, "nozzle", "preset") or "single_mode_fine_example"), key="d_nozzle")
     hydraulics_options = list_presets("hydraulics")
     hydraulics_preset = st.selectbox(
-        "Hydraulics preset", hydraulics_options, index=_default_index(hydraulics_options, "example"),
+        "Hydraulics preset", hydraulics_options, index=_default_index(hydraulics_options, _dig(raw, "hydraulics", "preset") or "example"),
         key="d_hydraulics")
     return tunnel_preset, fire_preset, nozzle_preset, hydraulics_preset
 
 
-def _render_nozzle_hydraulics_inputs() -> tuple[float, float, int, float]:
+def _render_nozzle_hydraulics_inputs(raw: dict) -> tuple[float, float, int, float]:
     """K-factor, working pressure, nozzle row count, and pitch."""
     st.subheader("Nozzle & hydraulics")
     c1, c2, c3 = st.columns(3)
     with c1:
         k_factor = st.number_input(
-            "K-factor (L/min·bar⁰·⁵)", min_value=0.6, max_value=20.0, value=4.1, step=0.1,
+            "K-factor (L/min·bar⁰·⁵)", min_value=0.6, max_value=20.0, step=0.1,
+            value=_seed(raw, ("nozzles", "k_factor_lpm_bar05"), 4.1, 0.6, 20.0),
             key="d_k")
     with c2:
         pressure_bar = st.number_input(
-            "Working pressure (bar)", min_value=34.5, max_value=140.0, value=50.0, step=0.5,
+            "Working pressure (bar)", min_value=34.5, max_value=140.0, step=0.5,
+            value=_seed(raw, ("nozzles", "pressure_bar"), 50.0, 34.5, 140.0),
             key="d_pressure")
     with c3:
-        rows = st.number_input("Nozzle rows", min_value=1, max_value=3, value=2, step=1,
-                               key="d_rows")
+        rows = st.number_input("Nozzle rows", min_value=1, max_value=3, step=1, key="d_rows",
+                               value=_seed(raw, ("nozzles", "mounting", "rows"), 2, 1, 3))
     pitch_m = st.number_input(
-        "Nozzle spacing / pitch (m)", min_value=0.1, max_value=10.0, value=2.4, step=0.1,
+        "Nozzle spacing / pitch (m)", min_value=0.1, max_value=10.0, step=0.1,
+        value=_seed(raw, ("nozzles", "mounting", "pitch_m"), 2.4, 0.1, 10.0),
         key="d_pitch")
     return k_factor, pressure_bar, rows, pitch_m
 
 
-def _render_zoning_inputs() -> tuple[float, int]:
+def _render_zoning_inputs(raw: dict) -> tuple[float, int]:
     """Section length and how many sections activate simultaneously."""
     st.subheader("Zoning")
     z1, z2 = st.columns(2)
     with z1:
         section_length_m = st.number_input(
-            "Section length (m)", min_value=8.0, max_value=100.0, value=30.0, step=1.0,
+            "Section length (m)", min_value=8.0, max_value=100.0, step=1.0,
+            value=_seed(raw, ("zones", "section_length_m"), 30.0, 8.0, 100.0),
             key="d_section_len")
     with z2:
         sections_simultaneous = st.number_input(
-            "Sections activated simultaneously", min_value=1, max_value=6, value=3, step=1,
+            "Sections activated simultaneously", min_value=1, max_value=6, step=1,
+            value=_seed(raw, ("zones", "sections_simultaneous"), 3, 1, 6),
             key="d_sections")
     return section_length_m, sections_simultaneous
 
 
-def _render_ventilation_inputs() -> tuple[float, float]:
+def _render_ventilation_inputs(raw: dict) -> tuple[float, float]:
     """Low and high longitudinal ventilation velocities."""
     st.subheader("Ventilation")
+    declared = _dig(raw, "ventilation", "velocity_range_ms") or ()
+    lo, hi = (list(declared) + [3.88, 5.08])[:2] if len(declared) >= 2 else (3.88, 5.08)
     v1, v2 = st.columns(2)
     with v1:
         velocity_lo = st.number_input(
-            "Ventilation velocity, low (m/s)", min_value=0.0, max_value=8.0, value=3.88, step=0.01,
-            key="d_v_lo")
+            "Ventilation velocity, low (m/s)", min_value=0.0, max_value=8.0, step=0.01,
+            value=min(max(float(lo), 0.0), 8.0), key="d_v_lo")
     with v2:
         velocity_hi = st.number_input(
-            "Ventilation velocity, high (m/s)", min_value=0.0, max_value=8.0, value=5.08, step=0.01,
-            key="d_v_hi")
+            "Ventilation velocity, high (m/s)", min_value=0.0, max_value=8.0, step=0.01,
+            value=min(max(float(hi), 0.0), 8.0), key="d_v_hi")
     return velocity_lo, velocity_hi
 
 
@@ -177,59 +185,121 @@ AHJ_FIELDS = (
 
 DESIGNS_DIR = Path("designs")
 NO_SOURCE = "— none —"
-_APPLIED_SOURCE = "_ahj_applied_source"
+_APPLIED_SOURCE = "_applied_source"
 
+# widget key -> where the value lives in a design file, and the range the form allows.
+# `None` bounds mark a preset name rather than a number.
+SEEDED_FIELDS = (
+    ("d_tunnel", ("tunnel", "preset"), None, None),
+    ("d_fire", ("fire", "preset"), None, None),
+    ("d_nozzle", ("nozzles", "preset"), None, None),
+    ("d_hydraulics", ("hydraulics", "preset"), None, None),
+    ("d_k", ("nozzles", "k_factor_lpm_bar05"), 0.6, 20.0),
+    ("d_pressure", ("nozzles", "pressure_bar"), 34.5, 140.0),
+    ("d_rows", ("nozzles", "mounting", "rows"), 1, 3),
+    ("d_pitch", ("nozzles", "mounting", "pitch_m"), 0.1, 10.0),
+    ("d_section_len", ("zones", "section_length_m"), 8.0, 100.0),
+    ("d_sections", ("zones", "sections_simultaneous"), 1, 6),
+)
 
 def _design_files() -> list[str]:
     """Design files the user keeps in their own project space.
 
     `designs/` is the user's, and neither independence scan touches it by design —
-    so it is where real project limits belong, with their provenance beside them.
+    so it is where real project values belong, with their provenance beside them.
     """
     if not DESIGNS_DIR.is_dir():
         return []
     return sorted(p.name for p in DESIGNS_DIR.glob("*.json"))
 
 
-def _limits_from(name: str) -> tuple[dict, str]:
-    """The limits a design file declares, and whatever it says about where they came from."""
+def _dig(raw: dict, *path: str):
+    """The value at `path`, or None if any step of it is missing."""
+    node = raw
+    for step in path:
+        if not isinstance(node, dict) or node.get(step) is None:
+            return None
+        node = node[step]
+    return node
+
+
+def _seed(raw: dict, path: tuple[str, ...], fallback, low, high):
+    """A file's value for one field, clamped into the widget's range.
+
+    Clamped rather than rejected: a design file is the user's own record and may
+    predate a bound this form imposes, and silently refusing to load it would be
+    harder to understand than showing the nearest value the form can hold.
+    """
+    found = _dig(raw, *path)
+    if found is None:
+        return fallback
+    return min(max(type(fallback)(found), low), high)
+
+
+def _read_design(name: str) -> dict:
     try:
-        raw = json.loads((DESIGNS_DIR / name).read_text())
+        return json.loads((DESIGNS_DIR / name).read_text())
     except (OSError, ValueError) as exc:
         st.warning(f"{name} could not be read: {exc}")
-        return {}, ""
+        return {}
+
+
+def _apply_to_widgets(raw: dict) -> None:
+    """Write the file's values into the widgets' own state.
+
+    Assigning rather than clearing the keys. Deleting a widget's key does NOT reset it
+    once it has rendered in a live browser — observed directly: with a file declaring
+    40 bar selected, a pressure field that had already drawn its 50 bar default kept
+    showing 50, so the form disagreed with the file it said it was showing. (AppTest
+    does not reproduce this, which is why no unit test catches it.)
+    """
+    for key, path, low, high in SEEDED_FIELDS:
+        found = _dig(raw, *path)
+        if found is None:
+            continue
+        st.session_state[key] = (found if low is None
+                                 else min(max(type(low)(found), low), high))
+    declared = (raw.get("ahj") or {})
+    for field, key, *_rest in AHJ_FIELDS:
+        value = declared.get(field)
+        # A limit this file does not declare is cleared, not carried over from the last.
+        st.session_state[key] = float(value) if value is not None else None
+    velocities = _dig(raw, "ventilation", "velocity_range_ms") or ()
+    if len(velocities) >= 2:
+        st.session_state["d_v_lo"] = min(max(float(velocities[0]), 0.0), 8.0)
+        st.session_state["d_v_hi"] = min(max(float(velocities[1]), 0.0), 8.0)
+
+
+def _render_source_picker() -> dict:
+    """Start the whole form from a design file the user already keeps."""
+    names = _design_files()
+    if not names:
+        return {}
+    chosen = st.selectbox("Start from a design file", [NO_SOURCE, *names], key="design_source",
+                          help="Seeds every field below from that file. Edit anything "
+                               "afterwards; nothing is written back to the file.")
+    if chosen == NO_SOURCE:
+        st.session_state[_APPLIED_SOURCE] = None
+        return {}
+    raw = _read_design(chosen)
+    # Re-seed on a change of source: Streamlit honours `value=`/`index=` only on a
+    # key's first render, so without this the widgets keep the previous file's values.
+    if st.session_state.get(_APPLIED_SOURCE) != chosen:
+        _apply_to_widgets(raw)
+        st.session_state[_APPLIED_SOURCE] = chosen
+    st.caption(f"Every field below starts from **{chosen}**. Edit anything for this run.")
+    return raw
+
+
+def _limits_from(raw: dict) -> tuple[dict, str]:
+    """The limits a design file declares, and whatever it says about where they came from."""
     block = raw.get("ahj") or {}
     limits = {field: float(block[field]) for field, *_ in AHJ_FIELDS
               if block.get(field) is not None}
     return limits, str(block.get("note") or "")
 
 
-def _prefill_from_file() -> dict:
-    """Load the limits a design file declares, without inventing the ones it leaves out."""
-    names = _design_files()
-    if not names:
-        return {}
-    chosen = st.selectbox("Prefill from a design file", [NO_SOURCE, *names], key="ahj_source",
-                          help="Reads the file's own `ahj` block. A limit the file leaves "
-                               "null stays empty here — it is not invented.")
-    if chosen == NO_SOURCE:
-        st.session_state[_APPLIED_SOURCE] = None
-        return {}
-    limits, note = _limits_from(chosen)
-    # Re-seed the fields when the source changes; otherwise the widgets keep the old file's
-    # values, since Streamlit only honours `value=` on a key's first render.
-    if st.session_state.get(_APPLIED_SOURCE) != chosen:
-        for _field, key, *_rest in AHJ_FIELDS:
-            st.session_state.pop(key, None)
-        st.session_state[_APPLIED_SOURCE] = chosen
-    st.caption(f"{len(limits)} of {len(AHJ_FIELDS)} limits come from **{chosen}**; the rest are "
-               f"blank because that file declares none. Edit any of them for this run.")
-    if note:
-        st.caption(f"That file records: {note}")
-    return limits
-
-
-def _render_ahj_inputs() -> dict:
+def _render_ahj_inputs(raw: dict) -> dict:
     """The acceptance limits, which belong to the authority and to nobody else.
 
     Annex 7 section 7.1 gives the categories but not the numbers: "the detailed
@@ -242,7 +312,7 @@ def _render_ahj_inputs() -> dict:
     st.caption("From the project's own authority — the tender, the fire strategy or the "
                "AHJ's risk analysis. Leave a field empty and that criterion is reported "
                "as not judged; it is never treated as passed.")
-    prefill = _prefill_from_file()
+    prefill, note = _limits_from(raw)
     values: dict[str, float] = {}
     columns = st.columns(AHJ_COLUMNS)
     for i, (field, key, caption, low, high, step) in enumerate(AHJ_FIELDS):
@@ -251,6 +321,8 @@ def _render_ahj_inputs() -> dict:
             key=key, placeholder="not set")
         if entered is not None:
             values[field] = float(entered)
+    if note:
+        st.caption(f"The source file records: {note}")
     unset = len(AHJ_FIELDS) - len(values)
     if unset:
         st.caption(f"{unset} of {len(AHJ_FIELDS)} limits still unset.")
