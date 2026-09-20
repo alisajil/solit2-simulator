@@ -234,7 +234,9 @@ def _cfd_indices(n_frames: int) -> list[int]:
 
 
 def _play_menu() -> dict:
-    return {"type": "buttons", "showactive": False, "x": 0.0, "y": 1.14, "xanchor": "left",
+    # Laid out horizontally and above the slider: stacked vertically they overlap it.
+    return {"type": "buttons", "direction": "right", "showactive": False,
+            "x": 0.0, "y": 1.30, "xanchor": "left", "yanchor": "top", "pad": {"b": 4},
             "buttons": [
                 {"label": "▶ Play", "method": "animate",
                  "args": [None, {"frame": {"duration": FRAME_MS, "redraw": True},
@@ -245,7 +247,7 @@ def _play_menu() -> dict:
 
 
 def _slider(names: list[str], active: int) -> dict:
-    return {"active": active, "x": 0.12, "len": 0.88, "y": 1.1, "pad": {"t": 0},
+    return {"active": active, "x": 0.0, "len": 1.0, "y": 1.16, "pad": {"t": 0, "b": 0},
             "currentvalue": {"prefix": "t = ", "visible": True},
             "steps": [{"label": n, "method": "animate",
                        "args": [[n], {"frame": {"duration": 0, "redraw": True},
@@ -283,7 +285,7 @@ def figure(design: Design, trace: RunTrace, *, cfd: Slice | None = None, initial
                                layout=go.Layout(shapes=shapes_k)))
     fig = go.Figure(data=traces0, frames=frames)
     fig.update_layout(
-        shapes=shapes0, height=540, margin={"l": 10, "r": 10, "t": 60, "b": 10},
+        shapes=shapes0, height=560, margin={"l": 10, "r": 10, "t": 110, "b": 10},
         xaxis={"title": "distance from mock-up centre (m)", "range": list(window_m), "zeroline": False},
         yaxis={"title": "height (m)", "range": [-0.3, geom.crown_height_m + 1.0]},
         legend={"orientation": "h", "y": -0.2}, updatemenus=[_play_menu()],
