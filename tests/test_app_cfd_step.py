@@ -169,3 +169,28 @@ def test_a_full_length_window_carries_no_caveat(monkeypatch, tmp_path):
     full_s = design.zones.duration_min * 60.0
     (run_dir / "deck.fds").write_text(f"&HEAD CHID='x' /\n&TIME T_END={full_s} /\n")
     assert cfd.window_caveat(run_dir, design) is None
+
+
+def test_only_the_selected_field_is_built(run_view, monkeypatch, tmp_path):
+    """st.tabs runs every tab body on every rerun; each figure costs seconds and megabytes.
+
+    This step reruns every few seconds while a run is live, so building the two fields
+    nobody is looking at is most of the work it does.
+    """
+    from app.views import cfd
+
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    _fake_run(run_dir, "Total Time: 1200.0 s\nSTOP: FDS completed successfully\n", t_end=1200.0)
+    monkeypatch.setattr(fds_reader, "read", lambda d, design: envelope.run(Design.load(EXAMPLE)))
+
+    asked: list[str] = []
+
+    def record(run_dir_str, quantity, stamp_key):
+        asked.append(quantity)
+        return None
+
+    monkeypatch.setattr(cfd, "_load_slice", record)
+    at = run_view("cfd")
+
+    assert not at.exception
+    assert asked == ["TEMPERATURE"], asked

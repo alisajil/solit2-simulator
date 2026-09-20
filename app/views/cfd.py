@@ -105,21 +105,29 @@ def _missing_slice_note(run_state: str, label: str) -> str:
 
 
 def _canvas(design: Design, trace: RunTrace, run_dir: Path, run_state: str) -> None:
-    for tab, (label, quantity) in zip(st.tabs([label for label, _ in QUANTITIES]), QUANTITIES):
-        with tab:
-            try:
-                slice_ = _load_slice(str(run_dir), quantity, stamp(run_dir))
-            except (OSError, ValueError) as exc:
-                # A real run can carry meshes this reader cannot stitch. Say so and keep
-                # the other quantities usable rather than taking the whole step down.
-                st.warning(f"This run's {label.lower()} slice could not be read: {exc}")
-                continue
-            if slice_ is None:
-                st.info(_missing_slice_note(run_state, label))
-                continue
-            st.plotly_chart(twin_canvas.figure(design, trace, cfd=slice_),
-                            key=f"cfd_{quantity}", theme=None)
-            st.caption(_slice_caption(run_state, slice_))
+    """One field at a time, deliberately.
+
+    `st.tabs` runs every tab's body on every rerun, so three animated figures were
+    built each time — measured at 2.6 s and 13.8 MB apiece, and this step reruns
+    every few seconds while a run is live. A selector builds only the chosen field.
+    """
+    label = st.segmented_control("Field", [name for name, _ in QUANTITIES],
+                                 default=QUANTITIES[0][0], key="cfd_quantity")
+    label = label or QUANTITIES[0][0]      # the control allows deselecting to None
+    quantity = dict(QUANTITIES)[label]
+    try:
+        slice_ = _load_slice(str(run_dir), quantity, stamp(run_dir))
+    except (OSError, ValueError) as exc:
+        # A real run can carry meshes this reader cannot stitch. Say so and leave the
+        # other fields selectable rather than taking the whole step down.
+        st.warning(f"This run's {label.lower()} slice could not be read: {exc}")
+        return
+    if slice_ is None:
+        st.info(_missing_slice_note(run_state, label))
+        return
+    st.plotly_chart(twin_canvas.figure(design, trace, cfd=slice_),
+                    key=f"cfd_{quantity}", theme=None)
+    st.caption(_slice_caption(run_state, slice_))
 
 
 def _smokeview(run_dir: Path) -> None:
