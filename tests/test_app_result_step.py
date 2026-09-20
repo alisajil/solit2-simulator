@@ -1,4 +1,10 @@
+import json
+from pathlib import Path
+
+from streamlit.testing.v1 import AppTest
+
 from solit2 import history
+from tests.conftest import EXAMPLE_DESIGN
 
 
 def _redirect_history(monkeypatch, tmp_path):
@@ -41,3 +47,35 @@ def test_leaderboard_marks_the_current_design(run_view, monkeypatch, tmp_path):
     at = run_view("result")
     table = next(d.value for d in at.dataframe if "this" in d.value.columns)
     assert list(table["this"]) == ["◀"]
+
+
+def test_a_failed_gate_never_reads_pass(monkeypatch, tmp_path):
+    """The load-bearing honesty guarantee, driven from a design that actually fails.
+
+    Every other test here seeds the example design, which passes every gate it is
+    judged against, so they only ever exercise the PASS side of the banner. This one
+    sets an air-temperature limit the design cannot meet -- the kind of limit an AHJ
+    declares -- so `gates_failed` is non-empty and the FAIL branch is exercised.
+    """
+    _redirect_history(monkeypatch, tmp_path)
+    raw = json.loads(Path(EXAMPLE_DESIGN).read_text())
+    raw["ahj"] = {**(raw.get("ahj") or {}), "max_air_temp_c": 1.0}
+    failing = tmp_path / "failing.json"
+    failing.write_text(json.dumps(raw))
+
+    at = AppTest.from_string(
+        "import streamlit as st\n"
+        "from app import state, theme\n"
+        "from app.views import result as view\n"
+        "from solit2.schema.design import Design\n"
+        "theme.inject()\n"
+        f'state.set_design(Design.load(r"{failing}"))\n'
+        "view.render()\n", default_timeout=90.0)
+    at.run()
+
+    assert not at.exception
+    result = at.session_state["result"]
+    assert result.score["gates_failed"], "fixture must actually fail a gate"
+    banner = next(m.value for m in at.markdown if 'class="verdict' in m.value)
+    assert "FAIL" in banner and "PASS" not in banner
+    assert f'{len(result.score["criteria_unset"])} criteria not judged' in banner
