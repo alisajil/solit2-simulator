@@ -284,6 +284,8 @@ def test_exposure_length_saturates_at_the_instrumented_span():
     whole window rather than its true physical extent. The reported figure is a
     measurement, not a horizon."""
 
+    import dataclasses
+
     lo, hi = sim.STRUCTURE_SCAN_MIN_M, sim.STRUCTURE_SCAN_MAX_M
     span_m = hi - lo + thermal.STRUCTURE_SCAN_STEP_M
     # The window saturates once the FAR edge is above the threshold, so the fire
@@ -291,7 +293,17 @@ def test_exposure_length_saturates_at_the_instrumented_span():
     # is the point: the size needed moved 150 -> 220 MW at the last refit and
     # would have moved again at this one.
     f = _bore_field(1.2 * _hrr_clearing_mw(500.0, hi))
-    assert thermal.exposure_length_m(f, 500.0, lo, hi) == pytest.approx(span_m)
+
+    # Upstream is only hot as far as the backlayer reaches. With none, a fire
+    # of any size heats the downstream half of the window and nothing before
+    # the fire -- which is the asymmetry a ventilated tunnel actually has.
+    downstream_only = hi + thermal.STRUCTURE_SCAN_STEP_M
+    assert f.backlayer_m == 0.0
+    assert thermal.exposure_length_m(f, 500.0, lo, hi) == pytest.approx(downstream_only)
+
+    # Give it a backlayer that covers the upstream edge and the window saturates.
+    backlayered = dataclasses.replace(f, backlayer_m=4.0 * abs(lo))
+    assert thermal.exposure_length_m(backlayered, 500.0, lo, hi) == pytest.approx(span_m)
 
 
 def test_exposure_length_rejects_a_non_positive_scan_step():

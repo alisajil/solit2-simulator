@@ -348,7 +348,17 @@ def run_once(design: Design, section: str, velocity_ms: float) -> RunTrace:
     for _ in range(total_steps):
         state = fire_mod.step(scene.model, state, DT_S, mist)
         q_conv = fire_mod.convective_kw(scene.model, state.hrr_mw)
-        vent = ventilation.evaluate(scene.geom, velocity_ms, q_conv)
+        # Backlayering and the critical velocity are driven by buoyancy, so by
+        # the convective heat that actually reaches the gas. The mist takes its
+        # share first. `thermal.field` already applies exactly this factor to
+        # the ceiling excess; ventilation was reading the uncooled figure, so
+        # the same heat drove the plume twice and the critical velocity came
+        # out as if the system were off. On reference case c4 that predicted
+        # 30 m of backlayering at 2.25 m/s where the test reported none.
+        # `mist` here is the previous step's, the same one-step lag
+        # `fire_mod.step` above already runs on.
+        q_conv_gas = q_conv * (1.0 - mist.chi_cool)
+        vent = ventilation.evaluate(scene.geom, velocity_ms, q_conv_gas)
         _detect(scene, events, state.hrr_mw, state.t_s)
         flow_fraction = _flow_fraction(scene.design.zones, events, state.t_s)
 
