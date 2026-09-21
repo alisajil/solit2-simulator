@@ -1,4 +1,5 @@
 """No FDS is assumed: the runner is stubbed at the module boundary."""
+import os
 from pathlib import Path
 
 from solit2 import history
@@ -20,10 +21,14 @@ def _isolate(monkeypatch, tmp_path, problems):
     return tmp_path / "runs" / _design_sha(Design.load(EXAMPLE))
 
 
-def _fake_run(run_dir: Path, log: str, t_end: float = 1200.0) -> None:
+def _fake_run(run_dir: Path, log: str, t_end: float = 1200.0, pid: str | None = None) -> None:
     run_dir.mkdir(parents=True)
     (run_dir / "deck.fds").write_text(f"&HEAD CHID='x' /\n&TIME T_END={t_end} /\n")
     (run_dir / "x.out").write_text(log)
+    # `run()` writes this for everything the app launches, and `stop()` needs it
+    # to know which processes are the run's own.
+    if pid is not None:
+        (run_dir / fds_runner.PID_NAME).write_text(pid)
 
 
 def test_without_fds_the_step_says_so_and_offers_no_start(run_view, monkeypatch, tmp_path):
@@ -520,16 +525,39 @@ def test_the_simulated_window_reaches_past_an_hour():
     assert cfd.DURATIONS["Full (design duration)"] is None
 
 
+def test_a_stop_that_could_not_find_the_run_says_so_and_does_not_badge_it(
+        run_view, monkeypatch, tmp_path):
+    """A run launched outside the app writes no pid file, so there is nothing
+    to signal. The button must report that rather than leave a stopped badge
+    over ranks that are still going."""
+    from app.views import cfd
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    _fake_run(run_dir, "Time Step 10\n Total Time:  120.0 s\n", t_end=1200.0, pid=None)
+    monkeypatch.setattr(cfd, "_load_slice", lambda *a, **kw: None)
+    monkeypatch.setattr(cfd.fds_runner, "series", lambda *a, **kw: {})
+    at = run_view("cfd")
+    at.button(key="fds_stop").click().run()
+    assert not at.exception
+    assert any("Could not stop" in e.value for e in at.error)
+    assert not fds_runner.was_stopped(run_dir)
+
+
 def test_a_running_run_offers_both_a_pause_and_a_hard_stop(run_view, monkeypatch, tmp_path):
     """Pausing needs FDS to reach another time step to notice. A wedged run
     never does -- one sat unmoving for seven hours with every process alive --
     so there has to be a way out that does not depend on it."""
     from app.views import cfd
     run_dir = _isolate(monkeypatch, tmp_path, [])
-    _fake_run(run_dir, "Time Step 10\n Total Time:  120.0 s\n", t_end=1200.0)
+    _fake_run(run_dir, "Time Step 10\n Total Time:  120.0 s\n", t_end=1200.0, pid="4242")
     (run_dir / "deck.fds").write_text("&HEAD CHID='x' /\n&TIME T_END=1200.0 /\n")
     monkeypatch.setattr(cfd, "_load_slice", lambda *a, **kw: None)
     monkeypatch.setattr(cfd.fds_runner, "series", lambda *a, **kw: {})
+    # Alive, with the kill itself stubbed: the button's job is to ask, and
+    # stop()'s own tests cover what the asking does.
+    monkeypatch.setattr(cfd.fds_runner, "_pid_alive", lambda pid: True)
+    monkeypatch.setattr(os, "getpgid", lambda pid: 9999)
+    monkeypatch.setattr(os, "killpg", lambda pgid, sig: None)
+    monkeypatch.setattr(cfd.fds_runner.time, "sleep", lambda s: None)
     at = run_view("cfd")
     keys = {b.key for b in at.button}
     assert {"fds_pause", "fds_stop"} <= keys

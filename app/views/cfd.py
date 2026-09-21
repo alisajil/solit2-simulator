@@ -94,7 +94,14 @@ def _pause_controls(run_dir: Path) -> None:
             return
         st.rerun(scope="app")
     if stop_col.button("Stop it now", key="fds_stop"):
-        killed = fds_runner.stop(run_dir)
+        try:
+            killed = fds_runner.stop(run_dir)
+        except OSError as exc:
+            # Refusing is the honest answer when the run's processes cannot be
+            # identified or are not this session's to signal. Reporting it as
+            # stopped would leave the run going behind a stopped badge.
+            st.error(f"Could not stop the run: {exc}")
+            return
         st.session_state["_fds_stop_killed"] = killed
         st.rerun(scope="app")
     pause_col.caption("Asks FDS to finish the step it is on, write its restart files and "

@@ -554,30 +554,79 @@ def test_resume_refuses_when_there_is_nothing_to_resume_from():
         runner.resume(d, Design.load("designs/og-dbr-rev0.json"))
 
 
+def _run_dir_on_the_real_deck(design, t_end=100.0, reached=25.0):
+    """A run directory carrying the deck this design actually generates, which
+    is what the mesh check compares against."""
+    import tempfile
+    from pathlib import Path
+    from solit2.engines.fds import deck as deck_mod
+    d = Path(tempfile.mkdtemp())
+    (d / "deck.fds").write_text(deck_mod.generate(design, t_end_s=t_end))
+    (d / "run.out").write_text(f"Total Time:  {reached:.3f} s\n")
+    return d
+
+
 def test_resume_clears_the_stop_file_and_asks_for_a_restart(monkeypatch):
     """Leaving the stop file in place would shut the resumed run down on its
     first step."""
-    import tempfile
-    from pathlib import Path
     from solit2.schema.design import Design
-    d = _run_dir_with_deck(Path(tempfile.mkdtemp()))
+    design = Design.load("designs/og-dbr-rev0.json")
+    d = _run_dir_on_the_real_deck(design)
     runner.pause(d)
-    (d / "abc.restart").write_text("")
+    (d / "x.restart").write_text("")
     monkeypatch.setattr(runner, "run", lambda deck, out: "launched")
-    assert runner.resume(d, Design.load("designs/og-dbr-rev0.json"), t_end_s=300.0) == "launched"
+    assert runner.resume(d, design, t_end_s=300.0) == "launched"
     assert not runner.is_paused(d), "the stop file must be gone"
     deck_text = (d / "deck.fds").read_text()
     assert "RESTART=.TRUE." in deck_text
     assert "T_END=300.0" in deck_text
 
 
-def test_stop_marks_the_run_and_keeps_its_checkpoints():
+def test_resume_refuses_when_the_mesh_moved_under_the_checkpoints(monkeypatch):
+    """A restart file is a per-mesh dump of the solution arrays, so it only
+    means anything under the mesh that wrote it. This is the real case: a run
+    checkpointed on ten uniform 60 m meshes, resumed after the generator
+    started splitting the window into a fine core and a coarser far field."""
+    from solit2.schema.design import Design
+    design = Design.load("designs/og-dbr-rev0.json")
+    d = _run_dir_on_the_real_deck(design)
+    uniform = "\n".join(f"&MESH IJK=100,19,13, XB={-360.0 + 60 * i:.1f},"
+                         f"{-360.0 + 60 * (i + 1):.1f},-5.70,5.70,0.0,7.80 /"
+                         for i in range(10))
+    text = (d / "deck.fds").read_text().splitlines(keepends=True)
+    kept = [ln for ln in text if not ln.startswith("&MESH")]
+    (d / "deck.fds").write_text("".join(kept[:6]) + uniform + "\n" + "".join(kept[6:]))
+    runner.pause(d)
+    (d / "x.restart").write_text("")
+    monkeypatch.setattr(runner, "run", lambda deck, out: "launched")
+    with pytest.raises(ValueError, match="different mesh"):
+        runner.resume(d, design)
+    assert runner.is_paused(d), "a refused resume must not touch the run's state"
+    assert "RESTART=.TRUE." not in (d / "deck.fds").read_text(), "deck was rewritten anyway"
+
+
+def test_resume_refuses_when_the_checkpoints_have_no_deck_to_check_against(monkeypatch):
+    """Checkpoints with no deck beside them cannot be shown to match the mesh
+    this design generates now, and resuming on that basis is a guess."""
+    import tempfile
+    from pathlib import Path
+    from solit2.schema.design import Design
+    d = Path(tempfile.mkdtemp())
+    (d / "x.restart").write_text("")
+    monkeypatch.setattr(runner, "run", lambda deck, out: "launched")
+    with pytest.raises(FileNotFoundError, match="no deck.fds"):
+        runner.resume(d, Design.load("designs/og-dbr-rev0.json"))
+
+
+def test_stop_marks_the_run_and_keeps_its_checkpoints(monkeypatch):
     """A killed run is not a failed one, and whatever it already checkpointed
     is still worth resuming from."""
     import tempfile
     from pathlib import Path
     d = _run_dir_with_deck(Path(tempfile.mkdtemp()), reached=40.0)
     (d / "abc.restart").write_text("")
+    (d / runner.PID_NAME).write_text("4242")
+    monkeypatch.setattr(runner, "_pid_alive", lambda pid: False)
     assert runner.stop(d) is False, "nothing live to kill"
     assert runner.was_stopped(d)
     state = runner.status(d)
@@ -587,16 +636,70 @@ def test_stop_marks_the_run_and_keeps_its_checkpoints():
 
 
 def test_resuming_clears_the_stopped_marker_too(monkeypatch):
-    import tempfile
-    from pathlib import Path
     from solit2.schema.design import Design
-    d = _run_dir_with_deck(Path(tempfile.mkdtemp()))
+    design = Design.load("designs/og-dbr-rev0.json")
+    d = _run_dir_on_the_real_deck(design)
+    (d / runner.PID_NAME).write_text("4242")
+    monkeypatch.setattr(runner, "_pid_alive", lambda pid: False)
     runner.stop(d)
-    (d / "abc.restart").write_text("")
+    (d / "x.restart").write_text("")
     monkeypatch.setattr(runner, "run", lambda deck, out: "launched")
-    runner.resume(d, Design.load("designs/og-dbr-rev0.json"))
+    runner.resume(d, design)
     assert not runner.was_stopped(d), "else it would read as stopped while running"
     assert runner.status(d)["state"] != "stopped"
+
+
+def test_stop_refuses_to_mark_a_run_whose_processes_it_cannot_find():
+    """The bug this replaced: stop() wrote the stopped marker first and only
+    then looked for a pid. A run launched outside the app has no pid file, so
+    it was marked stopped while its ranks kept running, and `status` reported
+    "stopped" over a live run. Better to refuse and say why."""
+    import tempfile
+    from pathlib import Path
+    d = _run_dir_with_deck(Path(tempfile.mkdtemp()), reached=40.0)
+    with pytest.raises(FileNotFoundError, match="no way to tell which processes"):
+        runner.stop(d)
+    assert not runner.was_stopped(d), "a run it could not touch must not read as stopped"
+    assert runner.status(d)["state"] != "stopped"
+
+
+def test_stop_does_not_claim_a_kill_it_was_not_allowed_to_make(monkeypatch):
+    """Signalling someone else's process group fails with PermissionError.
+    Reporting that as a successful stop is the same lie in a different place."""
+    import os
+    import tempfile
+    from pathlib import Path
+    d = _run_dir_with_deck(Path(tempfile.mkdtemp()))
+    (d / runner.PID_NAME).write_text("4242")
+    monkeypatch.setattr(runner, "_pid_alive", lambda pid: True)
+    monkeypatch.setattr(os, "getpgid", lambda pid: 9999)
+
+    def denied(pgid, sig):
+        raise PermissionError("Operation not permitted")
+
+    monkeypatch.setattr(os, "killpg", denied)
+    with pytest.raises(PermissionError, match="not this session's to signal"):
+        runner.stop(d)
+    assert not runner.was_stopped(d)
+
+
+def test_stop_marks_a_run_whose_group_vanished_mid_signal(monkeypatch):
+    """The process can exit between the liveness check and the signal. That is
+    a stopped run, not a failure to stop one."""
+    import os
+    import tempfile
+    from pathlib import Path
+    d = _run_dir_with_deck(Path(tempfile.mkdtemp()))
+    (d / runner.PID_NAME).write_text("4242")
+    monkeypatch.setattr(runner, "_pid_alive", lambda pid: True)
+    monkeypatch.setattr(os, "getpgid", lambda pid: 9999)
+
+    def gone(pgid, sig):
+        raise ProcessLookupError("No such process")
+
+    monkeypatch.setattr(os, "killpg", gone)
+    assert runner.stop(d) is True
+    assert runner.was_stopped(d)
 
 
 def test_stop_signals_the_process_group_not_the_launcher_alone(monkeypatch):

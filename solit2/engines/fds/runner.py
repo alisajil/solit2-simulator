@@ -200,29 +200,84 @@ def stop(run_dir: Path) -> bool:
     stopping is not the graceful way to get there.
     """
     run_dir = Path(run_dir)
-    (run_dir / STOPPED_NAME).write_text("")
     pid_file = run_dir / PID_NAME
-    if not pid_file.exists():
-        return False
-    try:
-        pid = int(pid_file.read_text().strip())
-    except ValueError:
-        return False
+    pid = None
+    if pid_file.exists():
+        try:
+            pid = int(pid_file.read_text().strip())
+        except ValueError:
+            pid = None
+    # Establish that the run is over -- or can be ended -- BEFORE marking it
+    # stopped. Marking first and discovering afterwards that there was nothing
+    # to signal leaves `status` reporting "stopped" over a run whose ranks are
+    # still burning CPU, which is the tool describing a state it did not bring
+    # about. Seen for real on a run launched outside the app: stop() wrote the
+    # marker, found no pid file, returned False, and ten ranks kept going.
+    if pid is None:
+        raise FileNotFoundError(
+            f"{run_dir} has no readable {PID_NAME}, so there is no way to tell which "
+            f"processes belong to this run and stopping it here would be a claim, not "
+            f"an act. A run launched outside the app writes no pid file. End it from a "
+            f"terminal instead -- the launcher needs killing too, so "
+            f"`pkill -9 -f \"fds deck.fds\"` on its own is not enough")
     if not _pid_alive(pid):
+        (run_dir / STOPPED_NAME).write_text("")
         return False
     if os.name == "nt":
         subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)],
                        capture_output=True, check=False)
+        (run_dir / STOPPED_NAME).write_text("")
         return True
     for signal_number in (signal.SIGTERM, signal.SIGKILL):
         try:
             os.killpg(os.getpgid(pid), signal_number)
-        except (ProcessLookupError, PermissionError, OSError):
-            return True                    # already gone, or not ours to signal
+        except ProcessLookupError:
+            break                          # already gone between the check and the signal
+        except (PermissionError, OSError) as exc:
+            # Not ours to signal. Saying True here would report a kill that
+            # never happened.
+            raise PermissionError(
+                f"{run_dir} could not be stopped: {exc}. Its processes are not this "
+                f"session's to signal") from exc
         time.sleep(2)
         if not _pid_alive(pid):
-            return True
+            break
+    (run_dir / STOPPED_NAME).write_text("")
     return True
+
+
+def _mesh_lines(deck_text: str) -> list[str]:
+    """The deck's &MESH lines, which are what a restart file is written against."""
+    return [ln.strip() for ln in deck_text.splitlines() if ln.startswith("&MESH")]
+
+
+def _refuse_on_mesh_change(existing: str, regenerated: str, run_dir: Path) -> None:
+    """Refuse a resume whose mesh no longer matches the one on disk.
+
+    A restart file is a per-mesh dump of the solution arrays, so it only means
+    anything under the mesh that wrote it. `resume` rebuilds the deck from the
+    design to stop a run silently continuing under different physics -- but
+    the generator's own mesh layout can move between the checkpoint and the
+    resume, and then the rebuilt deck asks FDS to pour old arrays into a
+    differently shaped domain. This caught exactly that: a run checkpointed on
+    ten uniform 60 m meshes, resumed after the generator started splitting the
+    window into a fine core and a coarser far field.
+
+    ponytail: compares the &MESH lines only. They are what the restart files
+    are indexed by; a changed obstruction is a physics change and is the
+    design's business, not this check's.
+    """
+    before, after = _mesh_lines(existing), _mesh_lines(regenerated)
+    if before == after:
+        return
+    detail = (f"{len(before)} meshes then, {len(after)} now"
+              if len(before) != len(after) else
+              next(f"was {a}, now {b}" for a, b in zip(before, after) if a != b))
+    raise ValueError(
+        f"{run_dir} was checkpointed on a different mesh than this design "
+        f"generates now ({detail}). A restart file only means anything under "
+        f"the mesh that wrote it, so this run has to start again rather than "
+        f"resume")
 
 
 def resume(run_dir: Path, design, t_end_s: float | None = None) -> str:
@@ -232,6 +287,11 @@ def resume(run_dir: Path, design, t_end_s: float | None = None) -> str:
     shut straight back down -- then rewrites the deck with `RESTART=.TRUE.`
     and relaunches. Everything else in the deck is regenerated from the same
     design, so a resumed run cannot silently continue under different physics.
+
+    Regenerating is also how the mesh can move under a run, so the rebuilt
+    deck is checked against the one the checkpoints were written on and a
+    changed mesh is refused rather than restarted into -- see
+    `_refuse_on_mesh_change`.
     """
     from solit2.engines.fds import deck as deck_mod
 
@@ -242,15 +302,25 @@ def resume(run_dir: Path, design, t_end_s: float | None = None) -> str:
             f"FDS writes them on a graceful stop and every "
             f"{deck_mod.DT_RESTART_S:.0f} s of simulated time; a run killed outright "
             f"before its first checkpoint has to start again")
+    existing = run_dir / "deck.fds"
+    if not existing.exists():
+        raise FileNotFoundError(
+            f"{run_dir} holds checkpoints but no deck.fds, so the mesh they were "
+            f"written on cannot be checked against the one this design generates "
+            f"now. Resuming would be a guess; start the run again")
+    regenerated = deck_mod.generate(design, t_end_s=t_end_s, restart=True)
+    _refuse_on_mesh_change(existing.read_text(), regenerated, run_dir)
+    # Nothing above this line has changed anything on disk: a refused resume
+    # leaves the run exactly as it found it, still stopped and still resumable
+    # by whoever fixes the mismatch.
     marker = stop_file(run_dir)
     if marker is not None and marker.exists():
         marker.unlink()
     stopped = run_dir / STOPPED_NAME
     if stopped.exists():
         stopped.unlink()
-    (run_dir / "deck.fds").write_text(
-        deck_mod.generate(design, t_end_s=t_end_s, restart=True))
-    return run(run_dir / "deck.fds", run_dir)
+    existing.write_text(regenerated)
+    return run(existing, run_dir)
 
 
 def log_path(run_dir: Path) -> Path | None:
