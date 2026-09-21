@@ -111,13 +111,35 @@ $env:SOLIT2_FDS_BIN = "C:\Program Files\firemodels\FDS6\bin\fds.exe"
 
 The deck splits the tunnel into 10 meshes and runs one MPI rank per mesh. An
 i5-12400F has **6 physical cores** (12 threads), so 10 ranks oversubscribe it.
-It will run, and each rank will be slower than it would be on a machine with a
-core to itself.
 
-For scale, measured on an 11-core Mac: 250 seconds of simulated fire took
-81 minutes. A full 60-minute fire is a multi-day run. This is normal for FDS at
-this resolution and is why the CFD step defaults to a 20-minute window rather
-than the full discharge.
+Whether that is slower than the Mac it was developed on is genuinely not
+obvious, and the honest answer is that nobody has measured it. The factors run
+both ways:
+
+| | M3 Pro Mac | i5-12400F PC |
+|---|---|---|
+| cores the ranks land on | 5 performance + 6 efficiency | 6 equal performance |
+| memory bandwidth | ~150 GB/s unified | ~51 GB/s DDR4-3200 dual channel |
+| FDS build | self-compiled ARM, from master | official Intel-compiled release |
+
+Memory bandwidth favours the Mac and matters, because FDS is bandwidth-bound
+at this mesh size. The build favours the PC: the official Windows binary is
+compiled and tuned by the FDS team, against a local ARM build of master.
+
+Core layout is the subtle one. MPI ranks synchronise every time step, so the
+whole run moves at the pace of its slowest rank. Ten ranks on a machine with
+five fast cores and six slow ones means half of them land on efficiency cores
+and the other half wait for them each step. Six equal cores have no straggler,
+even oversubscribed.
+
+For scale, measured: 250 seconds of simulated fire took 81 minutes on the Mac.
+A full 60-minute fire is a multi-day run. That is normal for FDS at this
+resolution and is why the CFD step defaults to a 20-minute window rather than
+the full discharge.
+
+The way to settle it is to run the same deck on both and compare, which costs
+about 80 minutes of wall clock and produces a real number instead of an
+argument.
 
 If you want the mesh count to match the cores, `MESH_COUNT` in
 `solit2/engines/fds/deck.py` must divide the window evenly — 5 meshes of 200
