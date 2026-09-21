@@ -161,7 +161,12 @@ def _canvas(design: Design, trace: RunTrace, run_dir: Path, run_state: str,
                 field, key = slices.difference(mist, free, DIFFERENCE_LABEL), f"cfd_diff_{quantity}"
             except ValueError as exc:
                 st.warning(f"The two runs cannot be differenced yet: {exc}")
-    st.plotly_chart(twin_canvas.figure(design, trace, cfd=field), key=key, theme=None)
+    # Opened on the newest frame, not on t = 0: at t = 0 a difference field is
+    # zero everywhere and the water-mass field holds no droplets, so the two
+    # fields this selector exists for both open as an empty picture. The caption
+    # below already describes that last frame.
+    st.plotly_chart(twin_canvas.figure(design, trace, cfd=field, initial_frame=-1),
+                    key=key, theme=None)
     st.caption(_slice_caption(run_state, slice_))
 
 

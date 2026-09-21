@@ -330,3 +330,31 @@ def test_core_window_reaches_the_target_by_its_own_width(design):
     fp = design.fire.footprint
     window = tc.core_window_m(design)
     assert window[1] >= design.fire.target_x_m + fp.width_m
+
+
+def test_a_negative_initial_frame_opens_on_the_newest_frame(design, trace):
+    """A CFD replay opened at t = 0 shows an empty picture: a difference field is
+    exactly zero before anything happens, and the water-mass field holds no
+    droplets until the system activates. Both are what the field selector is for."""
+    import numpy as np
+
+    from solit2.engines.fds.slices import Slice
+    x, z = np.linspace(-360.0, 240.0, 8), np.linspace(0.0, 7.0, 4)
+    t = np.array([0.0, 100.0, 200.0])
+    # empty at t=0, and only the last frame carries anything
+    frames = np.zeros((3, 4, 8))
+    frames[-1] = 42.0
+    slice_ = Slice("TEMPERATURE", "C", x, z, t, frames)
+
+    def first_heatmap(fig):
+        return next(tr for tr in fig.data if tr.type == "heatmap")
+
+    opened_last = tc.figure(design, trace, cfd=slice_, initial_frame=-1)
+    assert float(np.asarray(first_heatmap(opened_last).z).max()) == 42.0
+
+    opened_first = tc.figure(design, trace, cfd=slice_)
+    assert float(np.asarray(first_heatmap(opened_first).z).max()) == 0.0, "the old behaviour"
+
+    # the slider and the frames still cover the whole run either way
+    assert len(opened_last.frames) == len(opened_first.frames) == 3
+    assert opened_last.layout.sliders[0].active == 2

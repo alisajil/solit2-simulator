@@ -435,7 +435,13 @@ def figure(design: Design, trace: RunTrace, *, cfd: Slice | None = None, initial
             traces = cfd_layer(cfd, cfd_idx[k])[0] + traces
         return traces, shapes
 
-    k0 = min(max(initial_frame, 0), len(steps) - 1)
+    # A negative index counts from the end, so -1 opens on the newest frame.
+    # A CFD replay opened at t = 0 shows an empty picture: the difference field
+    # is exactly zero everywhere before anything has happened, and the water-mass
+    # field has no droplets in it until the system activates. Both are the very
+    # things the field selector exists to show.
+    k0 = len(steps) + initial_frame if initial_frame < 0 else initial_frame
+    k0 = min(max(k0, 0), len(steps) - 1)
     traces0, shapes0 = instant(k0)
     names = [mmss(t) for t in times]
     frames = []
