@@ -32,6 +32,18 @@ _DETACHED = ({"creationflags": 0x00000008 | 0x00000200}   # DETACHED_PROCESS | N
 # sat at 935.8 s of 3600 s for seven hours with nine ranks spinning at 100% CPU,
 # and the app reported "running -- 26%" for all of it.
 STALL_AFTER_S = 900.0
+# FDS is MPI across meshes AND OpenMP inside each mesh, and its OpenMP default
+# is one thread per core -- per rank. A ten-mesh deck on an eleven-core machine
+# therefore asks for 110 threads, and the ranks spend their time descheduling
+# each other instead of solving. Measured on identical 20 s decks, same machine:
+#
+#   10 ranks x 11 threads (FDS default)   332 s
+#   10 ranks x 1 thread                   119 s
+#
+# One thread per rank, with the rank count already matching the mesh count, is
+# the whole core budget spent once. An OMP_NUM_THREADS the caller set is theirs
+# and is left alone.
+OMP_THREADS_PER_RANK = "1"
 REMOTE_ENV = "SOLIT2_FDS_HOST"
 SMV_ENV = "SOLIT2_SMV_BIN"
 MIN_FREE_BYTES = 10 * 1024**3          # parent spec: 10 GB floor
@@ -98,6 +110,8 @@ def run(deck_path: Path, out_dir: Path) -> str:
     FDS assigns meshes to ranks in order. A bare `fds` invocation runs every
     mesh in one process, which is valid but serial -- measured at 2.1x slower
     than three ranks on a three-mesh deck on the machine this was built on.
+
+    Each rank gets one OpenMP thread; see OMP_THREADS_PER_RANK for why.
     """
     problems = preflight()
     if problems:
@@ -107,11 +121,13 @@ def run(deck_path: Path, out_dir: Path) -> str:
     if Path(deck_path).resolve() != local_deck.resolve():
         shutil.copy(deck_path, local_deck)
     ranks = max(mesh_count(local_deck), 1)
+    env = {**os.environ}
+    env.setdefault("OMP_NUM_THREADS", OMP_THREADS_PER_RANK)
     with (out_dir / LOG_NAME).open("w") as log:
         process = subprocess.Popen([shutil.which("mpiexec"), "-np", str(ranks),
                                     _binary(), local_deck.name],
                                    cwd=out_dir, stdout=log, stderr=subprocess.STDOUT,
-                                   **_DETACHED)
+                                   env=env, **_DETACHED)
     # So `status` can tell "still going" from "gone". A run launched from the
     # terminal writes no pid file, which is why `status` also watches the clock.
     (out_dir / PID_NAME).write_text(str(process.pid))

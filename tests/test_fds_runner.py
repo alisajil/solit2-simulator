@@ -180,6 +180,46 @@ def test_run_launches_one_mpi_rank_per_mesh(ready, monkeypatch, tmp_path):
     assert argv[3].endswith("fds") and argv[4] == "deck.fds"
 
 
+def test_each_rank_is_launched_with_one_openmp_thread(ready, monkeypatch, tmp_path):
+    # FDS defaults to one OpenMP thread per core PER RANK, so a ten-mesh deck
+    # on an eleven-core machine asks for 110 threads and the ranks descheduling
+    # each other cost more than the parallelism buys: 332 s against 119 s on
+    # identical 20 s decks. The rank count already spends the core budget.
+    captured = {}
+
+    class FakePopen:
+        pid = 1
+
+        def __init__(self, argv, **kwargs):
+            captured["env"] = kwargs.get("env")
+
+    monkeypatch.setattr(runner.subprocess, "Popen", FakePopen)
+    monkeypatch.delenv("OMP_NUM_THREADS", raising=False)
+    deck = tmp_path / "deck.fds"
+    deck.write_text("&MESH IJK=1,1,1, XB=0,1,0,1,0,1 /\n" * 2 + "&TAIL /\n")
+    runner.run(deck, tmp_path)
+    assert captured["env"]["OMP_NUM_THREADS"] == "1"
+
+
+def test_an_openmp_thread_count_the_caller_set_is_left_alone(ready, monkeypatch, tmp_path):
+    # Someone who exports OMP_NUM_THREADS has a reason -- a different machine,
+    # a deck with one mesh and cores to spare. The default must not overrule it.
+    captured = {}
+
+    class FakePopen:
+        pid = 1
+
+        def __init__(self, argv, **kwargs):
+            captured["env"] = kwargs.get("env")
+
+    monkeypatch.setattr(runner.subprocess, "Popen", FakePopen)
+    monkeypatch.setenv("OMP_NUM_THREADS", "4")
+    deck = tmp_path / "deck.fds"
+    deck.write_text("&MESH IJK=1,1,1, XB=0,1,0,1,0,1 /\n&TAIL /\n")
+    runner.run(deck, tmp_path)
+    assert captured["env"]["OMP_NUM_THREADS"] == "4"
+
+
 def test_mesh_count_reads_the_deck(tmp_path):
     deck = tmp_path / "d.fds"
     deck.write_text("&HEAD /\n&MESH a /\n&MESH b /\n&MESH c /\n&TAIL /\n")
