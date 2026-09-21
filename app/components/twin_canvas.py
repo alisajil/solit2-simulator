@@ -16,6 +16,8 @@ import plotly.colors as pcolors
 import plotly.graph_objects as go
 
 from app import palette
+from app.components import cross_section
+from solit2.engines.fds import deck as fds_deck
 from solit2.engines.fds.deck import CEILING_OFFSET_M, CORE_M, WINDOW_M, detector_x_m
 from solit2.engines.fds.slices import DIFFERENCE_PREFIX, Slice
 from solit2.engines.reduced.criteria import (
@@ -192,6 +194,28 @@ def detector_layer(design: Design, geom: SectionGeometry, window_m: tuple[float,
                             for x in xs])
 
 
+def _station_heights(design: Design, geom: SectionGeometry, name: str,
+                     sample) -> list[tuple[float, list[str]]]:
+    """The heights this station is measured at, and what sits at each.
+
+    An elevation cannot show a lateral position, so Annex 7 Figure 16's two
+    wall sensors at one height land on one point here and are listed together
+    rather than drawn twice. The heights themselves come from
+    `deck.figure_16_positions`, the same call that places the CFD devices, so
+    the twin, the cross-section and the deck all mark the same sensors.
+    """
+    fuel = fds_deck.fuel_box(design, geom)
+    placed = fds_deck.figure_16_positions(INSTRUMENTS[name], STATIONS[name], geom,
+                                          fds_deck.DX_M, fuel,
+                                          (fuel, fds_deck.target_box(design, geom)))
+    if not placed:
+        return [(z, []) for z in sample.heights_m]
+    at: dict[float, list[str]] = {}
+    for position, _, z in placed:
+        at.setdefault(round(z, 3), []).append(f"{position:02d}")
+    return sorted((z, names) for z, names in at.items())
+
+
 def instrument_layer(design: Design, geom: SectionGeometry, step: StepRecord,
                      window_m: tuple[float, float], cmax_c: float) -> Layer:
     xs, zs, temps, hover = [], [], [], []
@@ -205,11 +229,13 @@ def instrument_layer(design: Design, geom: SectionGeometry, step: StepRecord,
                             line={"color": STRUCTURE_COLOUR, "width": 1}))
         names_x.append(x)
         names.append(name)
-        for z, t in zip(sample.heights_m, sample.temps_c):
+        for z, positions in _station_heights(design, geom, name, sample):
+            t = cross_section.temperature_at(sample, z)
             xs.append(x)
             zs.append(z)
             temps.append(t)
-            hover.append(f"{name} · {z:.1f} m · {t:.0f} °C")
+            hover.append(f"{name} · " + (", ".join(positions) + " · " if positions else "")
+                         + f"{z:.2f} m · {t:.0f} °C")
         flux = _flux_visibility_readings(sample, INSTRUMENTS[name])
         if flux:
             fx.append(x)
@@ -451,7 +477,8 @@ def figure(design: Design, trace: RunTrace, *, cfd: Slice | None = None, initial
                                layout=go.Layout(shapes=shapes_k)))
     fig = go.Figure(data=traces0, frames=frames)
     fig.update_layout(
-        shapes=shapes0, height=560, margin={"l": 10, "r": 10, "t": 110, "b": 10},
+        # 60 px clears the y-axis title and its tick labels; at 10 they overlap.
+        shapes=shapes0, height=560, margin={"l": 60, "r": 10, "t": 110, "b": 10},
         xaxis={"title": "distance from mock-up centre (m)", "range": list(window_m), "zeroline": False},
         yaxis={"title": "height (m)", "range": [-0.3, geom.crown_height_m + 1.0]},
         legend={"orientation": "h", "y": -0.2}, updatemenus=[_play_menu()],

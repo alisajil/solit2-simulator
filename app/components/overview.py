@@ -110,7 +110,8 @@ def figure(design: Design, geom: SectionGeometry) -> go.Figure:
                                                                         design.ventilation.velocity_range_ms)])
     half = geom.road_width_m / 2.0
     fig.update_layout(
-        height=300, margin={"l": 10, "r": 10, "t": 30, "b": 10},
+        # 60 px clears the y-axis title and its tick labels; at 10 they overlap.
+        height=300, margin={"l": 60, "r": 10, "t": 30, "b": 10},
         shapes=[tunnel_outline(design, geom, x_range), *fire_and_target(design, geom)],
         xaxis={"title": "distance from mock-up centre (m)", "range": list(x_range)},
         yaxis={"title": "across the tunnel (m)", "range": [-half - 4.0, half + 4.0],

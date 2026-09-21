@@ -52,15 +52,19 @@ def _station_chart(design: Design, geom: SectionGeometry, trace: RunTrace,
                                  mode="lines", name=f"{z:.1f} m"))
     fig.update_layout(height=CHART_HEIGHT, xaxis_title="test clock (s)",
                       yaxis_title="gas temperature (°C)", legend_title="height",
-                      margin={"l": 10, "r": 10, "t": 10, "b": 10})
+                      # 60 px clears the y-axis title and its tick labels.
+                      margin={"l": 60, "r": 10, "t": 10, "b": 10})
     st.plotly_chart(fig, key="station_chart")
     st.caption(_kit_caption(name))
 
     st.plotly_chart(cross_section.figure(design, geom, step, name, cmax_c),
                     key="cross_section", theme=None)
-    st.caption("Thermocouples read on the tunnel centreline: the reduced-order engine models "
-               "a vertical temperature profile, not a lateral one, so no left/right position "
-               "is shown for them. Nozzle rows and the tunnel outline are real lateral data.")
+    st.caption("Thermocouples sit where Annex 7 Figure 16 puts them — two on each side wall "
+               "bracketing the load, one at the ceiling, two on the load — at the same "
+               "positions the CFD deck measures at. Their COLOURS are a vertical profile: "
+               "this engine resolves temperature against height and carries no lateral "
+               "position, so two sensors at one height read alike whichever wall they are "
+               "on. The positions are the standard's; the temperatures are Tier 1's.")
 
 
 def render() -> None:

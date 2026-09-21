@@ -78,9 +78,32 @@ def test_instrument_layer_has_one_mast_per_station_and_one_dot_per_thermocouple(
     traces, shapes = tc.instrument_layer(design, geom, step, tc.WINDOW_M, 400.0)
     in_window = [n for n, x in STATIONS.items() if tc.WINDOW_M[0] <= x <= tc.WINDOW_M[1]]
     assert len(_shapes_of_type(shapes, "line")) == len(in_window)
-    assert len(traces[0].x) == sum(len(step.stations[n].heights_m) for n in in_window)
+    # One dot per measured HEIGHT, not per sensor: an elevation cannot show a
+    # lateral position, so Figure 16's two wall sensors at one height land on
+    # one point and the hover lists both.
+    expected = sum(len(tc._station_heights(design, geom, n, step.stations[n]))
+                   for n in in_window)
+    assert len(traces[0].x) == expected
     names = next(t for t in traces if t.name == "stations")
     assert list(names.text) == sorted(in_window, key=STATIONS.get)
+
+
+def test_the_twin_marks_the_heights_the_deck_measures_at(design, geom, trace):
+    """The twin, the cross-section and the CFD deck all read
+    `deck.figure_16_positions`, so they cannot mark different sensors."""
+    from solit2.engines.fds import deck as fds_deck
+    from solit2.engines.reduced.criteria import INSTRUMENTS
+    step = trace.steps[len(trace.steps) // 2]
+    fuel = fds_deck.fuel_box(design, geom)
+    solids = (fuel, fds_deck.target_box(design, geom))
+    for name in ("D03", "D15"):
+        placed = fds_deck.figure_16_positions(INSTRUMENTS[name], STATIONS[name], geom,
+                                              fds_deck.DX_M, fuel, solids)
+        drawn = tc._station_heights(design, geom, name, step.stations[name])
+        assert [z for z, _ in drawn] == sorted({round(z, 3) for _, _, z in placed}), name
+        # the two wall sensors at the fuel's base share one point and both are named
+        shared = next(names for z, names in drawn if len(names) > 1)
+        assert len(shared) >= 2
 
 
 def test_flux_gauges_draw_at_1_5_m_and_co_at_breathing_height_where_table_5_puts_them(design, geom, trace):

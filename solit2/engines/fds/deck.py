@@ -747,7 +747,7 @@ def annex7_id(type_key: str, station: str, position: int) -> str:
 
 
 def _figure_16_positions(station: str, kit, x_m: float, geom: SectionGeometry,
-                         dx_m: float, fuel: Box, solids: tuple[Box, ...]) -> list[str]:
+                         dx_m: float, fuel: Box, solids: tuple[Box, ...]) -> list[str]:  # noqa: D401
     """The cross-section laid out as Annex 7 Figure 16 draws it.
 
     Figure 16 numbers seven thermocouples round a cross-section, and it is not
@@ -778,6 +778,20 @@ def _figure_16_positions(station: str, kit, x_m: float, geom: SectionGeometry,
     the only thing Tier 1 can be compared against -- that engine resolves a
     vertical profile and no lateral one at all.
     """
+    return [f"&DEVC ID='{annex7_id('thermocouple', station, position)}', "
+            f"XYZ={x_m:.2f},{y:.2f},{z:.2f}, QUANTITY='THERMOCOUPLE' /"
+            for position, y, z in figure_16_positions(kit, x_m, geom, dx_m, fuel, solids)]
+
+
+def figure_16_positions(kit, x_m: float, geom: SectionGeometry, dx_m: float,
+                        fuel: Box, solids: tuple[Box, ...]) -> list[tuple[int, float, float]]:
+    """(position number, y, z) for the cross-section, as data.
+
+    The single source of the Figure 16 layout: the deck turns these into DEVC
+    lines and the cross-section view draws them, so the picture cannot drift
+    away from what is measured. See `_figure_16_positions` for what the figure
+    shows and for which heights are read off it.
+    """
     if kit.thermocouples < LOAD_SIDE_TREE_MIN_TC:
         return []
     ceiling = ceiling_z_at(geom, 0.0, dx_m)
@@ -789,14 +803,12 @@ def _figure_16_positions(station: str, kit, x_m: float, geom: SectionGeometry,
     if kit.thermocouples >= 7:
         layout += [(6, outboard, fuel.z0), (7, fuel.y_centre_m if in_plane else 0.0,
                                             fuel.z1 + dx_m / 2.0)]
-    lines = []
+    out = []
     for position, y, z in layout[:kit.thermocouples]:
         placed = clear_of_solids_z_m(min(z, ceiling), x_m, y, solids, ceiling, dx_m)
-        if placed is None:
-            continue
-        lines.append(f"&DEVC ID='{annex7_id('thermocouple', station, position)}', "
-                     f"XYZ={x_m:.2f},{y:.2f},{placed:.2f}, QUANTITY='THERMOCOUPLE' /")
-    return lines
+        if placed is not None:
+            out.append((position, y, placed))
+    return out
 
 
 def _table_5_profiles(name: str, kit, x_m: float, geom: SectionGeometry,

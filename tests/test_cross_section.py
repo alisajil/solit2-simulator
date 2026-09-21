@@ -44,14 +44,51 @@ def test_tunnel_outline_is_symmetric_and_matches_width_at(geom):
             assert x == pytest.approx(geom.width_at(z) / 2.0, abs=1e-9)
 
 
-def test_thermocouple_rake_sits_on_the_centreline_with_real_heights_and_temps(design, trace):
+def test_the_drawn_thermocouples_are_the_ones_the_deck_measures_at(design, geom, trace):
+    """Both read `deck.figure_16_positions`, so the picture cannot drift away
+    from the measurement."""
+    from solit2.engines.fds import deck as fds_deck
+    from solit2.engines.reduced.criteria import INSTRUMENTS, STATIONS
     step = trace.steps[len(trace.steps) // 2]
-    name = "D15"
-    rake = cs.thermocouple_rake(name, step, 400.0)
-    sample = step.stations[name]
-    assert list(rake.x) == [0.0] * len(sample.heights_m), "no lateral position is modelled"
-    assert list(rake.y) == list(sample.heights_m)
-    assert list(rake.marker.color) == list(sample.temps_c)
+    fuel = fds_deck.fuel_box(design, geom)
+    solids = (fuel, fds_deck.target_box(design, geom))
+    for name in ("D03", "D15"):
+        drawn = cs.thermocouple_rake(design, geom, name, step, 400.0)
+        placed = fds_deck.figure_16_positions(INSTRUMENTS[name], STATIONS[name], geom,
+                                              fds_deck.DX_M, fuel, solids)
+        assert placed, name
+        assert list(drawn.x) == [y for _, y, _ in placed], name
+        assert list(drawn.y) == [z for _, _, z in placed], name
+        assert any(y < 0 for y in drawn.x) and any(y > 0 for y in drawn.x), "both walls"
+
+
+def test_a_far_field_station_falls_back_to_the_vertical_ladder(design, geom, trace):
+    """Figure 16 draws no layout for a two-thermocouple section, and those
+    sensors are measured on the centreline."""
+    step = trace.steps[len(trace.steps) // 2]
+    drawn = cs.thermocouple_rake(design, geom, "D215", step, 400.0)
+    sample = step.stations["D215"]
+    assert list(drawn.x) == [0.0] * len(sample.heights_m)
+    assert list(drawn.y) == list(sample.heights_m)
+
+
+def test_the_colour_of_a_sensor_is_its_height_on_the_vertical_profile(design, geom, trace):
+    """Tier 1 resolves height and no lateral position, so two sensors at one
+    height read alike whichever wall they are on. That is a limit of the
+    engine, and the view must not imply otherwise by inventing a difference."""
+    step = trace.steps[len(trace.steps) // 2]
+    sample = step.stations["D03"]
+    drawn = cs.thermocouple_rake(design, geom, "D03", step, 400.0)
+    by_height = {}
+    for y, z, c in zip(drawn.x, drawn.y, drawn.marker.color):
+        by_height.setdefault(round(z, 6), set()).add(round(c, 6))
+    assert any(len(v) > 1 for v in by_height.values()) is False, "one height, one temperature"
+    # and the profile it interpolates is the station's own
+    assert cs.temperature_at(sample, sample.heights_m[0]) == pytest.approx(sample.temps_c[0])
+    assert cs.temperature_at(sample, sample.heights_m[-1]) == pytest.approx(sample.temps_c[-1])
+    mid_z = (sample.heights_m[0] + sample.heights_m[1]) / 2
+    lo, hi = sorted((sample.temps_c[0], sample.temps_c[1]))
+    assert lo <= cs.temperature_at(sample, mid_z) <= hi
 
 
 

@@ -3,12 +3,17 @@ in the style of Annex 7's own cross-sectional figures. The longitudinal twin
 (`twin_canvas.py`) looks along the tunnel; this looks across it, at one
 station, for one instant.
 
-The reduced-order engine resolves gas temperature only as a vertical rake at
-each station's centreline -- `StationSample.heights_m` / `temps_c` carry no
-lateral position -- so thermocouples are drawn on the centreline here,
-honestly, rather than spread across both walls the way a photographed rig
-would show them. The tunnel outline and the nozzle rows ARE real lateral
-data (`width_at`, `row_lateral_offsets_m`), so those are drawn to scale.
+Thermocouples are drawn where Annex 7 Figure 16 puts them -- two on each side
+wall bracketing the load, one at the ceiling, two on the load -- at the exact
+positions the FDS deck measures at, because both read the same
+`deck.figure_16_positions` rather than each deriving its own.
+
+Their COLOURS are a vertical profile. The reduced-order engine resolves gas
+temperature as a rake against height and carries no lateral position at all
+(`StationSample.heights_m` / `temps_c`), so two sensors at the same height on
+opposite walls can only be shown the same temperature. The positions are the
+standard's and the temperatures are Tier 1's, and the caption in
+`app/views/fire_test.py` says so on screen rather than only here.
 
 Annex 7 section 5.2.3 sites the fuel load eccentrically, offset toward one
 side wall -- deliberately, so the fire-fighting medium is not delivered
@@ -23,6 +28,7 @@ import plotly.graph_objects as go
 
 from app import palette
 from solit2.engines.reduced.criteria import HEAT_FLUX_HEIGHT_M, INSTRUMENTS, STATIONS
+from solit2.engines.fds import deck as fds_deck
 from solit2.engines.reduced.geometry import SectionGeometry, fire_lateral_m
 from solit2.engines.reduced.state import StepRecord
 from solit2.schema.design import Design
@@ -48,14 +54,55 @@ def tunnel_outline(geom: SectionGeometry) -> go.Scatter:
                       showlegend=False, hoverinfo="skip", name="tunnel")
 
 
-def thermocouple_rake(name: str, step: StepRecord, cmax_c: float) -> go.Scatter:
+def temperature_at(sample, z_m: float) -> float:
+    """The station's gas temperature at a height, from its vertical rake.
+
+    Tier 1 resolves height and nothing else, so this is the only answer it can
+    give a sensor wherever that sensor sits laterally.
+    """
+    heights, temps = list(sample.heights_m), list(sample.temps_c)
+    if z_m <= heights[0]:
+        return temps[0]
+    if z_m >= heights[-1]:
+        return temps[-1]
+    for lo, hi, t_lo, t_hi in zip(heights, heights[1:], temps, temps[1:]):
+        if lo <= z_m <= hi:
+            return t_lo + (t_hi - t_lo) * ((z_m - lo) / (hi - lo) if hi > lo else 0.0)
+    return temps[-1]
+
+
+def thermocouple_rake(design: Design, geom: SectionGeometry, name: str,
+                      step: StepRecord, cmax_c: float) -> go.Scatter:
+    """The station's thermocouples at Annex 7 Figure 16's own positions.
+
+    The positions come from `deck.figure_16_positions`, the same call the FDS
+    deck places its devices with, so the drawing and the measurement cannot
+    drift apart. Where Figure 16 gives no layout -- a far-field section with
+    two or three thermocouples -- the engine's vertical ladder is drawn
+    instead, on the centreline, which is where those sensors are measured.
+    """
     sample = step.stations[name]
-    return go.Scatter(x=[0.0] * len(sample.heights_m), y=list(sample.heights_m), mode="markers",
-                      name="thermocouples", hoverinfo="text",
-                      text=[f"{z:.1f} m · {t:.0f} °C"
-                            for z, t in zip(sample.heights_m, sample.temps_c)],
-                      marker={"size": 12, "color": list(sample.temps_c), "colorscale": TEMP_SCALE,
+    fuel = fds_deck.fuel_box(design, geom)
+    solids = (fuel, fds_deck.target_box(design, geom))
+    placed = fds_deck.figure_16_positions(INSTRUMENTS[name], STATIONS[name], geom,
+                                          fds_deck.DX_M, fuel, solids)
+    if placed:
+        labels = [f"{fds_deck.annex7_id('thermocouple', name, p)} · "
+                  f"y {y:+.2f} m · {z:.2f} m · {temperature_at(sample, z):.0f} °C"
+                  for p, y, z in placed]
+        ys = [y for _, y, _ in placed]
+        zs = [z for _, _, z in placed]
+    else:
+        labels = [f"{name} · {z:.1f} m · {t:.0f} °C"
+                  for z, t in zip(sample.heights_m, sample.temps_c)]
+        ys = [0.0] * len(sample.heights_m)
+        zs = list(sample.heights_m)
+    return go.Scatter(x=ys, y=zs, mode="markers", name="thermocouples", hoverinfo="text",
+                      text=labels,
+                      marker={"size": 12, "color": [temperature_at(sample, z) for z in zs],
+                              "colorscale": TEMP_SCALE,
                               "cmin": TEMP_MIN_C, "cmax": cmax_c,
+                              "line": {"color": "#1C2432", "width": 1},
                               "colorbar": {"title": {"text": "gas<br>°C", "side": "top"},
                                            "x": 1.02, "len": 0.8, "thickness": 14}})
 
@@ -130,13 +177,16 @@ def figure(design: Design, geom: SectionGeometry, step: StepRecord, station: str
           cmax_c: float) -> go.Figure:
     """A static cross-section at `station`, for the one instant `step` describes."""
     traces = [tunnel_outline(geom), nozzle_rows(design, step),
-             thermocouple_rake(station, step, cmax_c), *gas_markers(station, step)]
+             thermocouple_rake(design, geom, station, step, cmax_c),
+             *gas_markers(station, step)]
     half_width = geom.road_width_m / 2.0 + MARGIN_M
     section = fuel_section(design, geom, station)
     fig = go.Figure(data=traces)
     fig.update_layout(
         shapes=[section] if section else [],
-        height=420, margin={"l": 10, "r": 10, "t": 30, "b": 10},
+        # The left margin has to clear the y-axis title AND its tick labels:
+        # at 10 px the title "height (m)" was drawn through the tick numbers.
+        height=420, margin={"l": 60, "r": 10, "t": 30, "b": 10},
         xaxis={"title": "across the tunnel (m)", "range": [-half_width, half_width],
               "scaleanchor": "y", "scaleratio": 1, "zeroline": False},
         yaxis={"title": "height (m)", "range": [-0.3, geom.crown_height_m + 0.6]},
