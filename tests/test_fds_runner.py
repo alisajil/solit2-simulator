@@ -292,3 +292,47 @@ def test_run_records_the_pid_it_launched(ready, monkeypatch, tmp_path):
     deck.write_text("&MESH IJK=1,1,1, XB=0,1,0,1,0,1 /\n&TIME T_END=10.0 /\n")
     runner.run(deck, tmp_path)
     assert (tmp_path / runner.PID_NAME).read_text() == "4242"
+
+
+def test_the_liveness_check_never_signals_the_process_it_asks_about():
+    """`os.kill(pid, 0)` is the POSIX idiom and is correct there. On Windows
+    `os.kill` routes any signal other than CTRL_C_EVENT/CTRL_BREAK_EVENT
+    straight to TerminateProcess, so the liveness CHECK would kill the FDS run
+    it was asked about. This pins that the Windows path never reaches os.kill.
+    """
+    import os
+    called = []
+    real_name = os.name
+
+    def exploding_kill(pid, sig):
+        called.append((pid, sig))
+        raise AssertionError("os.kill must never be reached on Windows")
+
+    try:
+        os.name = "nt"
+        try:
+            runner._pid_alive(os.getpid())
+        except (AttributeError, ImportError, OSError, FileNotFoundError):
+            pass          # no Windows DLLs here; what matters is os.kill was not used
+    finally:
+        os.name = real_name
+    assert called == []
+
+
+def test_the_liveness_check_answers_correctly_on_this_platform():
+    import os
+    assert runner._pid_alive(os.getpid()) is True
+    # a pid that cannot exist: max_pid is far below this on every platform
+    assert runner._pid_alive(4294967294) is False, "and a pid too large must not raise"
+    assert runner._pid_alive(999999) is False
+
+
+def test_a_run_is_launched_detached_so_it_outlives_the_app():
+    """Hours-long runs are polled, not held open. POSIX gets a new session;
+    Windows ignores that argument and needs creation flags instead, or the run
+    dies with the console that started it."""
+    import os
+    if os.name == "nt":
+        assert runner._DETACHED == {"creationflags": 0x00000008 | 0x00000200}
+    else:
+        assert runner._DETACHED == {"start_new_session": True}

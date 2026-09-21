@@ -15,6 +15,12 @@ from pathlib import Path
 
 BIN_ENV = "SOLIT2_FDS_BIN"
 PID_NAME = "fds.pid"
+# A run outlives the app that started it -- hours long, and the CFD step polls
+# it rather than holding it open. `start_new_session` does that on POSIX and is
+# silently ignored on Windows, where a child dies with its console instead, so
+# Windows needs the equivalent creation flags spelled out.
+_DETACHED = ({"creationflags": 0x00000008 | 0x00000200}   # DETACHED_PROCESS | NEW_PROCESS_GROUP
+             if os.name == "nt" else {"start_new_session": True})
 # How long a run may write nothing before it is reported as not advancing.
 # FDS writes a progress line every 100 time steps; a 220k-cell road-tunnel deck
 # on an 11-core machine managed about one line every five minutes, so this is
@@ -103,7 +109,7 @@ def run(deck_path: Path, out_dir: Path) -> str:
         process = subprocess.Popen([shutil.which("mpiexec"), "-np", str(ranks),
                                     _binary(), local_deck.name],
                                    cwd=out_dir, stdout=log, stderr=subprocess.STDOUT,
-                                   start_new_session=True)
+                                   **_DETACHED)
     # So `status` can tell "still going" from "gone". A run launched from the
     # terminal writes no pid file, which is why `status` also watches the clock.
     (out_dir / PID_NAME).write_text(str(process.pid))
@@ -159,6 +165,48 @@ def fds_version(run_dir: Path) -> str | None:
     return found.group(1) if found else _source_revision(text)
 
 
+def _pid_alive(pid: int) -> bool:
+    """Does a process with this id exist? Asks; never signals.
+
+    NOT `os.kill(pid, 0)`. That is the POSIX idiom and it is correct there, but
+    on Windows `os.kill` routes any signal other than CTRL_C_EVENT and
+    CTRL_BREAK_EVENT straight to TerminateProcess -- so the liveness CHECK
+    would kill the FDS run it was asked about. Windows gets an explicit query
+    instead: open the process for status only, and read its exit code.
+    """
+    if os.name != "nt":
+        try:
+            os.kill(pid, 0)      # signal 0 tests for existence, sends nothing
+        except ProcessLookupError:
+            return False
+        except PermissionError:  # alive, owned by someone else
+            return True
+        except (OverflowError, ValueError):
+            # A pid too large for the platform cannot name a live process, and
+            # a corrupt pid file must not take the status check down with it.
+            return False
+        return True
+
+    import ctypes
+    from ctypes import wintypes
+
+    PROCESS_QUERY_LIMITED_INFORMATION, STILL_ACTIVE = 0x1000, 259
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    try:
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+    except (OverflowError, ValueError, ctypes.ArgumentError):
+        return False
+    if not handle:
+        return False             # gone, or not ours to ask about
+    try:
+        code = wintypes.DWORD()
+        if not kernel32.GetExitCodeProcess(handle, ctypes.byref(code)):
+            return True          # it exists; we simply cannot read its status
+        return code.value == STILL_ACTIVE
+    finally:
+        kernel32.CloseHandle(handle)
+
+
 def _launcher_alive(run_dir: Path) -> bool | None:
     """Whether the process `run()` launched is still there; None if unknown.
 
@@ -173,13 +221,7 @@ def _launcher_alive(run_dir: Path) -> bool | None:
         pid = int(pid_file.read_text().strip())
     except ValueError:
         return None
-    try:
-        os.kill(pid, 0)          # signal 0 tests for existence, sends nothing
-    except ProcessLookupError:
-        return False
-    except PermissionError:      # alive, owned by someone else
-        return True
-    return True
+    return _pid_alive(pid)
 
 
 def silent_for_s(run_dir: Path, now_s: float | None = None) -> float | None:
@@ -255,4 +297,4 @@ def open_smokeview(run_dir: Path) -> None:
     smv = sorted(Path(run_dir).glob("*.smv"))
     if not smv:
         raise FileNotFoundError(f"no .smv file in {run_dir} yet")
-    subprocess.Popen([binary, smv[0].name], cwd=Path(run_dir), start_new_session=True)
+    subprocess.Popen([binary, smv[0].name], cwd=Path(run_dir), **_DETACHED)
