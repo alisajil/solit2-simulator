@@ -147,20 +147,32 @@ def test_ceiling_device_positions_are_the_ones_the_deck_laid_out(run_dir):
 
 
 
-def test_the_result_names_the_gap_between_the_stepped_and_the_smooth_section(run_dir):
-    # a stair-stepped circle cannot match a smooth one; the requirement is that
-    # the difference is visible in the result, not that it is zero
+def test_the_result_reports_the_emitted_free_area_against_tier_1s(run_dir):
+    """The figure must be a measurement of the emitted geometry, not a claim
+    about it. They agree now; the requirement is that the result still says so
+    from the numbers, and would say the opposite if a change reopened a gap."""
     from solit2.engines.fds import deck as deck_mod
     from solit2.engines.reduced.geometry import section_geometry
     design = Design.load(BASELINE)
     geom = section_geometry(design)
     stepped_m2 = deck_mod.stepped_free_area_m2(geom)
-    assert stepped_m2 != pytest.approx(geom.free_area_m2), "nothing to report otherwise"
+    assert stepped_m2 == pytest.approx(geom.free_area_m2, rel=1e-3)
     named = [w for w in reader.read(run_dir, design).warnings if "free area" in w]
     assert len(named) == 1
-    assert f"{stepped_m2:.1f} m2" in named[0]
-    assert f"{geom.free_area_m2:.1f} m2" in named[0]
-    assert "%" in named[0]
+    assert f"{stepped_m2:.1f} m2" in named[0] and f"{geom.free_area_m2:.1f} m2" in named[0]
+    assert "same cross-section" in named[0]
+
+
+def test_a_reopened_geometry_gap_is_reported_as_one(run_dir, monkeypatch):
+    from solit2.engines.fds import deck as deck_mod
+    from solit2.engines.reduced.geometry import section_geometry
+    design = Design.load(BASELINE)
+    true_m2 = section_geometry(design).free_area_m2
+    monkeypatch.setattr(deck_mod, "stepped_free_area_m2", lambda geom, dx_m=0.6: true_m2 * 0.92)
+    named = [w for w in reader.read(run_dir, design).warnings if "free area" in w]
+    assert len(named) == 1
+    assert "-8.0%" in named[0] and "not modelling the same cross-section" in named[0]
+
 
 
 def test_the_result_says_which_penalties_a_tier_2_run_cannot_receive(run_dir):

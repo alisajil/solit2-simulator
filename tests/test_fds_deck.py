@@ -313,14 +313,49 @@ def test_the_fire_ceiling_device_sits_directly_above_the_fire():
     assert x_m == deck.FIRE_X_M
 
 
-def test_the_stepped_free_area_is_the_area_the_deck_actually_emits():
+def test_the_emitted_section_carries_the_same_free_area_tier_1_computes():
+    """It did not. A mesh sized to the CARRIAGEWAY clipped the bore where it is
+    widest (11.00 m against a 10.15 m road), and every stair-step took its width
+    at the top of its layer, which is narrowest where the crown turns over.
+    Together they lost 7.6 % of the section, so the two engines were pushing air
+    through different tunnels."""
     from solit2.engines.reduced.geometry import section_geometry
-    # a box is emitted exactly, so there is no gap to report
-    rig = section_geometry(Design.load(TEST_RIG))
-    assert deck.stepped_free_area_m2(rig) == rig.road_width_m * rig.crown_height_m
-    # a stair-stepped bore cannot be, and loses area against the smooth circle
+    for path in (BASELINE, TEST_RIG):
+        geom = section_geometry(Design.load(path))
+        assert deck.stepped_free_area_m2(geom) == pytest.approx(geom.free_area_m2, rel=1e-3), path
+
+
+def test_the_mesh_spans_the_widest_part_of_the_section_not_the_carriageway():
+    from solit2.engines.reduced.geometry import section_geometry
     bore = section_geometry(Design.load(BASELINE))
-    assert deck.stepped_free_area_m2(bore) < bore.free_area_m2
+    assert bore.max_width_m > bore.road_width_m, "a bored tunnel widens above its deck"
+    j, _ = deck._mesh_extent(bore, deck.DX_M)
+    assert j * deck.DX_M >= bore.max_width_m
+    # a box is its own widest point, so nothing is padded for it
+    rig = section_geometry(Design.load(TEST_RIG))
+    assert rig.max_width_m == rig.road_width_m
+
+
+def test_the_open_area_the_obstructions_leave_is_the_area_reported():
+    """The reported figure has to be a measurement of the emitted geometry, not
+    an assertion about it, or a future change to the stepping could reopen a gap
+    silently."""
+    import re
+    from solit2.engines.reduced.geometry import section_geometry
+    design = Design.load(BASELINE)
+    geom = section_geometry(design)
+    text = deck.generate(design)
+    j, k = deck._mesh_extent(geom, deck.DX_M)
+    half, top = j * deck.DX_M / 2, k * deck.DX_M
+    walls = [[float(v) for v in m.group(1).split(",")[:6]]
+             for m in re.finditer(r"&OBST XB=([-\d.,]+),\s*SURF_ID='WALL'", text)]
+    assert walls
+    n_y, n_z = 400, 300
+    cells = sum(1 for iy in range(n_y) for iz in range(n_z)
+                if not any(w[2] <= -half + (iy + 0.5) * 2 * half / n_y <= w[3]
+                           and w[4] <= (iz + 0.5) * top / n_z <= w[5] for w in walls))
+    measured = cells * (2 * half / n_y) * (top / n_z)
+    assert measured == pytest.approx(deck.stepped_free_area_m2(geom), rel=0.01)
 
 
 def test_the_wall_surface_carries_a_thickness_with_its_material():
@@ -407,7 +442,10 @@ def test_ceiling_thermocouples_and_heat_detectors_sit_in_gas_not_inside_the_crow
         open_top = _open_ceiling_m(geom, y)
         assert z < open_top, f"{device} at z={z} is inside the solid layer above {open_top}"
         assert z > open_top - deck.DX_M, f"{device} is not just under the ceiling that exists at y={y}"
-    assert deck.ceiling_z_at(geom, 0.0) != pytest.approx(geom.crown_height_m - deck.CEILING_OFFSET_M)
+    # Never above the real crown: the topmost slab runs past it, because the
+    # mesh is whole cells and the crown is not.
+    for y in (0.0, -2.7, 2.7):
+        assert deck.ceiling_z_at(geom, y) <= geom.crown_height_m - deck.CEILING_OFFSET_M
 
 
 def test_the_fire_sits_where_tier_1_puts_it_eccentric_toward_the_near_wall():
@@ -575,8 +613,112 @@ def test_a_thermocouple_already_in_gas_is_left_exactly_where_tier_1_puts_it():
     design = Design.load(BASELINE)
     geom = section_geometry(design)
     heights = thermocouple_heights_m(7, geom.crown_height_m)
-    assert deck.gas_z_m(geom, 0.0, heights[-1]) < heights[-1], "the top rung must move"
-    for z in heights[:-1]:
-        assert deck.gas_z_m(geom, 0.0, z) == z, "every other rung must be untouched"
-    # and the breathing height the criteria are judged at is never moved
-    assert deck.gas_z_m(geom, 0.0, 1.8) == 1.8
+    # Since the mesh spans the whole bore, every Annex 7 rung now lands in gas
+    # on this section and nothing is moved at all.
+    for z in heights:
+        assert deck.gas_z_m(geom, 0.0, z) == z, f"{z} m should need no adjustment"
+    # the clamp still bites on anything asked for above the emitted ceiling
+    assert deck.gas_z_m(geom, 0.0, geom.crown_height_m) < geom.crown_height_m
+    assert deck.gas_z_m(geom, 0.0, 1.8) == 1.8, "breathing height is never moved"
+
+
+def test_both_tiers_radiate_the_same_fraction_of_the_fire():
+    """The radiative fraction decides every heat-flux reading and, through them,
+    whether the target ignites. The deck left it to FDS's default, which happens
+    to equal Tier 1's Class A figure and does not equal its Class B one: on a
+    diesel pool the two tiers radiated differently, and the agreement on wood
+    was a coincidence rather than a constraint."""
+    from solit2.engines.reduced.fire import (RADIATIVE_FRACTION_CLASS_A,
+                                             RADIATIVE_FRACTION_CLASS_B)
+    assert RADIATIVE_FRACTION_CLASS_A != RADIATIVE_FRACTION_CLASS_B, "else this proves nothing"
+    for path, expected in ((BASELINE, RADIATIVE_FRACTION_CLASS_A),
+                           ("examples/designs/solit2-test-protocol-class-b.json",
+                            RADIATIVE_FRACTION_CLASS_B)):
+        reac = next(ln for ln in deck.generate(Design.load(path)).splitlines()
+                    if ln.startswith("&REAC"))
+        assert f"RADIATIVE_FRACTION={expected:.2f}" in reac, path
+
+
+def test_every_instrument_table_5_counts_is_emitted_at_its_own_count():
+    """The criteria read one value from each cross-section, so the deck emitted
+    one. A real test records the whole profile, and a Tier 2 result that cannot
+    be set beside a test data sheet column for column is harder to check than
+    it needs to be."""
+    from solit2.engines.reduced.criteria import INSTRUMENTS, STATIONS
+    text = deck.generate(Design.load(BASELINE))
+    for name, kit in INSTRUMENTS.items():
+        if not (STATIONS[name] >= deck.WINDOW_M[0] and STATIONS[name] <= deck.WINDOW_M[1]):
+            continue
+        assert text.count(f"ID='{name}_O2_") == kit.oxygen, name
+        assert text.count(f"ID='{name}_CO2_") == kit.carbon_dioxide, name
+        assert text.count(f"ID='{name}_COP_") == kit.carbon_monoxide, name
+        assert text.count(f"ID='{name}_UBI_") == kit.bidirectional, name
+        assert text.count(f"ID='{name}_RH'") == (1 if kit.relative_humidity else 0), name
+        assert text.count(f"ID='{name}_TCREF'") == (1 if kit.reference_thermocouple else 0), name
+    # a station Table 5 gives no gas kit to keeps none
+    assert "D25_O2_" not in text and "D25_UBI_" not in text
+
+
+def test_the_profile_instruments_do_not_disturb_the_ones_the_criteria_read():
+    """`_at` matches device IDs exactly, so `D45_CO` and `D45_COP_0` are
+    different columns -- but only if the naming keeps them apart."""
+    from solit2.engines.reduced.criteria import INSTRUMENTS
+    text = deck.generate(Design.load(BASELINE))
+    for name, kit in INSTRUMENTS.items():
+        if kit.toxic_gas:
+            assert f"ID='{name}_CO'," in text, "the breathing-height CO the criteria read"
+            assert f"ID='{name}_FED'," in text
+        if kit.air_velocity:
+            assert f"ID='{name}_U'," in text, "the single velocity the reader reads"
+    ids = [ln.split("ID='")[1].split("'")[0] for ln in text.splitlines()
+           if ln.startswith("&DEVC ID='")]
+    assert len(ids) == len(set(ids)), "every device id must be unique"
+
+
+def test_profile_instruments_sit_in_gas_like_every_other_device():
+    from solit2.engines.reduced.geometry import section_geometry
+    geom = section_geometry(Design.load(BASELINE))
+    text = deck.generate(Design.load(BASELINE))
+    open_top = max(z for _, z, clear in deck._bore_layers(geom, deck.DX_M) if clear > 0.0)
+    for line in text.splitlines():
+        if line.startswith("&DEVC ID='") and any(t in line for t in ("_O2_", "_CO2_", "_COP_", "_UBI_")):
+            assert float(line.split("XYZ=")[1].split(",")[2]) < open_top, line
+
+
+def test_a_second_thermocouple_tree_stands_in_the_plane_of_the_fuel_load():
+    """Annex 7 gives cross-sections and counts, never a lateral position, and
+    Tier 1 resolves none at all -- so the criteria stay on the centreline,
+    where the tiers can be compared. That left the result silent about a real
+    gradient: on a 6.8 MW run the ceiling over the load read 133 C against
+    78 C on the centreline at the same station."""
+    from solit2.engines.reduced.criteria import INSTRUMENTS, thermocouple_heights_m
+    from solit2.engines.reduced.geometry import section_geometry
+    design = Design.load(BASELINE)
+    geom = section_geometry(design)
+    load_y = deck.fuel_box(design, geom).y_centre_m
+    text = deck.generate(design)
+    for name, kit in INSTRUMENTS.items():
+        expected = kit.thermocouples if kit.thermocouples >= deck.LOAD_SIDE_TREE_MIN_TC else 0
+        assert text.count(f"ID='{name}_TCL") == expected, name
+    heights = thermocouple_heights_m(INSTRUMENTS["D05"].thermocouples, geom.crown_height_m)
+    for rung, z in enumerate(heights):
+        line = next(ln for ln in text.splitlines() if f"ID='D05_TCL{rung}'" in ln)
+        x, y, placed = (float(v) for v in line.split("XYZ=")[1].split(",")[:3])
+        assert y == pytest.approx(load_y) and y != 0.0, "in the load's plane, not the centre"
+        # the deck writes heights to two decimals
+        assert placed == pytest.approx(deck.gas_z_m(geom, load_y, z), abs=0.005), "and in gas there"
+    # the centreline tree the criteria read is untouched and still complete
+    assert text.count("ID='D05_TC0'") == 1
+    assert all(",0.0," in next(ln for ln in text.splitlines() if f"ID='D05_TC{r}'" in ln)
+               for r in range(len(heights)))
+
+
+def test_a_centred_load_gets_no_duplicate_tree():
+    """Nothing is gained by a second tree on top of the first."""
+    from solit2.engines.reduced.geometry import section_geometry
+    design = Design.load(BASELINE)
+    geom = section_geometry(design)
+    centred = design.fire.model_copy(
+        update={"lane_centre_offset_from_wall_m": geom.road_width_m / 2.0})
+    text = deck.generate(design.model_copy(update={"fire": centred}))
+    assert "_TCL" not in text

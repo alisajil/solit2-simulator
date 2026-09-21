@@ -10,12 +10,16 @@ from pathlib import Path
 HERE = Path(__file__).parent
 AMBIENT_C = 33.0
 
-UNITS = {"_TC": "C", "_HF": "kW/m2", "_VIS": "m", "_CO": "ppm",
+# Order matters: `unit_of` takes the FIRST marker found in the device id, and
+# "_CO2_" and "_COP_" both contain "_CO".
+UNITS = {"_TCREF": "C", "_CO2_": "%", "_COP_": "ppm", "_O2_": "%", "_UBI_": "m/s",
+         "_RH": "%", "_TC": "C", "_HF": "kW/m2", "_VIS": "m", "_CO": "ppm",
          "_FED": "1", "_U": "m/s", "CEIL": "C", "TARGET_FLUX": "kW/m2"}
 # (t=0, t=1, t=2) per quantity: ambient, then a developing fire
 SERIES = {"C": (AMBIENT_C, 120.0, 260.0), "kW/m2": (0.0, 3.5, 9.0),
           "m": (30.0, 18.0, 7.0), "ppm": (0.0, 40.0, 150.0),
-          "1": (0.0, 0.01, 0.04), "m/s": (4.5, 4.4, 4.2)}
+          "1": (0.0, 0.01, 0.04), "m/s": (4.5, 4.4, 4.2),
+          "%": (20.9, 19.8, 18.1)}
 
 
 def unit_of(device: str) -> str:

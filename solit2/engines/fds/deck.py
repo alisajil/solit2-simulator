@@ -25,6 +25,8 @@ from functools import lru_cache
 from solit2.engines.reduced import fire as fire_mod
 from solit2.engines.reduced.envelope import _design_sha
 from solit2.engines.reduced.fire import (DIESEL_HEAT_OF_COMBUSTION_MJKG,
+                                         RADIATIVE_FRACTION_CLASS_A,
+                                         RADIATIVE_FRACTION_CLASS_B,
                                          WOOD_HEAT_OF_COMBUSTION_MJKG)
 from solit2.engines.reduced.geometry import SectionGeometry, fire_lateral_m, section_geometry
 from solit2.engines.reduced.state import MistEffect
@@ -89,6 +91,9 @@ DEVC_DT_S = 1.0
 # at the unit -- without this the gate compares ~2e-4 against a limit of 500 and
 # structurally cannot fail.
 CO_PPM_CONVERSION = "1E6"
+# O2 and CO2 are reported the way a test data sheet reports them, per cent by
+# volume, rather than as FDS's mol/mol.
+PERCENT_CONVERSION = "1E2"
 # FDS requires a THICKNESS wherever a SURF names a MATL; without it the wall
 # has a material and no heat capacity to apply it to.
 WALL_THICKNESS_M = 0.30      # concrete lining
@@ -118,6 +123,15 @@ FREE_BURN_SUFFIX = "_free"
 _REAC_FORMULA = {"A": {"C": 3.4, "H": 6.2, "O": 2.5}, "B": {"C": 7.0, "H": 16.0}}
 _REAC_HEAT_OF_COMBUSTION_MJKG = {"A": WOOD_HEAT_OF_COMBUSTION_MJKG,
                                  "B": DIESEL_HEAT_OF_COMBUSTION_MJKG}
+# How much of the fire's energy leaves as radiation rather than convection. It
+# decides every heat-flux reading and, through them, whether the target
+# ignites. The deck used to leave it to FDS's own default, which happens to
+# equal Tier 1's Class A figure and does NOT equal its Class B one -- so on a
+# diesel pool the two tiers radiated differently and the agreement on wood was
+# a coincidence. Taken from Tier 1's constants, like the heat of combustion and
+# the species yields already are.
+_REAC_RADIATIVE_FRACTION = {"A": RADIATIVE_FRACTION_CLASS_A,
+                            "B": RADIATIVE_FRACTION_CLASS_B}
 
 
 def chid(design: Design, suppression: bool = True) -> str:
@@ -158,13 +172,21 @@ def _time(design: Design, t_end_s: float | None = None) -> list[str]:
 
 
 def _mesh_extent(geom: SectionGeometry, dx_m: float) -> tuple[int, int]:
-    """(j, k): whole cells across the chord and up to the crown, rounded UP.
+    """(j, k): whole cells across the WIDEST part of the section and up to the
+    crown, rounded UP.
 
     The mesh is padded out to whole cells rather than clipped to the section,
     and `_tunnel` fills the padding with wall, so the solid boundary always
     lands exactly on a cell face.
+
+    Across, this is the section's maximum width and not the carriageway's. A
+    bored tunnel's deck is a chord below the centre, so the bore goes on
+    widening above it: 11.00 m at centre height against a 10.15 m carriageway
+    on the reference section. A mesh sized to the road clipped 0.8 m off the
+    tunnel through its whole lower half, which was most of a 7.6 % free-area
+    deficit against Tier 1.
     """
-    return math.ceil(geom.road_width_m / dx_m), math.ceil(geom.crown_height_m / dx_m)
+    return (math.ceil(geom.max_width_m / dx_m), math.ceil(geom.crown_height_m / dx_m))
 
 
 def _y_origin(geom: SectionGeometry, dx_m: float) -> float:
@@ -304,9 +326,16 @@ def _bore_layers(geom: SectionGeometry, dx_m: float) -> list[tuple[float, float,
     # ceil, not int: the mesh is padded to whole cells above the crown, and the
     # top layer must be sealed (width_at(crown) is 0, so it is a full-width wall)
     steps = max(math.ceil(geom.crown_height_m / dx_m), 1)
-    return [(i * dx_m, (i + 1) * dx_m,
-             geom.width_at(min((i + 1) * dx_m, geom.crown_height_m)) / 2.0)
-            for i in range(steps)]
+    out = []
+    for i in range(steps):
+        z_lo = i * dx_m
+        # The width that preserves this band's true open area, not the width at
+        # one of its edges: taking the top edge made every step narrower than
+        # the bore it stands for, by 2.85 m in the layer where the crown turns
+        # over. See `SectionGeometry.mean_width_over`.
+        z_top = (i + 1) * dx_m
+        out.append((z_lo, z_top, geom.band_width_m(z_lo, z_top) / 2.0))
+    return out
 
 
 def ceiling_z_at(geom: SectionGeometry, y_m: float, dx_m: float = DX_M) -> float:
@@ -326,7 +355,9 @@ def ceiling_z_at(geom: SectionGeometry, y_m: float, dx_m: float = DX_M) -> float
     open_tops = [z_hi for _, z_hi, clear in _bore_layers(geom, dx_m) if clear > abs(y_m)]
     if not open_tops:
         raise ValueError(f"y={y_m} m is outside the bore at every height")
-    return max(open_tops) - CEILING_OFFSET_M
+    # Never above the real crown: the topmost slab runs past it, because the
+    # mesh is whole cells and the crown is not.
+    return min(max(open_tops), geom.crown_height_m) - CEILING_OFFSET_M
 
 
 def gas_z_m(geom: SectionGeometry, y_m: float, z_m: float, dx_m: float = DX_M) -> float:
@@ -346,27 +377,30 @@ def gas_z_m(geom: SectionGeometry, y_m: float, z_m: float, dx_m: float = DX_M) -
     open_tops = [z_hi for _, z_hi, clear in _bore_layers(geom, dx_m) if clear > abs(y_m)]
     if not open_tops:
         raise ValueError(f"y={y_m} m is outside the bore at every height")
-    return min(z_m, max(open_tops) - CEILING_OFFSET_M)
+    return min(z_m, min(max(open_tops), geom.crown_height_m) - CEILING_OFFSET_M)
 
 
 def stepped_free_area_m2(geom: SectionGeometry, dx_m: float = DX_M) -> float:
     """Free area of the section AS THE DECK EMITS IT, not as Tier 1 defines it.
 
-    A stair-stepped circle cannot match a smooth one, so this will not equal
-    `geom.free_area_m2` and no attempt is made to make it. It exists so the gap
-    can be REPORTED: the whole point of Tier 2 is that it models the same
-    tunnel Tier 1 does, and where the discretisation makes that untrue, the
-    difference belongs in `Result.warnings` rather than in a source comment.
+    These now agree. They did not: a mesh sized to the carriageway clipped the
+    bore where it is widest, and every stair-step took its width at the top of
+    its layer, together losing 7.6 % of the section. The mesh is sized to the
+    section's widest point and each slab carries its band's true area, so the
+    two engines model the same tunnel rather than one being asked to explain a
+    deficit.
+
+    Kept, and still reported, because it is a measurement of the emitted
+    geometry rather than an assertion about it: if a future change to the mesh
+    or the stepping reopens a gap, the result says so instead of the agreement
+    being assumed.
     """
     if geom.shape == "box":
         return geom.road_width_m * geom.crown_height_m
-    half_width = geom.road_width_m / 2.0
-    layers = _bore_layers(geom, dx_m)
-    area = sum((geom.road_width_m if clear >= half_width else 2.0 * clear)
-               * (z_hi - z_lo) for z_lo, z_hi, clear in layers)
-    # above the topmost whole layer the deck writes no obstruction at all, so
-    # that sliver stands open at the full road width
-    return area + geom.road_width_m * (geom.crown_height_m - layers[-1][1])
+    j, _ = _mesh_extent(geom, dx_m)
+    half_width = j * dx_m / 2.0
+    return sum(min(2.0 * clear, 2.0 * half_width) * (z_hi - z_lo)
+               for z_lo, z_hi, clear in _bore_layers(geom, dx_m))
 
 
 def _portals(design: Design) -> list[str]:
@@ -496,6 +530,7 @@ def _fire(design: Design, geom: SectionGeometry, dx_m: float, horizon_s: float) 
     lines = [
         f"&REAC ID='{fuel}', FUEL='{fuel}', {formula_str}, "
         f"HEAT_OF_COMBUSTION={_REAC_HEAT_OF_COMBUSTION_MJKG[f.fire_class] * 1000.0:.1f}, "
+        f"RADIATIVE_FRACTION={_REAC_RADIATIVE_FRACTION[f.fire_class]:.2f}, "
         f"SOOT_YIELD={yields['soot']:.3f}, CO_YIELD={yields['co']:.3f} /",
     ]
     for k in range(n):
@@ -663,6 +698,71 @@ def _gauge_orientation(x_m: float) -> str:
     return "1.0,0.0,0.0" if FIRE_X_M > x_m else "-1.0,0.0,0.0"
 
 
+# Table 5 counts its gas and velocity instruments per cross-section; the
+# criteria only ever read one value from each, so the deck used to emit one.
+# A real test records the whole profile, and a Tier 2 result that cannot be set
+# beside a test data sheet column for column is harder to check than it needs
+# to be. These carry their own IDs and nothing reads them: they exist to be
+# compared against measurements.
+_SPECIES_PROFILE = (("O2", "OXYGEN"), ("CO2", "CARBON DIOXIDE"), ("COP", "CARBON MONOXIDE"))
+# A cross-section carrying at least this many thermocouples gets a second tree
+# in the plane of the fuel load -- see `_table_5_profiles`.
+LOAD_SIDE_TREE_MIN_TC = 5
+
+
+def _table_5_profiles(name: str, kit, x_m: float, geom: SectionGeometry,
+                      dx_m: float, load_y_m: float) -> list[str]:
+    """Every instrument Table 5 counts at this station, at its own count.
+
+    Annex 7 gives counts, never heights -- the same silence as for the
+    thermocouples -- so these reuse `thermocouple_heights_m`, the ladder this
+    engine already documents as its own engineering choice, at each
+    instrument's own count. One rule for every instrument beats a second
+    invented one.
+    """
+    from solit2.engines.reduced.criteria import BREATHING_HEIGHT_M, thermocouple_heights_m
+    lines = []
+    if kit.oxygen or kit.carbon_dioxide or kit.carbon_monoxide:
+        counts = {"O2": kit.oxygen, "CO2": kit.carbon_dioxide, "COP": kit.carbon_monoxide}
+        for tag, species in _SPECIES_PROFILE:
+            count = counts[tag]
+            unit, factor = (("ppm", CO_PPM_CONVERSION) if tag == "COP"
+                            else ("%", PERCENT_CONVERSION))
+            for rung, z in enumerate(thermocouple_heights_m(count, geom.crown_height_m)
+                                     if count else ()):
+                lines.append(
+                    f"&DEVC ID='{name}_{tag}_{rung}', XYZ={x_m:.2f},0.0,"
+                    f"{gas_z_m(geom, 0.0, z, dx_m):.2f}, QUANTITY='VOLUME FRACTION', "
+                    f"SPEC_ID='{species}', CONVERSION_FACTOR={factor}, UNITS='{unit}' /")
+    for rung, z in enumerate(thermocouple_heights_m(kit.bidirectional, geom.crown_height_m)
+                             if kit.bidirectional else ()):
+        lines.append(f"&DEVC ID='{name}_UBI_{rung}', XYZ={x_m:.2f},0.0,"
+                     f"{gas_z_m(geom, 0.0, z, dx_m):.2f}, QUANTITY='U-VELOCITY' /")
+    if kit.relative_humidity:
+        lines.append(f"&DEVC ID='{name}_RH', XYZ={x_m:.2f},0.0,{BREATHING_HEIGHT_M:.2f}, "
+                     f"QUANTITY='RELATIVE HUMIDITY' /")
+    if kit.reference_thermocouple:
+        # Table 5 lists it on its own line, beside the humidity probe: an RH
+        # reading means nothing without the temperature it was taken at.
+        lines.append(f"&DEVC ID='{name}_TCREF', XYZ={x_m:.2f},0.0,{BREATHING_HEIGHT_M:.2f}, "
+                     f"QUANTITY='THERMOCOUPLE' /")
+    if kit.thermocouples >= LOAD_SIDE_TREE_MIN_TC and abs(load_y_m) > dx_m:
+        # A second tree in the plane of the fuel load. Annex 7 gives counts and
+        # cross-sections and never a lateral position, and Tier 1 resolves none
+        # at all -- it models a vertical profile, not a lateral one -- so the
+        # criteria stay on the centreline, which is the only place the two
+        # tiers can be compared. That left the result silent about a real and
+        # large gradient: measured on a 6.8 MW run, the ceiling over the load
+        # read 133 C against 78 C on the centreline at the same station.
+        # These rungs record it. Nothing reads them and no criterion moves.
+        for rung, z in enumerate(thermocouple_heights_m(kit.thermocouples,
+                                                        geom.crown_height_m)):
+            lines.append(
+                f"&DEVC ID='{name}_TCL{rung}', XYZ={x_m:.2f},{load_y_m:.2f},"
+                f"{gas_z_m(geom, load_y_m, z, dx_m):.2f}, QUANTITY='THERMOCOUPLE' /")
+    return lines
+
+
 def _stations(design: Design, geom: SectionGeometry, dx_m: float) -> list[str]:
     """Annex 7 Table 5, device by device, plus the ceiling line a simulation needs."""
     from solit2.engines.reduced.criteria import (BREATHING_HEIGHT_M, HEAT_FLUX_HEIGHT_M,
@@ -670,6 +770,7 @@ def _stations(design: Design, geom: SectionGeometry, dx_m: float) -> list[str]:
                                                  VISIBILITY_HEIGHT_M,
                                                  thermocouple_heights_m)
     lines = []
+    load_y_m = fuel_box(design, geom, dx_m).y_centre_m
     for name, x_m in sorted(STATIONS.items(), key=lambda kv: kv[1]):
         if not (WINDOW_M[0] <= x_m <= WINDOW_M[1]):
             continue
@@ -699,6 +800,7 @@ def _stations(design: Design, geom: SectionGeometry, dx_m: float) -> list[str]:
             lines.append(
                 f"&DEVC ID='{name}_U', XYZ={x_m:.2f},0.0,{BREATHING_HEIGHT_M:.2f}, "
                 f"QUANTITY='U-VELOCITY' /")
+        lines += _table_5_profiles(name, kit, x_m, geom, dx_m, load_y_m)
     # Ceiling line over the core for the lining temperature and the exposed
     # length: OVER THE FUEL LOAD, at the ceiling that exists there, not at the
     # crown centre 2-3 m to the side of an eccentric plume.

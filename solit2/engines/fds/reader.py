@@ -299,10 +299,14 @@ def _warnings(design: Design, geom: SectionGeometry, velocity_ms: float, engine_
          if free_burn else
          "hrr_free_mw mirrors hrr_mw -- FDS ran the suppressed fire only, and no "
          "free-burn run exists to report; run the free-burn scenario for the difference"),
-        f"deck geometry: the stair-stepped section's free area is "
-        f"{stepped_m2:.1f} m2 against Tier 1's {geom.free_area_m2:.1f} m2 "
-        f"({gap_pct:+.1f}%); a {deck_mod.DX_M} m stair-step cannot match a "
-        f"smooth circle, and no attempt is made to make it",
+        (f"deck geometry: the emitted section's free area is {stepped_m2:.1f} m2 "
+         f"against Tier 1's {geom.free_area_m2:.1f} m2, so both engines model the same "
+         f"cross-section"
+         if abs(gap_pct) < 0.5 else
+         f"deck geometry: the emitted section's free area is {stepped_m2:.1f} m2 against "
+         f"Tier 1's {geom.free_area_m2:.1f} m2 ({gap_pct:+.1f}%); the two engines are not "
+         f"modelling the same cross-section and the difference carries into every "
+         f"velocity and every gas concentration"),
         f"the mock-up is emitted snapped to the {deck_mod.DX_M} m mesh: x {fuel.x0:.1f} to "
         f"{fuel.x1:.1f} m, y {fuel.y0:.1f} to {fuel.y1:.1f} m, z {fuel.z0:.1f} to {fuel.z1:.1f} m "
         f"against the design's {fp.length_m:g} x {fp.width_m:g} m footprint at "

@@ -61,6 +61,45 @@ class SectionGeometry:
             perimeter = 2 * (self.road_width_m + self.crown_height_m)
         return 4 * self.free_area_m2 / perimeter
 
+    @property
+    def max_width_m(self) -> float:
+        """The widest the free cross-section ever gets, at any height.
+
+        NOT the road width. A bored tunnel's carriageway is a chord BELOW the
+        centre, so the bore keeps widening above it and reaches its full
+        diameter at centre height -- 11.00 m against a 10.15 m carriageway on
+        the reference section. Anything sized to the road width clips the
+        widest part of the tunnel off.
+        """
+        if self.shape == "box":
+            return self.road_width_m
+        # the circle is widest at its centre, which sits above the carriageway
+        return max(self.road_width_m, 2.0 * self.radius_m)
+
+    def area_between(self, z_lo_m: float, z_hi_m: float, samples: int = 256) -> float:
+        """True open area of the band z_lo..z_hi, by midpoint rule on `width_at`."""
+        top = min(z_hi_m, self.crown_height_m)
+        if top <= z_lo_m:
+            return 0.0
+        step = (top - z_lo_m) / samples
+        return sum(self.width_at(z_lo_m + (k + 0.5) * step)
+                   for k in range(samples)) * step
+
+    def band_width_m(self, z_lo_m: float, z_hi_m: float) -> float:
+        """The constant width that gives a z_lo..z_hi slab the band's TRUE area.
+
+        A stair-step taking its width at one edge of a layer is wrong by the
+        curvature across it, worst where the bore turns over near the crown --
+        2.85 m of width in that layer on the reference section. Spreading the
+        band's real area over the slab's full height instead makes every step
+        carry exactly the area it stands for, including the last one, whose
+        slab runs past the crown because the mesh is whole cells and the crown
+        is not.
+        """
+        if z_hi_m <= z_lo_m:
+            return 0.0
+        return self.area_between(z_lo_m, z_hi_m) / (z_hi_m - z_lo_m)
+
     def width_at(self, height_above_carriageway_m: float) -> float:
         """Clear width at a height above the carriageway; 0.0 above the crown."""
         if height_above_carriageway_m < 0:
