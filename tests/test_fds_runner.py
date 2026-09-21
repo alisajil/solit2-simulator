@@ -529,3 +529,49 @@ def test_resume_clears_the_stop_file_and_asks_for_a_restart(monkeypatch):
     deck_text = (d / "deck.fds").read_text()
     assert "RESTART=.TRUE." in deck_text
     assert "T_END=300.0" in deck_text
+
+
+def test_stop_marks_the_run_and_keeps_its_checkpoints():
+    """A killed run is not a failed one, and whatever it already checkpointed
+    is still worth resuming from."""
+    import tempfile
+    from pathlib import Path
+    d = _run_dir_with_deck(Path(tempfile.mkdtemp()), reached=40.0)
+    (d / "abc.restart").write_text("")
+    assert runner.stop(d) is False, "nothing live to kill"
+    assert runner.was_stopped(d)
+    state = runner.status(d)
+    assert state["state"] == "stopped"
+    assert "resumable" in state["detail"]
+    assert (d / "abc.restart").exists(), "stopping must not discard the checkpoints"
+
+
+def test_resuming_clears_the_stopped_marker_too(monkeypatch):
+    import tempfile
+    from pathlib import Path
+    from solit2.schema.design import Design
+    d = _run_dir_with_deck(Path(tempfile.mkdtemp()))
+    runner.stop(d)
+    (d / "abc.restart").write_text("")
+    monkeypatch.setattr(runner, "run", lambda deck, out: "launched")
+    runner.resume(d, Design.load("designs/og-dbr-rev0.json"))
+    assert not runner.was_stopped(d), "else it would read as stopped while running"
+    assert runner.status(d)["state"] != "stopped"
+
+
+def test_stop_signals_the_process_group_not_the_launcher_alone(monkeypatch):
+    """`mpiexec` starts its own workers. Signalling it alone leaves them or
+    lets it restart them, which is why `pkill -f "fds deck.fds"` looks like it
+    worked and does not."""
+    import os
+    import tempfile
+    from pathlib import Path
+    d = _run_dir_with_deck(Path(tempfile.mkdtemp()))
+    (d / runner.PID_NAME).write_text("4242")
+    monkeypatch.setattr(runner, "_pid_alive", lambda pid: True)
+    monkeypatch.setattr(os, "getpgid", lambda pid: 9999)
+    signalled = []
+    monkeypatch.setattr(os, "killpg", lambda pgid, sig: signalled.append((pgid, sig)))
+    monkeypatch.setattr(runner.time, "sleep", lambda s: None)
+    runner.stop(d)
+    assert signalled and all(pgid == 9999 for pgid, _ in signalled), "the group, not the pid"

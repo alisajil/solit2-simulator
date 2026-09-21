@@ -518,3 +518,30 @@ def test_the_simulated_window_reaches_past_an_hour():
     assert cfd.DURATIONS["2 hours"] == 120.0
     assert max(v for v in cfd.DURATIONS.values() if v is not None) >= 120.0
     assert cfd.DURATIONS["Full (design duration)"] is None
+
+
+def test_a_running_run_offers_both_a_pause_and_a_hard_stop(run_view, monkeypatch, tmp_path):
+    """Pausing needs FDS to reach another time step to notice. A wedged run
+    never does -- one sat unmoving for seven hours with every process alive --
+    so there has to be a way out that does not depend on it."""
+    from app.views import cfd
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    _fake_run(run_dir, "Time Step 10\n Total Time:  120.0 s\n", t_end=1200.0)
+    (run_dir / "deck.fds").write_text("&HEAD CHID='x' /\n&TIME T_END=1200.0 /\n")
+    monkeypatch.setattr(cfd, "_load_slice", lambda *a, **kw: None)
+    monkeypatch.setattr(cfd.fds_runner, "series", lambda *a, **kw: {})
+    at = run_view("cfd")
+    keys = {b.key for b in at.button}
+    assert {"fds_pause", "fds_stop"} <= keys
+
+    at.button(key="fds_stop").click().run()
+    assert not at.exception
+    assert fds_runner.was_stopped(run_dir)
+
+    at = run_view("cfd")
+    assert not at.exception
+    assert any("Stopped" in e.value for e in at.info)
+    assert not any("did not finish" in e.value for e in at.error), \
+        "a run you stopped is not a run that failed"
+    assert any(b.key == "fds_resume" for b in at.button), "checkpoints are kept"
+    assert any(b.key == "fds_start" for b in at.button), "and it can be started over"

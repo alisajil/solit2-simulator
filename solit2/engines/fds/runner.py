@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import re
 import shutil
+import signal
 import subprocess
 import time
 from datetime import datetime
@@ -158,6 +159,56 @@ def pause(run_dir: Path) -> Path:
     return marker
 
 
+STOPPED_NAME = "stopped.by.user"
+
+
+def was_stopped(run_dir: Path) -> bool:
+    return (Path(run_dir) / STOPPED_NAME).exists()
+
+
+def stop(run_dir: Path) -> bool:
+    """End the run now. Returns whether there was a live process to end.
+
+    The blunt counterpart to `pause`, and it exists because `pause` needs FDS
+    to reach another time step to notice the stop file. A wedged run never
+    does -- one on this machine sat unmoving for seven hours with every
+    process alive -- and then the only way out is to kill it.
+
+    Kills the PROCESS GROUP, not the pid. `run` launches through `mpiexec`,
+    which starts its own workers, and signalling the launcher alone leaves
+    them running or lets it restart them; this is exactly why a
+    `pkill -f "fds deck.fds"` appears to work and does not.
+
+    Whatever restart files the run had already written are left in place, so a
+    stopped run can still be resumed from its last checkpoint even though
+    stopping is not the graceful way to get there.
+    """
+    run_dir = Path(run_dir)
+    (run_dir / STOPPED_NAME).write_text("")
+    pid_file = run_dir / PID_NAME
+    if not pid_file.exists():
+        return False
+    try:
+        pid = int(pid_file.read_text().strip())
+    except ValueError:
+        return False
+    if not _pid_alive(pid):
+        return False
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/T", "/F", "/PID", str(pid)],
+                       capture_output=True, check=False)
+        return True
+    for signal_number in (signal.SIGTERM, signal.SIGKILL):
+        try:
+            os.killpg(os.getpgid(pid), signal_number)
+        except (ProcessLookupError, PermissionError, OSError):
+            return True                    # already gone, or not ours to signal
+        time.sleep(2)
+        if not _pid_alive(pid):
+            return True
+    return True
+
+
 def resume(run_dir: Path, design, t_end_s: float | None = None) -> str:
     """Pick a paused run up from where it stopped.
 
@@ -178,6 +229,9 @@ def resume(run_dir: Path, design, t_end_s: float | None = None) -> str:
     marker = stop_file(run_dir)
     if marker is not None and marker.exists():
         marker.unlink()
+    stopped = run_dir / STOPPED_NAME
+    if stopped.exists():
+        stopped.unlink()
     (run_dir / "deck.fds").write_text(
         deck_mod.generate(design, t_end_s=t_end_s, restart=True))
     return run(run_dir / "deck.fds", run_dir)
@@ -326,6 +380,14 @@ def status(run_dir: Path) -> dict:
     # cannot. Reported as failed rather than as a fourth state, because what a
     # caller does with it is exactly what it does with any unfinished run --
     # read the partial output and say it is incomplete.
+    if was_stopped(run_dir):
+        return {"state": "stopped", "progress": progress,
+                "detail": ("stopped at "
+                           + (f"{float(elapsed[-1]):.0f} s of {float(end.group(1)):.0f} s"
+                              if elapsed else "the start")
+                           + ("; resumable from its last checkpoint"
+                              if has_restart_files(run_dir)
+                              else "; it wrote no restart files, so it cannot resume"))}
     if is_paused(run_dir):
         # Asked to stop, so silence is the point rather than a symptom, and
         # neither the pid check nor the stall clock below has anything to say.

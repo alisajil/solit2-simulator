@@ -80,21 +80,33 @@ def _preflight() -> list[str]:
 
 
 def _pause_controls(run_dir: Path) -> None:
-    """Stop the run the way FDS itself offers to be stopped."""
-    if st.button("Pause this run", key="fds_pause"):
+    """Two ways out of a running job, because one of them can fail to work.
+
+    Pausing asks FDS to stop and needs it to reach another time step to
+    notice. A wedged run never does, and then only a kill ends it.
+    """
+    pause_col, stop_col = st.columns(2)
+    if pause_col.button("Pause this run", key="fds_pause"):
         try:
             fds_runner.pause(run_dir)
         except OSError as exc:
             st.error(f"Could not ask the run to stop: {exc}")
             return
         st.rerun(scope="app")
-    st.caption("Asks FDS to finish the step it is on, write its restart files and exit. "
-               "Not a kill: the run can be picked up from where it stopped.")
+    if stop_col.button("Stop it now", key="fds_stop"):
+        killed = fds_runner.stop(run_dir)
+        st.session_state["_fds_stop_killed"] = killed
+        st.rerun(scope="app")
+    pause_col.caption("Asks FDS to finish the step it is on, write its restart files and "
+                      "exit. Not a kill: it can be picked up from where it stopped.")
+    stop_col.caption("Kills the run and its worker processes outright. For a run that has "
+                     "stopped responding and will never see a pause. Whatever checkpoints "
+                     "it already wrote are kept.")
 
 
 def _resume_controls(design: Design, run_dir: Path, status: dict) -> None:
     resumable = fds_runner.has_restart_files(run_dir)
-    st.info(f"Paused — {status['detail']}")
+    st.info(f"{status['state'].capitalize()} — {status['detail']}")
     minutes = DURATIONS[st.session_state.get("fds_minutes", DEFAULT_DURATION)]
     if st.button("Resume from where it stopped", key="fds_resume", type="primary",
                  disabled=not resumable):
@@ -464,17 +476,18 @@ def render() -> None:
     status, other_status = _status(run_dir), _status(other_dir)
     running = status is not None and status["state"] == "running"
 
-    paused = status is not None and status["state"] == "paused"
+    halted = status is not None and status["state"] in ("paused", "stopped")
     if running:
         _live_progress(run_dir)
         _live_statistics(run_dir, trace)
         _pause_controls(run_dir)
-    elif paused:
+    elif halted:
         _resume_controls(design, run_dir, status)
+        _start_controls(design, run_dir, "Start again", suppression)
     elif not problems:
         verb = "Re-run FDS" if status else "Start FDS run"
         _start_controls(design, run_dir, verb if suppression else f"{verb} (free burn)", suppression)
-    if status is not None and status["state"] == "failed" and not paused:
+    if status is not None and status["state"] == "failed" and not halted:
         st.error(f"The last FDS run did not finish: {status['detail']}")
     if status is None:
         st.info(f"Start the {(scenario or SCENARIOS[0][0]).lower()} run to see its CFD field here.")
