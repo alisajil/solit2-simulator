@@ -227,3 +227,72 @@ def test_a_second_archive_does_not_overwrite_the_first(tmp_path):
     if first == second:      # same second; the stamp cannot separate them
         return
     assert first != second
+
+
+def test_the_protocol_covers_every_item_annex_7_requires_of_one():
+    """Annex 7 §8.2 lists what a fire test protocol shall cover as a minimum,
+    and §8.2 requires the authority having jurisdiction to approve it. A
+    protocol missing one of those items is not one they can approve."""
+    from solit2.reports import guidance
+    md = test_plan.render(Design.load(SITE_DESIGN), envelope.run(Design.load(SITE_DESIGN)))
+    missing = [item for item, marker in guidance.CONTENT_MARKERS.items() if marker not in md]
+    assert not missing, f"§8.2 items not covered: {missing}"
+    assert len(guidance.CONTENT_MARKERS) == len(guidance.PROTOCOL_CONTENTS)
+
+
+def test_the_protocol_states_no_acceptance_limit_of_its_own():
+    """Annex 7 §7.1 leaves absolute values to the authority having jurisdiction
+    and says the chapter does not specify them. The protocol may quote a
+    criterion's limit where one has been SET in the design; it may not supply
+    one itself, and it must say who owns the decision."""
+    design = Design.load(SITE_DESIGN)
+    result = envelope.run(design)
+    md = test_plan.render(design, result)
+    assert "defined by authorities having jurisdiction" in md
+    for name in result.score["criteria_unset"]:
+        row = next(line for line in md.splitlines()
+                   if line.startswith(f"| {name} |"))
+        assert "| — |" in row, f"{name} has no limit set, so the protocol must not show one"
+
+
+def test_the_protocol_flags_the_blank_activation_trigger_in_the_standard():
+    """Annex 7 §5.2.8 offers trigger "A ... or B." and option B is blank in the
+    published v2.1. §6.5 shows the intent was a heat release rate, but no value
+    is printed. Inventing one would be inventing an acceptance parameter."""
+    md = test_plan.render(Design.load(SITE_DESIGN), envelope.run(Design.load(SITE_DESIGN)))
+    assert "option B" in md and "blank in Annex 7" in md
+    assert "must set the option B trigger" in md
+
+
+def test_the_protocol_carries_the_main_documents_test_rules_not_just_annex_7():
+    """A protocol built from Annex 7 alone misses main §3.6.2 entirely: the
+    sampling rate, the number of test series and the standoff tolerance are
+    stated there and nowhere in Annex 7."""
+    from solit2.reports import guidance
+    md = test_plan.render(Design.load(SITE_DESIGN), envelope.run(Design.load(SITE_DESIGN)))
+    assert f"{guidance.MAIN_MIN_TEST_SERIES} series of tests" in md
+    assert f"every {guidance.MAIN_MAX_SAMPLE_INTERVAL_S:g} s" in md
+    assert f"{guidance.MAIN_MAX_STANDOFF_EXCESS_PCT:.0f} %" in md
+    for parameter in guidance.TEST_DERIVED_PARAMETERS:
+        assert parameter in md, f"Annex 3 §3.3 parameter missing: {parameter}"
+
+
+def test_where_the_two_documents_set_different_floors_the_stricter_governs():
+    """Annex 7 §3.6 and main §3.6.2 both set minimum test-tunnel dimensions and
+    disagree on height. Both are minimums, so the higher one binds."""
+    from solit2.reports import guidance
+    md = test_plan.render(Design.load(SITE_DESIGN), envelope.run(Design.load(SITE_DESIGN)))
+    for name, annex7, main, unit, _ in guidance.STRICTER_OF:
+        assert f"**{max(annex7, main):g} {unit}**" in md, f"{name} does not show the stricter floor"
+    assert any(a != b for _, a, b, _, _ in guidance.STRICTER_OF), \
+        "this test is pointless unless the two documents actually differ somewhere"
+
+
+def test_a_design_below_an_annex_7_minimum_is_marked_not_quietly_passed():
+    """The conformance column exists to be failable. A mock-up shorter than
+    §5.2.2's 10 m must read as below minimum, not as a dash."""
+    design = Design.load(SITE_DESIGN)
+    shrunk = design.model_copy(deep=True)
+    object.__setattr__(shrunk.fire.footprint, "length_m", 6.0)
+    md = test_plan.render(shrunk, envelope.run(design))
+    assert "**BELOW MINIMUM**" in md

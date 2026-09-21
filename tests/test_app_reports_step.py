@@ -8,7 +8,7 @@ def test_reports_step_builds_and_runs_the_twin_and_offers_exports(run_view, monk
     assert not at.exception
     assert at.session_state["twin_result"] is not None
     bodies = [m.value for m in at.markdown]
-    assert any(b.startswith("# Test Plan") for b in bodies)
+    assert any(b.startswith("# Fire test protocol") for b in bodies)
     assert any(b.startswith("# Correlation") for b in bodies)
     assert any("gallery" in i.value for i in at.info)
     assert any("Run the CFD step" in c.value for c in at.caption)
@@ -23,4 +23,4 @@ def test_a_twin_that_cannot_be_built_is_reported_and_the_rest_still_renders(run_
     at = run_view("reports", timeout=180)
     assert not at.exception
     assert any("test gallery" in e.value for e in at.error)
-    assert any(m.value.startswith("# Test Plan") for m in at.markdown)
+    assert any(m.value.startswith("# Fire test protocol") for m in at.markdown)

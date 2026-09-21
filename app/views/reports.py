@@ -54,10 +54,14 @@ def render() -> None:
     exports = [(f"{name}.json", design.model_dump_json(indent=2), "Design JSON"),
                (f"{name}-result.json", result.model_dump_json(indent=2), "Tier 1 result JSON")]
 
-    st.subheader("Test plan")
+    st.subheader("Fire test protocol")
+    st.caption("Built to Annex 7 §8.2's minimum contents for a fire test protocol, "
+               "with the main document §3.6.2 and Annex 3 §3.3 requirements folded in. "
+               "Annex 7 §8.2 requires the authority having jurisdiction to approve it "
+               "before testing.")
     plan_md = test_plan.render(design, result)
     st.markdown(plan_md)
-    exports.append((f"{name}-test-plan.md", plan_md, "Test plan (.md)"))
+    exports.append((f"{name}-fire-test-protocol.md", plan_md, "Fire test protocol (.md)"))
 
     st.subheader("Site vs test facility")
     pair = ensure_twin_result(design)

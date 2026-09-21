@@ -76,9 +76,9 @@ def test_history_subcommand_lists_the_leaderboard(tmp_path):
 def test_report_test_plan_emits_markdown_with_inputs_and_outcomes():
     proc = _run(["report", "test-plan", "examples/designs/road-tunnel-twin-bore.json"])
     assert proc.returncode == 0, proc.stderr
-    assert proc.stdout.startswith("# Test Plan")
+    assert proc.stdout.startswith("# Fire test protocol")
     assert "road-tunnel-twin-bore" in proc.stdout
-    assert "## Predicted outcomes" in proc.stdout
+    assert "## 13. Predicted outcomes" in proc.stdout
 
 
 def test_report_test_plan_writes_the_out_file(tmp_path):
