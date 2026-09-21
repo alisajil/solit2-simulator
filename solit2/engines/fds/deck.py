@@ -109,6 +109,13 @@ E_COEFFICIENT = 0.4
 RAMP_GROWTH_SAMPLE_S = 10.0
 RAMP_DECAY_SAMPLE_S = 30.0
 PUMP_RAMP_ID = "PUMP"
+# How often FDS writes restart files, in simulated seconds. Its own default is
+# effectively never, which means a run stopped by anything other than a
+# graceful stop has to start again from zero. Each set overwrites the last, so
+# the cost is bounded disk rather than growing disk, and on a run where a
+# simulated second takes tens of wall seconds this is a checkpoint every
+# several minutes.
+DT_RESTART_S = 60.0
 FREE_BURN_SUFFIX = "_free"
 # FDS rejects any SURF using HRRPUA without a REAC line (ERROR 314): the fuel
 # chemistry is what lets it balance the reaction and compute species transport,
@@ -146,8 +153,11 @@ def _head(design: Design, suppression: bool) -> list[str]:
     return [f"&HEAD CHID='{chid(design, suppression)}', TITLE='{title}' /", ""]
 
 
-def _time(design: Design, t_end_s: float | None = None) -> list[str]:
+def _time(design: Design, t_end_s: float | None = None, restart: bool = False) -> list[str]:
     """`t_end_s` shortens the SIMULATION without touching the DESIGN.
+
+    `restart` adds FDS's own `RESTART=.TRUE.`, which picks the run up from the
+    restart files it last wrote rather than starting again from zero.
 
     `zones.duration_min` is how long the system discharges, and it sizes the
     water tank (`hydraulics.size_system`) and the cost index. Editing it to cut
@@ -156,8 +166,9 @@ def _time(design: Design, t_end_s: float | None = None) -> list[str]:
     30-minute minimum discharge. The simulated window is a property of the
     run, not of the system, so it is a separate knob.
     """
+    restart_flag = ", RESTART=.TRUE." if restart else ""
     return [f"&TIME T_END={(t_end_s if t_end_s is not None else design.zones.duration_min * 60.0):.1f} /",
-            f"&MISC TMPA={design.tunnel.ambient_temp_c:.1f} /",
+            f"&MISC TMPA={design.tunnel.ambient_temp_c:.1f}{restart_flag} /",
             # One global pressure matrix across all meshes instead of FDS's
             # default block-wise FFT per mesh. A 600 m tunnel split into
             # MESH_COUNT pieces is one duct, and the default solver has to
@@ -915,7 +926,8 @@ def _output(design: Design, geom: SectionGeometry, dx_m: float, suppression: boo
     # a mist system in the deck -- the water mass per unit volume of the FINE
     # particle class for the mist layer.
     y = fuel_box(design, geom, dx_m).y_centre_m
-    lines = [f"&DUMP DT_DEVC={DEVC_DT_S:.1f}, DT_HRR={DEVC_DT_S:.1f} /",
+    lines = [f"&DUMP DT_DEVC={DEVC_DT_S:.1f}, DT_HRR={DEVC_DT_S:.1f}, "
+             f"DT_RESTART={DT_RESTART_S:.1f} /",
              f"&SLCF PBY={y:.2f}, QUANTITY='TEMPERATURE' /",
              f"&SLCF PBY={y:.2f}, QUANTITY='U-VELOCITY' /",
              # FDS 6.11 has no 'SOOT DENSITY' quantity (ERROR 1042 in a real run):
@@ -956,13 +968,20 @@ def matches_design(run_dir: Path, design: Design) -> bool | None:
 
 
 def generate(design: Design, dx_m: float = DX_M,
-             t_end_s: float | None = None, *, suppression: bool = True) -> str:
+             t_end_s: float | None = None, *, suppression: bool = True,
+             restart: bool = False) -> str:
     """The deck. `suppression=False` is the SAME fire in the SAME tunnel with no
-    mist system at all -- the free-burn reference the mist run is judged against."""
+    mist system at all -- the free-burn reference the mist run is judged against.
+
+    `restart=True` resumes from the restart files an earlier run of THIS deck
+    left behind, instead of starting over. Everything else must match what that
+    run was given, which is why it is a flag on the same generator rather than
+    a separate one.
+    """
     geom = section_geometry(design)
     duration_s = design.zones.duration_min * 60.0
     horizon_s = max(duration_s, t_end_s or 0.0)
-    blocks = (_head(design, suppression) + _time(design, t_end_s) + _meshes(geom, dx_m)
+    blocks = (_head(design, suppression) + _time(design, t_end_s, restart) + _meshes(geom, dx_m)
               + _tunnel(geom, dx_m) + _portals(design) + _fire(design, geom, dx_m, horizon_s)
               + _target(design, geom, dx_m)
               + (_nozzles(design, geom) if suppression else [])

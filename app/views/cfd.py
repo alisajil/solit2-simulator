@@ -31,7 +31,13 @@ from solit2.schema.design import Design
 from solit2.schema.result import Result
 
 RUNS_DIR = Path("runs")
-DURATIONS = {"5 min": 5.0, "10 min": 10.0, "20 min": 20.0, "Full (design duration)": None}
+# Simulated windows. The long ones are in hours because that is how they read:
+# on this machine a 20-minute window is most of a day's wall clock and an hour
+# is several days, so the step names what it is asking for rather than burying
+# it in minutes. `None` is the design's own discharge duration.
+DURATIONS = {"5 min": 5.0, "10 min": 10.0, "20 min": 20.0, "30 min": 30.0,
+             "1 hour": 60.0, "1.5 hours": 90.0, "2 hours": 120.0,
+             "Full (design duration)": None}
 DEFAULT_DURATION = "20 min"
 SCENARIOS = (("With mist", True), ("Free burn", False))
 # (label, the quantity string FDS writes into the .smv slice header). FDS names a
@@ -71,6 +77,38 @@ def _preflight() -> list[str]:
              or '<span class="chip pass">FDS ready</span>')
     st.markdown(chips, unsafe_allow_html=True)
     return problems
+
+
+def _pause_controls(run_dir: Path) -> None:
+    """Stop the run the way FDS itself offers to be stopped."""
+    if st.button("Pause this run", key="fds_pause"):
+        try:
+            fds_runner.pause(run_dir)
+        except OSError as exc:
+            st.error(f"Could not ask the run to stop: {exc}")
+            return
+        st.rerun(scope="app")
+    st.caption("Asks FDS to finish the step it is on, write its restart files and exit. "
+               "Not a kill: the run can be picked up from where it stopped.")
+
+
+def _resume_controls(design: Design, run_dir: Path, status: dict) -> None:
+    resumable = fds_runner.has_restart_files(run_dir)
+    st.info(f"Paused — {status['detail']}")
+    minutes = DURATIONS[st.session_state.get("fds_minutes", DEFAULT_DURATION)]
+    if st.button("Resume from where it stopped", key="fds_resume", type="primary",
+                 disabled=not resumable):
+        try:
+            fds_runner.resume(design=design, run_dir=run_dir,
+                              t_end_s=None if minutes is None else minutes * 60.0)
+        except (OSError, RuntimeError) as exc:
+            st.error(f"Could not resume: {exc}")
+            return
+        st.rerun(scope="app")
+    if not resumable:
+        st.caption("Nothing to resume from: FDS writes restart files on a graceful stop "
+                   "and periodically while it runs, and this run has none. Start it again "
+                   "instead.")
 
 
 def _start_controls(design: Design, run_dir: Path, verb: str, suppression: bool) -> None:
@@ -426,13 +464,17 @@ def render() -> None:
     status, other_status = _status(run_dir), _status(other_dir)
     running = status is not None and status["state"] == "running"
 
+    paused = status is not None and status["state"] == "paused"
     if running:
         _live_progress(run_dir)
         _live_statistics(run_dir, trace)
+        _pause_controls(run_dir)
+    elif paused:
+        _resume_controls(design, run_dir, status)
     elif not problems:
         verb = "Re-run FDS" if status else "Start FDS run"
         _start_controls(design, run_dir, verb if suppression else f"{verb} (free burn)", suppression)
-    if status is not None and status["state"] == "failed":
+    if status is not None and status["state"] == "failed" and not paused:
         st.error(f"The last FDS run did not finish: {status['detail']}")
     if status is None:
         st.info(f"Start the {(scenario or SCENARIOS[0][0]).lower()} run to see its CFD field here.")

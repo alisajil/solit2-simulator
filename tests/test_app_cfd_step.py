@@ -467,3 +467,54 @@ def test_a_finished_run_shows_no_live_statistics(run_view, monkeypatch, tmp_path
     assert not at.exception
     keys = {e.key for e in at.get("plotly_chart")}
     assert "cfd_live_hrr" not in keys, "live charts belong to a live run"
+
+
+def test_a_running_run_offers_a_pause_and_a_paused_one_offers_resume(run_view, monkeypatch, tmp_path):
+    from app.views import cfd
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    _fake_run(run_dir, "Time Step 10\n Total Time:  120.0 s\n", t_end=1200.0)
+    (run_dir / "deck.fds").write_text("&HEAD CHID='x' /\n&TIME T_END=1200.0 /\n")
+    monkeypatch.setattr(cfd, "_load_slice", lambda *a, **kw: None)
+    monkeypatch.setattr(cfd.fds_runner, "series", lambda *a, **kw: {})
+
+    at = run_view("cfd")
+    assert not at.exception
+    assert any(b.key == "fds_pause" for b in at.button), "a running run can be stopped"
+    assert all(b.key != "fds_resume" for b in at.button)
+
+    at.button(key="fds_pause").click().run()
+    assert not at.exception
+    assert fds_runner.is_paused(run_dir), "the stop file is what FDS watches for"
+
+    at = run_view("cfd")
+    assert not at.exception
+    assert any(b.key == "fds_resume" for b in at.button), "a paused run can be resumed"
+    assert all(b.key != "fds_pause" for b in at.button)
+    assert not any("did not finish" in e.value for e in at.error), \
+        "paused is not failed, and must not be reported as it"
+
+
+def test_resume_is_offered_disabled_when_there_is_nothing_to_resume_from(
+        run_view, monkeypatch, tmp_path):
+    from app.views import cfd
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    _fake_run(run_dir, "Total Time: 120.0 s\n", t_end=1200.0)
+    (run_dir / "deck.fds").write_text("&HEAD CHID='x' /\n&TIME T_END=1200.0 /\n")
+    (run_dir / "x.stop").write_text("")
+    monkeypatch.setattr(cfd, "_load_slice", lambda *a, **kw: None)
+    at = run_view("cfd")
+    assert not at.exception
+    assert at.button(key="fds_resume").disabled, "no restart files exist"
+    (run_dir / "x.restart").write_text("")
+    at = run_view("cfd")
+    assert not at.button(key="fds_resume").disabled
+
+
+def test_the_simulated_window_reaches_past_an_hour():
+    """A 20-minute window is most of a day's wall clock on this machine, so the
+    long options are named in hours rather than buried in minutes."""
+    from app.views import cfd
+    assert cfd.DURATIONS["1 hour"] == 60.0
+    assert cfd.DURATIONS["2 hours"] == 120.0
+    assert max(v for v in cfd.DURATIONS.values() if v is not None) >= 120.0
+    assert cfd.DURATIONS["Full (design duration)"] is None

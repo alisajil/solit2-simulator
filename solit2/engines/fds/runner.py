@@ -117,6 +117,72 @@ def run(deck_path: Path, out_dir: Path) -> str:
     return out_dir.name
 
 
+def _chid(run_dir: Path) -> str | None:
+    """The run's CHID, read off its own deck."""
+    deck = Path(run_dir) / "deck.fds"
+    if not deck.exists():
+        return None
+    match = re.search(r"CHID='([^']+)'", deck.read_text())
+    return match.group(1) if match else None
+
+
+def stop_file(run_dir: Path) -> Path | None:
+    """`<CHID>.stop`, the file FDS watches for. None if there is no deck."""
+    chid = _chid(run_dir)
+    return None if chid is None else Path(run_dir) / f"{chid}.stop"
+
+
+def is_paused(run_dir: Path) -> bool:
+    marker = stop_file(run_dir)
+    return marker is not None and marker.exists()
+
+
+def has_restart_files(run_dir: Path) -> bool:
+    """Whether FDS left anything to resume FROM."""
+    return any(Path(run_dir).glob("*.restart"))
+
+
+def pause(run_dir: Path) -> Path:
+    """Ask FDS to stop gracefully and leave itself somewhere to resume from.
+
+    NOT a kill. FDS checks for `<CHID>.stop` on every time step and, finding
+    it, finishes the step, writes its restart files and exits cleanly. Killing
+    the processes instead loses whatever was between the last checkpoint and
+    the moment of death, and on this machine also has to catch `prterun`,
+    which does not match the obvious pattern and restarts its workers.
+    """
+    marker = stop_file(run_dir)
+    if marker is None:
+        raise FileNotFoundError(f"no deck.fds in {run_dir}, so no CHID to stop")
+    marker.write_text("")
+    return marker
+
+
+def resume(run_dir: Path, design, t_end_s: float | None = None) -> str:
+    """Pick a paused run up from where it stopped.
+
+    Clears the stop file first -- FDS reads it on the first step and would
+    shut straight back down -- then rewrites the deck with `RESTART=.TRUE.`
+    and relaunches. Everything else in the deck is regenerated from the same
+    design, so a resumed run cannot silently continue under different physics.
+    """
+    from solit2.engines.fds import deck as deck_mod
+
+    run_dir = Path(run_dir)
+    if not has_restart_files(run_dir):
+        raise FileNotFoundError(
+            f"{run_dir} holds no .restart files, so there is nothing to resume from. "
+            f"FDS writes them on a graceful stop and every "
+            f"{deck_mod.DT_RESTART_S:.0f} s of simulated time; a run killed outright "
+            f"before its first checkpoint has to start again")
+    marker = stop_file(run_dir)
+    if marker is not None and marker.exists():
+        marker.unlink()
+    (run_dir / "deck.fds").write_text(
+        deck_mod.generate(design, t_end_s=t_end_s, restart=True))
+    return run(run_dir / "deck.fds", run_dir)
+
+
 def log_path(run_dir: Path) -> Path | None:
     """FDS's own `<CHID>.out` if it is there, else the stdout `run()` captured.
 
@@ -260,6 +326,15 @@ def status(run_dir: Path) -> dict:
     # cannot. Reported as failed rather than as a fourth state, because what a
     # caller does with it is exactly what it does with any unfinished run --
     # read the partial output and say it is incomplete.
+    if is_paused(run_dir):
+        # Asked to stop, so silence is the point rather than a symptom, and
+        # neither the pid check nor the stall clock below has anything to say.
+        return {"state": "paused", "progress": progress,
+                "detail": ("stopped gracefully at "
+                           + (f"{float(elapsed[-1]):.0f} s of {float(end.group(1)):.0f} s"
+                              if elapsed else "the start")
+                           + ("; resumable" if has_restart_files(run_dir)
+                              else "; no restart files were written, so it cannot resume"))}
     if _launcher_alive(run_dir) is False:
         return {"state": "failed", "progress": progress,
                 "detail": f"the FDS process is gone and never reported success; it stopped "

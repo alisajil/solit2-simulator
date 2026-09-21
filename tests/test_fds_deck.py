@@ -814,3 +814,24 @@ def test_the_load_positions_fall_back_to_the_centreline_where_there_is_no_load()
     devices = {n: (x, y, z) for n, x, y, z in _devices(deck.generate(design))}
     for position in (6, 7):
         assert devices[deck.annex7_id("thermocouple", "U45", position)][1] == 0.0
+
+
+def test_the_deck_writes_restart_files_so_a_run_can_be_picked_up():
+    """FDS's own default is effectively never, which leaves a run stopped by
+    anything but a graceful stop with nowhere to resume from."""
+    text = deck.generate(Design.load(BASELINE))
+    dump = next(ln for ln in text.splitlines() if ln.startswith("&DUMP"))
+    assert f"DT_RESTART={deck.DT_RESTART_S:.1f}" in dump
+
+
+def test_only_a_restart_deck_carries_the_restart_flag():
+    design = Design.load(BASELINE)
+    plain = next(ln for ln in deck.generate(design).splitlines() if ln.startswith("&MISC"))
+    resumed = next(ln for ln in deck.generate(design, restart=True).splitlines()
+                   if ln.startswith("&MISC"))
+    assert "RESTART" not in plain
+    assert "RESTART=.TRUE." in resumed
+    # and nothing else about the run may drift between the two
+    a = deck.generate(design).splitlines()
+    b = deck.generate(design, restart=True).splitlines()
+    assert [x for x in a if not x.startswith("&MISC")] == [x for x in b if not x.startswith("&MISC")]

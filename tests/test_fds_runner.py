@@ -461,3 +461,71 @@ def test_series_subsamples_a_long_run_but_never_drops_the_newest_sample(tmp_path
     assert out["t_s"][0] == 0.0
     assert out["t_s"][-1] == 4999.0, "the latest sample is what a live chart is for"
     assert out["HRR"][-1] == 9998.0
+
+
+def _run_dir_with_deck(tmp_path, chid="abc", t_end=100.0, reached=25.0):
+    (tmp_path / "deck.fds").write_text(f"&HEAD CHID='{chid}' /\n&TIME T_END={t_end} /\n")
+    (tmp_path / "run.out").write_text(f"Total Time:  {reached:.3f} s\n")
+    return tmp_path
+
+
+def test_pause_asks_fds_to_stop_rather_than_killing_it():
+    """FDS checks for `<CHID>.stop` every time step and shuts down gracefully,
+    writing restart files. Killing the processes loses everything since the
+    last checkpoint, and on this machine also has to catch `prterun`, which
+    does not match the obvious pattern and restarts its workers."""
+    import tempfile
+    from pathlib import Path
+    d = _run_dir_with_deck(Path(tempfile.mkdtemp()))
+    assert runner.status(d)["state"] == "running"
+    marker = runner.pause(d)
+    assert marker.name == "abc.stop" and marker.exists()
+    assert runner.is_paused(d)
+
+
+def test_a_paused_run_is_paused_and_not_failed():
+    """Silence is the point after a pause, so neither the pid check nor the
+    stall clock may call it a failure."""
+    import os
+    import tempfile
+    import time as _time
+    from pathlib import Path
+    d = _run_dir_with_deck(Path(tempfile.mkdtemp()))
+    runner.pause(d)
+    old = _time.time() - (runner.STALL_AFTER_S + 600.0)
+    for f in d.glob("*"):
+        os.utime(f, (old, old))
+    (d / runner.PID_NAME).write_text("999999")        # and its process is gone
+    state = runner.status(d)
+    assert state["state"] == "paused"
+    assert state["progress"] == pytest.approx(0.25), "how far it got is still reported"
+    assert "cannot resume" in state["detail"], "no restart files were written"
+    (d / "abc.restart").write_text("")
+    assert "resumable" in runner.status(d)["detail"]
+
+
+def test_resume_refuses_when_there_is_nothing_to_resume_from():
+    import tempfile
+    from pathlib import Path
+    from solit2.schema.design import Design
+    d = _run_dir_with_deck(Path(tempfile.mkdtemp()))
+    runner.pause(d)
+    with pytest.raises(FileNotFoundError, match="nothing to resume from"):
+        runner.resume(d, Design.load("designs/og-dbr-rev0.json"))
+
+
+def test_resume_clears_the_stop_file_and_asks_for_a_restart(monkeypatch):
+    """Leaving the stop file in place would shut the resumed run down on its
+    first step."""
+    import tempfile
+    from pathlib import Path
+    from solit2.schema.design import Design
+    d = _run_dir_with_deck(Path(tempfile.mkdtemp()))
+    runner.pause(d)
+    (d / "abc.restart").write_text("")
+    monkeypatch.setattr(runner, "run", lambda deck, out: "launched")
+    assert runner.resume(d, Design.load("designs/og-dbr-rev0.json"), t_end_s=300.0) == "launched"
+    assert not runner.is_paused(d), "the stop file must be gone"
+    deck_text = (d / "deck.fds").read_text()
+    assert "RESTART=.TRUE." in deck_text
+    assert "T_END=300.0" in deck_text
