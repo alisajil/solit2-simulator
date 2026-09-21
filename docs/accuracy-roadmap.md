@@ -74,21 +74,49 @@ they are set, `score.components.margin` averages over one boolean and reads
 
 ## 3. Close the validation misses
 
-Each of these is a real disagreement with a measured test, not a tolerance to
-widen.
+Each is a real disagreement with a measured test, not a tolerance to widen.
 
-- [ ] **Ceiling temperature is 3× low in both Class A cases.** The single
-      largest error in the model. Start at `thermal.ceiling_excess_coefficient`
-      and the ceiling-jet correlation it feeds, and check the plume entrainment
-      assumption before touching the constant.
-- [ ] **Far-field temperature is 2× low at 100 m.** Probably the same root
-      cause as the ceiling miss, through `longitudinal_decay`; confirm rather
-      than assume.
+- [x] **The tunnel was symmetric about the fire.** The downstream decay
+      correlation was applied to `abs(x)`, so the model read 41 C both 15 m
+      upstream and 15 m downstream where c4 measured 22 C and 75 C. Hot gas now
+      reaches upstream only as far as the backlayer. `u15_temp_c` passes in
+      both Class A cases.
+- [x] **Ventilation ran on the fire's uncooled convective heat**, while the
+      thermal field already removed the mist's share from the same heat.
+
+- [ ] **Ceiling temperature is 3× low, and the cause is now pinned.** It is
+      not the correlation. With the decay corrected, setting
+      `thermal.ceiling_excess_coefficient` to 1.0 -- the published Li & Ingason
+      form with no multiplier -- gives:
+
+      | | modelled | measured |
+      |---|---|---|
+      | c4 peak ceiling | 897 C | 830 C |
+      | c4 D15 | 89.8 C | 75 C |
+      | c4 D100 | 49.3 C | 57 C |
+      | c5 peak ceiling | 617 C | 580 C |
+      | c5 D15 | 67.6 C | 55 C |
+      | c5 D100 | 39.9 C | 50 C |
+
+      All six inside tolerance. The same change takes suppressed heat release
+      from 30.6 MW to 67.2 MW on c4 against 30 measured, because at real gas
+      temperatures the reference nozzle's assumed 90 um spray evaporates before
+      it reaches the fuel. **The 0.30 multiplier is buying correct heat release
+      with incorrect temperatures.** Which way to hold that trade is a decision
+      about the tool's purpose, and it stops being a trade at all once item 1
+      lands: a measured spectrum with a real coarse tail delivers water at
+      temperatures the assumed one cannot survive. Do not settle it by
+      choosing a multiplier.
+
 - [ ] **Heat flux at D15 is 2.6× high** while the gas around it is too cool.
-      Those two errors point in opposite directions, so they are unlikely to
-      share a cause. Treat as separate.
-- [ ] **Backlayering is predicted in all three cases and occurred in none.**
-      A critical-velocity criterion that always fires carries no information.
+      Those errors point opposite ways, so they are unlikely to share a cause.
+      Not yet investigated.
+- [ ] **Backlayering is reported in all three Class A cases and was measured
+      in none.** Partly a definition mismatch rather than physics: the result
+      records whether backlayering occurred at ANY instant, and these runs
+      backlayer early, while the fire is growing and before the system
+      activates. The anchor means the suppressed steady state. Decide which
+      question the criterion asks before changing the model.
 - [ ] **Pool extinction fails in c6** where the test extinguished the pools.
       Depends on item 1: the extinction flux constant never moved during the
       fit because no water reaches the pool.
