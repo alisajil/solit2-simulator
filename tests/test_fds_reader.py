@@ -318,3 +318,35 @@ def test_no_banner_at_all_is_still_reported_as_unverified(run_dir):
     result = reader.read(run_dir, Design.load(BASELINE))
     assert result.meta["engine_version"] == reader.ENGINE_VERSION_UNKNOWN
     assert any("neither a release nor a source revision" in w for w in result.warnings)
+
+
+def test_a_run_that_stops_before_full_pressure_says_its_suppression_means_nothing_yet(run_dir):
+    """Measured on a real 250 s pair: the mist ran 22 s at up to 72 % of flow,
+    the suppressed and free-burn HRR agreed to 0.3 %, and the ceiling above the
+    fire differed by 119 C. FDS's E_COEFFICIENT lowers a prescribed burner only
+    as water lands and stays on the fuel, while droplets cool the gas at once,
+    so a run cut off here reads as "the mist did nothing" when it has barely
+    started."""
+    design = Design.load(BASELINE)
+    result = reader.read(run_dir, design)
+    # the fixture activates at 2.0 s and runs to 2.0 s, so full pressure is ahead
+    named = [w for w in result.warnings if "before the pumps reach full pressure" in w]
+    assert named, result.warnings
+    assert "must not be read as the suppression this system achieves" in named[0]
+
+
+def test_a_run_that_passes_full_pressure_carries_no_such_caveat(run_dir):
+    import shutil
+
+    from solit2.engines.reduced.envelope import _design_sha
+    design = Design.load(BASELINE)
+    # No pump ramp, so ACT at 2.0 s IS full pressure and the last sample reaches it.
+    instant = design.model_copy(
+        update={"zones": design.zones.model_copy(update={"pump_ramp_s": 0.0})})
+    old_chid, new_chid = _design_sha(design), _design_sha(instant)
+    assert old_chid != new_chid, "the sha covers the design, so the run dir must be renamed"
+    for suffix in ("_devc.csv", "_hrr.csv", "_ctrl.csv"):
+        shutil.copy(run_dir / f"{old_chid}{suffix}", run_dir / f"{new_chid}{suffix}")
+    result = reader.read(run_dir, instant)
+    assert result.events["t_full_pressure_s"] == pytest.approx(2.0)
+    assert not any("before the pumps reach full pressure" in w for w in result.warnings)

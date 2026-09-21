@@ -263,7 +263,8 @@ def _peaks_of(steps: list[StepRecord], modelled: list[str],
 
 def _warnings(design: Design, geom: SectionGeometry, velocity_ms: float, engine_version: str,
               skipped: list[str], free_burn: bool, deck_current: bool | None,
-              hottest: tuple[str, float], above_fire_c: float) -> list[str]:
+              hottest: tuple[str, float], above_fire_c: float,
+              events: dict[str, float | None], last_t_s: float) -> list[str]:
     """Everything a reader must know that the numbers do not say themselves.
 
     A Tier 2 result is interchangeable with a Tier 1 one downstream, so every
@@ -314,6 +315,21 @@ def _warnings(design: Design, geom: SectionGeometry, velocity_ms: float, engine_
         f"{velocity_ms:.2f} m/s, not Tier 1's section x velocity envelope; "
         f"criteria_cases is empty for the same reason",
     ]
+    activate, full = events["t_activate_s"], events["t_full_pressure_s"]
+    if activate is not None and last_t_s < (full or activate):
+        # Measured on a 250 s pair: the mist had 22 s at up to 72 % of flow, and
+        # the suppressed and free-burn HRR agreed to 0.3 % while the ceiling
+        # above the fire differed by 119 C. FDS's E_COEFFICIENT lowers a
+        # prescribed burner only as water lands and stays ON the fuel, whereas
+        # the droplets cool the gas immediately -- so a run cut off here shows
+        # the cooling and not the suppression, and reads as "the mist did
+        # nothing to the fire" when it has barely had a chance to.
+        warnings.append(
+            f"the run ends at {last_t_s:.0f} s, before the pumps reach full pressure at "
+            f"{full or activate:.0f} s: the mist ran for {last_t_s - activate:.0f} s at "
+            f"partial flow. Gas and ceiling temperatures already respond, but the burning "
+            f"rate barely does, so this run must not be read as the suppression this "
+            f"system achieves")
     hottest_device, hottest_c = hottest
     offset_m = ceiling_device_x_m(hottest_device) - deck_mod.FIRE_X_M
     if abs(offset_m) > deck_mod.CEILING_TC_SPACING_M / 2.0:
@@ -410,5 +426,6 @@ def read(run_dir: Path, design: Design, *, free_burn_dir: Path | None = None) ->
                            deck_mod.matches_design(run_dir, design),
                            hottest_ceiling(devc_ids, devc_rows),
                            max(_at(devc_ids, row, deck_mod.fire_ceiling_device_id())
-                               for row in devc_rows)),
+                               for row in devc_rows),
+                           trace.events, steps[-1].t_s),
     )
