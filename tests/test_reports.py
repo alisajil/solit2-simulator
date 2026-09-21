@@ -85,3 +85,49 @@ def test_the_test_plan_never_calls_a_design_passed_without_saying_what_went_unju
     assert f"{len(unset)} of {len(result.criteria)} criteria were not judged" in outcome_line
     for name in unset:
         assert name in outcome_line
+
+
+def _result_covering(seconds: float, name: str, engine: str):
+    """A minimal Result carrying a clock, for the coverage caveat."""
+    from solit2.schema.result import Result
+    return Result(
+        meta={"design_name": name, "engine": engine},
+        envelope=[], worst_case={}, events={}, criteria={}, criteria_cases={},
+        constraints={}, peaks={}, mist={}, hydraulics={}, cost={},
+        score={"total": 0.0, "gates_passed": True, "gates_failed": [],
+               "components": {}, "penalties": [], "criteria_unset": []},
+        timeseries={"t_s": [0.0, seconds]}, warnings=[])
+
+
+def test_the_correlation_report_says_when_the_columns_cover_different_exposures():
+    """Every criterion in the table is a peak or a dose, so a column from a
+    shorter run is biased toward passing. The app embedded a caveat of its own
+    in the export; the CLI's `report correlation` carried none at all, and both
+    results have always known their own clocks."""
+    from solit2.reports import correlation
+    full = _result_covering(3600.0, "og", "reduced")
+    short = _result_covering(250.0, "og", "fds")
+    note = correlation.coverage_note(full, short)
+    assert note and "0-250 s" in note and "3600 s" in note
+    assert "biased toward passing" in note
+    assert note in correlation.render(full, short)
+    # the order of the arguments must not change the finding
+    assert correlation.coverage_note(short, full) == note
+
+
+def test_no_coverage_caveat_when_the_two_runs_cover_the_same_exposure():
+    from solit2.reports import correlation
+    a = _result_covering(3600.0, "og", "reduced")
+    b = _result_covering(3590.0, "og", "fds")      # inside the tolerance
+    assert correlation.coverage_note(a, b) is None
+    assert ">" not in correlation.render(a, b).splitlines()[-1]
+    assert correlation.coverage_note(a, a) is None, "a result against itself is one column"
+
+
+def test_a_result_without_a_clock_gets_no_invented_caveat():
+    from solit2.reports import correlation
+    from solit2.schema.result import Result
+    full = _result_covering(3600.0, "og", "reduced")
+    blank = Result(**{**full.model_dump(), "meta": {"design_name": "og", "engine": "fds"},
+                      "timeseries": {}})
+    assert correlation.coverage_note(full, blank) is None
