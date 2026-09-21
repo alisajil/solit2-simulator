@@ -37,5 +37,7 @@ htmlcov/
 .DS_Store
 .serena/
 
-# generated assessments and their archives -- outputs, not source
-reports/
+# generated assessments and their archives -- outputs, not source.
+# Anchored: an unanchored `reports/` also matches the SOURCE package
+# solit2/reports/, which silently dropped a new module from a commit.
+/reports/
