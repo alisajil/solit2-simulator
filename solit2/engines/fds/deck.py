@@ -360,6 +360,26 @@ def ceiling_z_at(geom: SectionGeometry, y_m: float, dx_m: float = DX_M) -> float
     return min(max(open_tops), geom.crown_height_m) - CEILING_OFFSET_M
 
 
+def clear_of_solids_z_m(z_m: float, x_m: float, y_m: float, solids: tuple[Box, ...],
+                        ceiling_z_m: float, dx_m: float = DX_M) -> float | None:
+    """`z_m` lifted just above any solid it lands in; None if it cannot clear one.
+
+    A Class B pool sits on the floor and spans the centreline, so the lowest
+    rung of an Annex 7 ladder lands inside the burning fuel. The ladder's COUNT
+    is contractual -- the reader reads rungs 0..n-1 by name -- so a buried rung
+    is moved rather than dropped, and only reported missing if there is no room
+    above the solid at all.
+    """
+    for _ in range(len(solids) + 1):
+        inside = next((b for b in solids
+                       if b.x0 <= x_m <= b.x1 and b.y0 <= y_m <= b.y1 and b.z0 <= z_m <= b.z1),
+                      None)
+        if inside is None:
+            return z_m if z_m <= ceiling_z_m else None
+        z_m = inside.z1 + dx_m / 2.0
+    return None
+
+
 def gas_z_m(geom: SectionGeometry, y_m: float, z_m: float, dx_m: float = DX_M) -> float:
     """`z_m`, moved down into gas if the stair-stepped bore has walled it off.
 
@@ -710,8 +730,14 @@ _SPECIES_PROFILE = (("O2", "OXYGEN"), ("CO2", "CARBON DIOXIDE"), ("COP", "CARBON
 LOAD_SIDE_TREE_MIN_TC = 5
 
 
+def _inside_any(x_m: float, y_m: float, z_m: float, boxes: tuple[Box, ...]) -> bool:
+    """Is this point inside one of the deck's own solid blocks?"""
+    return any(b.x0 <= x_m <= b.x1 and b.y0 <= y_m <= b.y1 and b.z0 <= z_m <= b.z1
+               for b in boxes)
+
+
 def _table_5_profiles(name: str, kit, x_m: float, geom: SectionGeometry,
-                      dx_m: float, load_y_m: float) -> list[str]:
+                      dx_m: float, load_y_m: float, solids: tuple[Box, ...]) -> list[str]:
     """Every instrument Table 5 counts at this station, at its own count.
 
     Annex 7 gives counts, never heights -- the same silence as for the
@@ -757,9 +783,18 @@ def _table_5_profiles(name: str, kit, x_m: float, geom: SectionGeometry,
         # These rungs record it. Nothing reads them and no criterion moves.
         for rung, z in enumerate(thermocouple_heights_m(kit.thermocouples,
                                                         geom.crown_height_m)):
+            placed = gas_z_m(geom, load_y_m, z, dx_m)
+            # This tree stands in the load's own plane, so at a cross-section
+            # that cuts the mock-up or the target it runs THROUGH them. A real
+            # test cannot put a thermocouple inside the burning load either.
+            # The rungs above the fuel are the valuable ones -- they sit in the
+            # plume directly over it -- so the buried rungs are dropped and the
+            # rest keep their own index, which is what names their height.
+            if _inside_any(x_m, load_y_m, placed, solids):
+                continue
             lines.append(
                 f"&DEVC ID='{name}_TCL{rung}', XYZ={x_m:.2f},{load_y_m:.2f},"
-                f"{gas_z_m(geom, load_y_m, z, dx_m):.2f}, QUANTITY='THERMOCOUPLE' /")
+                f"{placed:.2f}, QUANTITY='THERMOCOUPLE' /")
     return lines
 
 
@@ -770,16 +805,23 @@ def _stations(design: Design, geom: SectionGeometry, dx_m: float) -> list[str]:
                                                  VISIBILITY_HEIGHT_M,
                                                  thermocouple_heights_m)
     lines = []
-    load_y_m = fuel_box(design, geom, dx_m).y_centre_m
+    fuel, target = fuel_box(design, geom, dx_m), target_box(design, geom, dx_m)
+    solids = (fuel, target)
+    load_y_m = fuel.y_centre_m
     for name, x_m in sorted(STATIONS.items(), key=lambda kv: kv[1]):
         if not (WINDOW_M[0] <= x_m <= WINDOW_M[1]):
             continue
         kit = INSTRUMENTS[name]
         heights = thermocouple_heights_m(kit.thermocouples, geom.crown_height_m)
         for rung, z in enumerate(heights):
+            placed = clear_of_solids_z_m(gas_z_m(geom, 0.0, z, dx_m), x_m, 0.0, solids,
+                                         ceiling_z_at(geom, 0.0, dx_m), dx_m)
+            if placed is None:
+                raise ValueError(
+                    f"{name}_TC{rung} at z={z:.2f} m cannot be placed clear of the fuel "
+                    f"at x={x_m} m: the solid reaches the ceiling there")
             lines.append(f"&DEVC ID='{name}_TC{rung}', "
-                        f"XYZ={x_m:.2f},0.0,{gas_z_m(geom, 0.0, z, dx_m):.2f}, "
-                        f"QUANTITY='THERMOCOUPLE' /")
+                        f"XYZ={x_m:.2f},0.0,{placed:.2f}, QUANTITY='THERMOCOUPLE' /")
         if kit.heat_flux:
             lines.append(
                 f"&DEVC ID='{name}_HF', XYZ={x_m:.2f},0.0,{HEAT_FLUX_HEIGHT_M:.2f}, "
@@ -800,7 +842,7 @@ def _stations(design: Design, geom: SectionGeometry, dx_m: float) -> list[str]:
             lines.append(
                 f"&DEVC ID='{name}_U', XYZ={x_m:.2f},0.0,{BREATHING_HEIGHT_M:.2f}, "
                 f"QUANTITY='U-VELOCITY' /")
-        lines += _table_5_profiles(name, kit, x_m, geom, dx_m, load_y_m)
+        lines += _table_5_profiles(name, kit, x_m, geom, dx_m, load_y_m, solids)
     # Ceiling line over the core for the lining temperature and the exposed
     # length: OVER THE FUEL LOAD, at the ceiling that exists there, not at the
     # crown centre 2-3 m to the side of an eccentric plume.

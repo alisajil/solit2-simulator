@@ -698,8 +698,13 @@ def test_a_second_thermocouple_tree_stands_in_the_plane_of_the_fuel_load():
     load_y = deck.fuel_box(design, geom).y_centre_m
     text = deck.generate(design)
     for name, kit in INSTRUMENTS.items():
-        expected = kit.thermocouples if kit.thermocouples >= deck.LOAD_SIDE_TREE_MIN_TC else 0
-        assert text.count(f"ID='{name}_TCL") == expected, name
+        if kit.thermocouples < deck.LOAD_SIDE_TREE_MIN_TC:
+            assert text.count(f"ID='{name}_TCL") == 0, name
+            continue
+        # Every rung the tree can actually stand in. At a cross-section that
+        # cuts the mock-up the rungs inside it are dropped, so the count is the
+        # full ladder only where the plane is clear of the load.
+        assert 0 < text.count(f"ID='{name}_TCL") <= kit.thermocouples, name
     heights = thermocouple_heights_m(INSTRUMENTS["D05"].thermocouples, geom.crown_height_m)
     for rung, z in enumerate(heights):
         line = next(ln for ln in text.splitlines() if f"ID='D05_TCL{rung}'" in ln)
@@ -722,3 +727,97 @@ def test_a_centred_load_gets_no_duplicate_tree():
         update={"lane_centre_offset_from_wall_m": geom.road_width_m / 2.0})
     text = deck.generate(design.model_copy(update={"fire": centred}))
     assert "_TCL" not in text
+
+
+def _devices(text: str) -> list[tuple[str, float, float, float]]:
+    import re
+    out = []
+    for line in text.splitlines():
+        m = re.match(r"&DEVC ID='([^']+)'.*XYZ=([-\d.]+),([-\d.]+),([-\d.]+)", line)
+        if m:
+            out.append((m.group(1), float(m.group(2)), float(m.group(3)), float(m.group(4))))
+    return out
+
+
+def _solid_boxes(text: str) -> list[tuple[list[float], str]]:
+    import re
+    out = []
+    for line in text.splitlines():
+        m = re.match(r"&OBST XB=([-\d.,]+),\s*SURF_IDS?=", line)
+        if m:
+            kind = "WALL" if "'WALL'" in line else ("FIRE" if "FIRE" in line else "TARGET")
+            out.append(([float(v) for v in m.group(1).split(",")[:6]], kind))
+    return out
+
+
+ALL_DESIGNS = (BASELINE, TEST_RIG, "examples/designs/road-tunnel-twin-bore.json",
+               "examples/designs/solit2-test-protocol-class-b.json")
+
+
+def test_every_device_is_inside_the_mesh():
+    from solit2.engines.reduced.geometry import section_geometry
+    for path in ALL_DESIGNS:
+        design = Design.load(path)
+        geom = section_geometry(design)
+        text = deck.generate(design)
+        j, k = deck._mesh_extent(geom, deck.DX_M)
+        half, z_top = j * deck.DX_M / 2, k * deck.DX_M
+        devices = _devices(text)
+        assert len(devices) > 100, path
+        for name, x, y, z in devices:
+            assert deck.WINDOW_M[0] <= x <= deck.WINDOW_M[1], (path, name, x)
+            assert -half <= y <= half, (path, name, y)
+            assert 0.0 <= z <= z_top, (path, name, z)
+
+
+def test_no_device_is_buried_in_a_solid_except_the_gauge_that_must_be():
+    """A device inside a solid reports ambient forever and reads as a
+    measurement. It has happened three times in this deck: the ceiling
+    thermocouples in the crown slab, the top rung of five Annex 7 station
+    trees, and the load-side trees at the cross-sections that cut the mock-up.
+    This walks every device against every obstruction so there is no fourth.
+
+    The target's flux gauge is the one exception and not an oversight: FDS's
+    boundary GAUGE HEAT FLUX must sit ON the surface it measures.
+    """
+    for path in ALL_DESIGNS:
+        text = deck.generate(Design.load(path))
+        solids = _solid_boxes(text)
+        assert solids, path
+        buried = []
+        for name, x, y, z in _devices(text):
+            if name == deck.TARGET_GAUGE_ID:
+                continue
+            for (x0, x1, y0, y1, z0, z1), kind in solids:
+                if x0 <= x <= x1 and y0 <= y <= y1 and z0 <= z <= z1:
+                    buried.append(f"{name} at ({x},{y},{z}) inside {kind}")
+                    break
+        assert not buried, f"{path}: " + "; ".join(buried)
+
+
+def test_the_target_gauge_really_is_on_the_target_surface():
+    """The one device allowed inside a solid has to actually be on one."""
+    from solit2.engines.reduced.geometry import section_geometry
+    design = Design.load(BASELINE)
+    box = deck.target_box(design, section_geometry(design))
+    name, x, y, z = next(d for d in _devices(deck.generate(design))
+                         if d[0] == deck.TARGET_GAUGE_ID)
+    assert x == pytest.approx(box.x0) and box.y0 <= y <= box.y1 and box.z0 < z < box.z1
+
+
+def test_the_load_side_tree_keeps_the_rungs_above_the_fuel_it_cannot_stand_in():
+    """Dropping the whole tree where it cuts the mock-up would throw away the
+    most useful rungs of all: the ones in the plume directly over the load."""
+    from solit2.engines.reduced.geometry import section_geometry
+    design = Design.load(BASELINE)
+    geom = section_geometry(design)
+    fuel = deck.fuel_box(design, geom)
+    text = deck.generate(design)
+    at_d03 = [d for d in _devices(text) if d[0].startswith("D03_TCL")]
+    assert at_d03, "a station inside the mock-up still gets the rungs it can have"
+    assert all(z > fuel.z1 or z < fuel.z0 for _, _, _, z in at_d03)
+    assert any(z > fuel.z1 for _, _, _, z in at_d03), "including ones above the load"
+    # a station clear of the mock-up keeps its whole tree
+    from solit2.engines.reduced.criteria import INSTRUMENTS
+    assert len([d for d in _devices(text) if d[0].startswith("D05_TCL")]) == \
+        INSTRUMENTS["D05"].thermocouples
