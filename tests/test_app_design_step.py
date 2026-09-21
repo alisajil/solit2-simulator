@@ -153,3 +153,37 @@ def test_every_seeded_widget_is_written_so_none_can_go_stale(monkeypatch):
     expected = {key for key, *_rest in design_view.SEEDED_FIELDS}
     expected |= {key for _field, key, *_rest in design_view.AHJ_FIELDS}
     assert set(written) == expected
+
+
+def test_a_design_seeded_from_a_file_keeps_that_file_s_name():
+    """The name is half of what identifies a result. It used to be
+    "streamlit-design" whatever the design was seeded from, so the same design
+    assessed from the app and from the CLI produced different names AND
+    different shas -- the sha is taken over the whole design, name included --
+    and landed in different run directories with no way to tell they were the
+    same design."""
+    from app.views.design import design_identity
+    assert design_identity({})["name"] == "streamlit-design", "nothing to take a name from"
+    seeded = design_identity({"meta": {"name": "og-dbr-rev0", "notes": "the baseline"}})
+    assert seeded["name"] == "og-dbr-rev0"
+    assert "the baseline" in seeded["notes"], "the file's own notes travel with it"
+    assert "edited afterwards" in seeded["notes"], "and the caveat that they may not match"
+
+
+def test_the_app_and_the_cli_identify_an_unedited_design_identically():
+    """The whole point: assess the same file both ways and the results must be
+    recognisably the same design."""
+    import json
+    from pathlib import Path
+
+    from app.views.design import design_identity
+    from solit2.engines.fds import deck
+    from solit2.schema.design import Design
+
+    raw = json.loads(Path("designs/og-dbr-rev0.json").read_text())
+    from_cli = Design.from_dict(raw)
+    as_app_would = Design.from_dict({**raw, "meta": design_identity(raw)})
+    assert as_app_would.meta.name == from_cli.meta.name
+    # the notes differ by design, so the shas differ; the NAME is what a reader
+    # matches on, and it no longer says something unrelated to the file
+    assert deck.chid(as_app_would) != "" and from_cli.meta.name == "og-dbr-rev0"

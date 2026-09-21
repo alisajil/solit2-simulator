@@ -55,7 +55,8 @@ def render() -> None:
     ahj = _render_ahj_inputs(raw_source)
     raw = _assemble(tunnel_preset, fire_preset, nozzle_preset, hydraulics_preset,
                     k_factor, pressure_bar, int(rows), pitch_m,
-                    section_length_m, int(sections_simultaneous), velocity_lo, velocity_hi, ahj)
+                    section_length_m, int(sections_simultaneous), velocity_lo, velocity_hi,
+                    ahj, raw_source)
     _render_summary(raw)
     if st.button("Build & continue →", key="build_design", type="primary"):
         try:
@@ -338,15 +339,42 @@ def _render_ahj_inputs(raw: dict) -> dict:
     return values
 
 
+def design_identity(raw_source: dict) -> dict:
+    """What to call the design this view is about to build.
+
+    A design seeded from a file keeps that file's NAME. It used to be called
+    "streamlit-design" whatever it was seeded from, and the name is not
+    cosmetic: it is half of what identifies a result. It heads every report,
+    names every archive folder, and sits in `Result.meta.design_name` beside
+    the sha -- and because the sha is taken over the whole design, the name
+    changed that too. The same design assessed from the app and from the CLI
+    landed in different run directories and produced results that could not be
+    told to be the same design.
+
+    Edits made after seeding are expected and do not change the name: the file
+    is where this came from, and a result carries the sha to say whether it is
+    still identical.
+    """
+    name = raw_source.get("meta", {}).get("name") if raw_source else None
+    if not name:
+        return {"name": "streamlit-design", "notes": "Built from the Design view."}
+    notes = (raw_source.get("meta", {}) or {}).get("notes", "")
+    return {"name": name,
+            "notes": (f"{notes}\n\n" if notes else "")
+                     + "Seeded from this design in the Design view; any field may "
+                       "have been edited afterwards. The result's design sha says "
+                       "whether it is still identical to the file."}
+
+
 def _assemble(tunnel_preset: str, fire_preset: str, nozzle_preset: str,
              hydraulics_preset: str, k_factor: float, pressure_bar: float,
              rows: int, pitch_m: float, section_length_m: float,
              sections_simultaneous: int, velocity_lo: float, velocity_hi: float,
-             ahj: dict) -> dict:
+             ahj: dict, raw_source: dict | None = None) -> dict:
     """Every override lands inside its own block, on top of the chosen preset."""
     offsets = {1: [0.0], 2: [-2.5, 2.5], 3: [-2.8, 0.0, 2.8]}[rows]
     return {
-        "meta": {"name": "streamlit-design", "notes": "Built from the Design view."},
+        "meta": design_identity(raw_source or {}),
         "tunnel": {"preset": tunnel_preset},
         "fire": {"preset": fire_preset},
         "nozzles": {
