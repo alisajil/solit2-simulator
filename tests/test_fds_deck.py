@@ -546,3 +546,37 @@ def test_a_run_knows_whether_its_deck_is_still_the_one_this_design_generates(tmp
     assert deck.matches_design(tmp_path, design) is False
     (tmp_path / "deck.fds").write_text(deck.generate(Design.load(TEST_RIG)))
     assert deck.matches_design(tmp_path, design) is False
+
+
+def test_no_station_thermocouple_is_emitted_inside_the_lining():
+    """Tier 1 lays its ladder out from the section's TRUE crown, but the deck
+    emits a stair-stepped bore whose top layer is solid across the full width.
+    Five Annex 7 stations had their uppermost thermocouple at 7.25 m with the
+    highest open layer topping at 7.20 m: in a real run every one read exactly
+    ambient for 250 s while the rung below it reached 80 C."""
+    from solit2.engines.reduced.geometry import section_geometry
+    for path in (BASELINE, TEST_RIG):
+        design = Design.load(path)
+        geom = section_geometry(design)
+        text = deck.generate(design)
+        open_top = (geom.crown_height_m if geom.shape == "box" else
+                    max(z for _, z, clear in deck._bore_layers(geom, deck.DX_M) if clear > 0.0))
+        rungs = [ln for ln in text.splitlines()
+                 if ln.startswith("&DEVC ID='") and "_TC" in ln and "QUANTITY='THERMOCOUPLE'" in ln]
+        assert rungs
+        for line in rungs:
+            z = float(line.split("XYZ=")[1].split(",")[2])
+            assert z < open_top, f"{path}: {line.strip()} is inside the lining"
+
+
+def test_a_thermocouple_already_in_gas_is_left_exactly_where_tier_1_puts_it():
+    from solit2.engines.reduced.criteria import thermocouple_heights_m
+    from solit2.engines.reduced.geometry import section_geometry
+    design = Design.load(BASELINE)
+    geom = section_geometry(design)
+    heights = thermocouple_heights_m(7, geom.crown_height_m)
+    assert deck.gas_z_m(geom, 0.0, heights[-1]) < heights[-1], "the top rung must move"
+    for z in heights[:-1]:
+        assert deck.gas_z_m(geom, 0.0, z) == z, "every other rung must be untouched"
+    # and the breathing height the criteria are judged at is never moved
+    assert deck.gas_z_m(geom, 0.0, 1.8) == 1.8

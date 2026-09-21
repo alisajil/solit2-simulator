@@ -261,6 +261,23 @@ def _peaks_of(steps: list[StepRecord], modelled: list[str],
     return peaks
 
 
+def _rake_note(design: Design, geom: SectionGeometry) -> str:
+    """Whether any Annex 7 thermocouple had to be moved down into gas."""
+    from solit2.engines.reduced.criteria import INSTRUMENTS, thermocouple_heights_m
+    moved = []
+    for name, kit in INSTRUMENTS.items():
+        for rung, z in enumerate(thermocouple_heights_m(kit.thermocouples, geom.crown_height_m)):
+            placed = deck_mod.gas_z_m(geom, 0.0, z)
+            if abs(placed - z) > 1e-9:
+                moved.append(f"{name}_TC{rung} {z:.2f}->{placed:.2f} m")
+    if not moved:
+        return ("every Annex 7 thermocouple sits at the height Tier 1 computes for it, "
+                "in gas")
+    return (f"{len(moved)} thermocouple(s) were lowered to stay in gas: the stair-stepped "
+            f"ceiling is below the section's true crown, so the top of the ladder would sit "
+            f"inside the lining and read ambient forever ({', '.join(moved)})")
+
+
 def _warnings(design: Design, geom: SectionGeometry, velocity_ms: float, engine_version: str,
               skipped: list[str], free_burn: bool, deck_current: bool | None,
               hottest: tuple[str, float], above_fire_c: float,
@@ -300,6 +317,7 @@ def _warnings(design: Design, geom: SectionGeometry, velocity_ms: float, engine_
         "lit in turn from the upstream end, so the total follows the curve exactly and "
         "the front moves downstream; a prescribed burner models neither pyrolysis nor "
         "ignition at the base of the load",
+        _rake_note(design, geom),
         f"the ceiling thermocouple line runs over the fuel load at y = {ceiling_y:.1f} m, "
         f"{deck_mod.CEILING_OFFSET_M} m under the stair-stepped ceiling there; the heat "
         f"detector line runs at the crown centre",

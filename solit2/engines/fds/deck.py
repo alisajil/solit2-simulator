@@ -329,6 +329,26 @@ def ceiling_z_at(geom: SectionGeometry, y_m: float, dx_m: float = DX_M) -> float
     return max(open_tops) - CEILING_OFFSET_M
 
 
+def gas_z_m(geom: SectionGeometry, y_m: float, z_m: float, dx_m: float = DX_M) -> float:
+    """`z_m`, moved down into gas if the stair-stepped bore has walled it off.
+
+    Tier 1 lays its thermocouple ladder out from the section's TRUE crown, but
+    the deck emits a stair-stepped bore whose topmost layer is solid across the
+    full width. On an 11 m bore the ladder's top rung lands at 7.25 m and the
+    highest open layer at the centreline tops at 7.20 m, so five of the Annex 7
+    stations had their uppermost thermocouple inside the lining: in a real run
+    every one of them read exactly ambient for the whole 250 s while the rung
+    below reached 80 C. A device the deck promises and then buries is worse
+    than one it never placed, because it reports a number.
+    """
+    if geom.shape == "box":
+        return min(z_m, max(geom.crown_height_m - CEILING_OFFSET_M, 0.0))
+    open_tops = [z_hi for _, z_hi, clear in _bore_layers(geom, dx_m) if clear > abs(y_m)]
+    if not open_tops:
+        raise ValueError(f"y={y_m} m is outside the bore at every height")
+    return min(z_m, max(open_tops) - CEILING_OFFSET_M)
+
+
 def stepped_free_area_m2(geom: SectionGeometry, dx_m: float = DX_M) -> float:
     """Free area of the section AS THE DECK EMITS IT, not as Tier 1 defines it.
 
@@ -656,7 +676,8 @@ def _stations(design: Design, geom: SectionGeometry, dx_m: float) -> list[str]:
         kit = INSTRUMENTS[name]
         heights = thermocouple_heights_m(kit.thermocouples, geom.crown_height_m)
         for rung, z in enumerate(heights):
-            lines.append(f"&DEVC ID='{name}_TC{rung}', XYZ={x_m:.2f},0.0,{z:.2f}, "
+            lines.append(f"&DEVC ID='{name}_TC{rung}', "
+                        f"XYZ={x_m:.2f},0.0,{gas_z_m(geom, 0.0, z, dx_m):.2f}, "
                         f"QUANTITY='THERMOCOUPLE' /")
         if kit.heat_flux:
             lines.append(
