@@ -43,18 +43,45 @@ WINDOW_M = (-360.0, 240.0)
 # The near-fire region the ceiling thermocouple line and the detection line
 # cover. It no longer decides the mesh -- see DX_M.
 CORE_M = (-60.0, 120.0)
-# ONE cell size for the whole window, split into MESH_COUNT equal meshes along
-# x for MPI. Nested meshes -- a fine core inside a coarse far field -- were
-# built first and failed against a real FDS 6.11.1 run: the pressure solver
-# pinned at its iteration cap every step without converging at the interfaces
-# (velocity error 1-2 m/s in cold flow, ~9 m/s once the fire lit) and the run
-# went numerically unstable at ignition, at a 3:1 ratio and again at 2:1. The
-# User Guide lists "a change in grid resolution of more than a factor of 2 at
-# a mesh interface" as a cause of instability; uniform meshes carrying the
-# same fire converged in a few iterations. 0.6 m keeps D*/dx = 11.8 at 150 MW,
-# inside the 10-16 band, at 221k cells; 0.5 m is one --dx away at 403k.
+# Cells are DX_M across and up everywhere. Along x they are DX_M inside
+# FIRE_X_M +- FINE_HALF_LENGTH_M and COARSE_FACTOR x DX_M beyond it.
+#
+# A fine core in a coarse far field was built once before and failed against
+# a real FDS 6.11.1 run: the pressure solver pinned at its iteration cap every
+# step without converging at the interfaces (velocity error 1-2 m/s in cold
+# flow, ~9 m/s once the fire lit) and the run went unstable at ignition, at
+# 3:1 and again at 2:1. That was under FDS's default block-wise FFT solver,
+# which reconciles interfaces by iteration. The deck now asks for UGLMAT (see
+# `_time`), which the 6.11.1 User Guide Sec. 21.1 lists as the solver that
+# "allows stretching and refinement" with the normal velocity at mesh
+# boundaries exact (Table 21.1). Measured on this deck: one pressure iteration
+# per step in both layouts, and over 20 s of cold flow no station more than
+# 5 % from the uniform mesh.
+#
+# Why bother: wall time per step follows the LARGEST mesh, not the cell total,
+# because every rank waits for the slowest at each step. Ten uniform 60 m
+# meshes carried 24,700 cells each; this split's largest carries 17,784, and
+# the same 20 s deck went from 119 s to 90 s on the same ten ranks.
+#
+# Refinement is along x only. Across and up the cells stay DX_M, so a
+# head-height reading at the far stations still sits in a 0.6 m cell
+# vertically, and an integer ratio in every direction keeps the coarse
+# lattice a subset of the fine one, which is what a conforming interface
+# needs. The factor is 2 because the User Guide names a change of more than a
+# factor of 2 at an interface as a cause of instability. 0.6 m keeps
+# D*/dx = 11.8 at 150 MW in the fine region, inside the 10-16 band.
 DX_M = 0.6
-MESH_COUNT = 10              # one MPI rank per mesh; sized for an 11-core machine
+FINE_HALF_LENGTH_M = 108.0   # every station within +-100 m stays in fine cells
+COARSE_FACTOR = 2
+# Meshes per region -- upstream coarse, fine, downstream coarse -- one MPI
+# rank each. (3, 5, 2) puts 17,290 / 17,784 / 13,585 cells on a rank at 0.6 m
+# and keeps the fire mid-mesh: the old uniform split had an interface at x=0,
+# through the fuel bed.
+# Meshes within a region differ by at most one cell along x when the region's
+# cell count does not divide, so any dx that tiles the three regions in whole
+# cells is accepted: 0.25, 0.5, 0.6, 0.75, 1.0 and 1.2 m all do.
+MESH_SPLIT = (3, 5, 2)
+MESH_COUNT = sum(MESH_SPLIT)  # one MPI rank per mesh; sized for an 11-core machine
 # Lagrangian droplets inserted per head per second. FDS defaults to 5000, which
 # on a 54-head deck inserts 270,000 droplets a second: a 66k-cell test case
 # accumulated over a million of them, took ~4 GB, and decelerated toward a
@@ -272,29 +299,56 @@ def target_box(design: Design, geom: SectionGeometry, dx_m: float = DX_M) -> Box
                         fp.base_height_m, fp.top_height_m, geom, dx_m)
 
 
-def _meshes(geom: SectionGeometry, dx_m: float) -> list[str]:
-    """MESH_COUNT equal meshes along x, all at one cell size -- see DX_M.
+def _x_regions(dx_m: float) -> list[tuple[float, float, float, int]]:
+    """(x0, x1, dx, mesh count) for the upstream coarse, fine and downstream
+    coarse regions, each checked to be a whole number of its cells long.
 
-    Every mesh shares one y extent and one z extent, each a whole number of
-    cells, so the interfaces are trivially aligned in all three directions and
-    the stair-stepped bore is the same solid in every mesh.
+    A cell size that does not tile is refused with the reason. The window and
+    the fine band are fixed, so this is a property of dx alone.
     """
     x0, x1 = WINDOW_M
-    nx = (x1 - x0) / dx_m
-    if abs(nx - round(nx)) > 1e-9 or round(nx) % MESH_COUNT:
-        raise ValueError(
-            f"dx={dx_m} m does not tile the {x1 - x0:.0f} m window into "
-            f"{MESH_COUNT} equal whole-cell meshes; 0.5 and 0.6 do")
-    nx_each = round(nx) // MESH_COUNT
-    span = (x1 - x0) / MESH_COUNT
+    fine_lo, fine_hi = FIRE_X_M - FINE_HALF_LENGTH_M, FIRE_X_M + FINE_HALF_LENGTH_M
+    coarse = COARSE_FACTOR * dx_m
+    regions = [(x0, fine_lo, coarse, MESH_SPLIT[0]),
+               (fine_lo, fine_hi, dx_m, MESH_SPLIT[1]),
+               (fine_hi, x1, coarse, MESH_SPLIT[2])]
+    for r0, r1, dx, _ in regions:
+        n = (r1 - r0) / dx
+        if abs(n - round(n)) > 1e-9:
+            raise ValueError(
+                f"dx={dx_m} m does not tile the {r0:.0f}..{r1:.0f} m region in whole "
+                f"cells of {dx:g} m; 0.25, 0.5, 0.6, 0.75, 1.0 and 1.2 do")
+    return regions
+
+
+def _mesh_cells(n_cells: int, count: int) -> list[int]:
+    """`n_cells` shared over `count` meshes, the first `n_cells % count` of them
+    one cell longer. A one-cell difference is a rounding error in load; a
+    divisibility rule would have refused half the useful cell sizes."""
+    base, extra = divmod(n_cells, count)
+    return [base + (1 if i < extra else 0) for i in range(count)]
+
+
+def _meshes(geom: SectionGeometry, dx_m: float) -> list[str]:
+    """One &MESH per rank: fine around the fire, coarser along x beyond -- see
+    FINE_HALF_LENGTH_M.
+
+    Every mesh shares one y extent and one z extent, each a whole number of
+    DX_M cells, so the interfaces are aligned across and up and the
+    stair-stepped bore is the same solid in every mesh. Along x the coarse
+    edges fall on the fine lattice because COARSE_FACTOR is an integer.
+    """
     j, k = _mesh_extent(geom, dx_m)
     half_width, z_top = j * dx_m / 2.0, k * dx_m
-    return [
-        f"&MESH IJK={nx_each},{j},{k}, "
-        f"XB={x0 + i * span:.1f},{x0 + (i + 1) * span:.1f},"
-        f"{-half_width:.2f},{half_width:.2f},0.0,{z_top:.2f} /"
-        for i in range(MESH_COUNT)
-    ] + [""]
+    lines = []
+    for r0, r1, dx, count in _x_regions(dx_m):
+        mx0 = r0
+        for nx in _mesh_cells(round((r1 - r0) / dx), count):
+            lines.append(f"&MESH IJK={nx},{j},{k}, "
+                         f"XB={mx0:.1f},{mx0 + nx * dx:.1f},"
+                         f"{-half_width:.2f},{half_width:.2f},0.0,{z_top:.2f} /")
+            mx0 += nx * dx
+    return lines + [""]
 
 
 def _tunnel(geom: SectionGeometry, dx_m: float) -> list[str]:

@@ -132,9 +132,13 @@ def test_fds_deck_writes_a_namelist(tmp_path):
 
 
 def test_fds_deck_honours_the_dx_override(tmp_path):
-    coarse = _run(["fds-deck", "examples/designs/road-tunnel-twin-bore.json", "--dx", "0.75"]).stdout
-    fine = _run(["fds-deck", "examples/designs/road-tunnel-twin-bore.json", "--dx", "0.25"]).stdout
-    assert coarse != fine
+    # Both must succeed: two refused sizes both print nothing, and nothing
+    # equals nothing -- which is how this test once passed with neither deck.
+    coarse = _run(["fds-deck", "examples/designs/road-tunnel-twin-bore.json", "--dx", "0.75"])
+    fine = _run(["fds-deck", "examples/designs/road-tunnel-twin-bore.json", "--dx", "0.25"])
+    assert coarse.returncode == 0, coarse.stderr
+    assert fine.returncode == 0, fine.stderr
+    assert coarse.stdout != fine.stdout
 
 
 def test_fds_deck_on_a_bad_design_exits_two(tmp_path):

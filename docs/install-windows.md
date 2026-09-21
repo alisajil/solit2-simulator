@@ -141,10 +141,11 @@ The way to settle it is to run the same deck on both and compare, which costs
 about 80 minutes of wall clock and produces a real number instead of an
 argument.
 
-If you want the mesh count to match the cores, `MESH_COUNT` in
-`solit2/engines/fds/deck.py` must divide the window evenly — 5 meshes of 200
-cells fits 6 cores well. Changing it changes every generated deck, so the two
-golden-deck tests will need regenerating:
+If you want the mesh count to match the cores, `MESH_SPLIT` in
+`solit2/engines/fds/deck.py` is the knob: meshes for the upstream coarse, fine
+and downstream coarse regions, one MPI rank each. `(2, 3, 1)` gives six meshes
+that divide evenly and suits six cores. Changing it changes every generated
+deck, so the two golden-deck tests will need regenerating:
 
 ```powershell
 uv run python tests/fixtures/fds/make_fixture.py

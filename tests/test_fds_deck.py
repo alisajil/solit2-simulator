@@ -45,22 +45,103 @@ def _mesh_xb(text: str) -> list[tuple[float, ...]]:
             for ln in text.splitlines() if ln.startswith("&MESH")]
 
 
-def test_meshes_are_uniform_and_tile_the_window_exactly():
-    # Nested meshes (fine core, coarse far field) were built first and failed
-    # against real FDS: the pressure solver never converged at the interfaces
-    # and the run went unstable at ignition, at 3:1 and again at 2:1. Uniform
-    # meshes are the fix, so every mesh must be identical and the tiling exact.
+def _mesh_dx(xb, ijk) -> list[float]:
+    return [(x1 - x0) / i for (x0, x1, *_), (i, _, _) in zip(xb, ijk)]
+
+
+def test_meshes_are_fine_around_the_fire_and_coarser_along_x_in_the_far_field():
+    # The fire, the Figure 16 station set and the +-100 m stations sit inside
+    # FIRE_X_M +- FINE_HALF_LENGTH_M at DX_M. Beyond that the flow is a
+    # stratified duct and the cells are COARSE_FACTOR longer along x ONLY:
+    # across and up they stay DX_M, so a head-height reading at a far station
+    # keeps its vertical resolution. Wall time per step follows the largest
+    # mesh, so the point is to shrink it: measured 119 s -> 90 s on a 20 s deck
+    # with no station more than 5 % from the uniform mesh.
     for design_path in (BASELINE, TEST_RIG):
         text = deck.generate(Design.load(design_path))
         ijk, xb = _mesh_ijk(text), _mesh_xb(text)
-        assert len(set(ijk)) == 1, (design_path, "meshes differ in IJK")
         assert len({b[2:] for b in xb}) == 1, (design_path, "meshes differ in y/z")
-        span = (deck.WINDOW_M[1] - deck.WINDOW_M[0]) / deck.MESH_COUNT
-        for (x0, x1, *_), (i, _, _) in zip(xb, ijk):
-            assert x1 - x0 == pytest.approx(span)
-            assert i * deck.DX_M == pytest.approx(span), "x-span is not whole cells"
+        assert len({(j, k) for _, j, k in ijk}) == 1, (design_path, "meshes differ in JK")
+        fine_lo = deck.FIRE_X_M - deck.FINE_HALF_LENGTH_M
+        fine_hi = deck.FIRE_X_M + deck.FINE_HALF_LENGTH_M
+        for (x0, x1, *_), dx in zip(xb, _mesh_dx(xb, ijk)):
+            inside = fine_lo - 1e-9 <= x0 and x1 <= fine_hi + 1e-9
+            outside = x1 <= fine_lo + 1e-9 or x0 >= fine_hi - 1e-9
+            assert inside or outside, (design_path, "a mesh straddles the fine/coarse boundary")
+            expected = deck.DX_M if inside else deck.COARSE_FACTOR * deck.DX_M
+            assert dx == pytest.approx(expected), (design_path, x0, x1, dx)
+        assert any(x0 == pytest.approx(fine_lo) for x0, *_ in xb), "fine region does not start on a mesh edge"
+        assert any(x1 == pytest.approx(fine_hi) for _, x1, *_ in xb), "fine region does not end on a mesh edge"
+
+
+def test_meshes_tile_the_window_exactly_on_nested_lattices():
+    # No gaps, no overlaps, and every mesh edge on the lattice of its own cell
+    # size counted from the window origin. Because COARSE_FACTOR is an integer
+    # the coarse lattice is a subset of the fine one, so the fine/coarse
+    # interfaces are conforming -- the condition UGLMAT's refinement needs.
+    for design_path in (BASELINE, TEST_RIG):
+        text = deck.generate(Design.load(design_path))
+        ijk, xb = _mesh_ijk(text), _mesh_xb(text)
+        assert xb[0][0] == pytest.approx(deck.WINDOW_M[0])
+        assert xb[-1][1] == pytest.approx(deck.WINDOW_M[1])
         for a, b in zip(xb, xb[1:]):
             assert a[1] == pytest.approx(b[0]), "gap or overlap between meshes"
+        for (x0, x1, *_), dx in zip(xb, _mesh_dx(xb, ijk)):
+            for edge in (x0, x1):
+                n = (edge - deck.WINDOW_M[0]) / dx
+                assert n == pytest.approx(round(n)), (design_path, edge, dx, "edge off its lattice")
+
+
+def test_the_stations_within_100_m_of_the_fire_read_from_fine_cells():
+    # The promise behind the split: everything Annex 7 reads within +-100 m is
+    # in DX_M cells. Only the far stations (U340, D215) sit in coarse cells.
+    from solit2.engines.reduced.criteria import STATIONS
+    near = [x for x in STATIONS.values() if abs(x - deck.FIRE_X_M) <= 100.0]
+    assert len(near) >= 10
+    for x in near:
+        assert abs(x - deck.FIRE_X_M) < deck.FINE_HALF_LENGTH_M, x
+
+
+def test_the_fire_and_its_target_each_sit_inside_one_fine_mesh():
+    # An obstruction may span meshes, but the burner and the target are where
+    # the solution is sharpest. Keep the interface out of both.
+    from solit2.engines.reduced.geometry import section_geometry
+    design = Design.load(BASELINE)
+    geom = section_geometry(design)
+    xb = _mesh_xb(deck.generate(design))
+    for box in (deck.fuel_box(design, geom), deck.target_box(design, geom)):
+        assert any(x0 <= box.x0 and box.x1 <= x1 for x0, x1, *_ in xb), box
+
+
+def test_the_largest_mesh_is_well_below_what_a_uniform_split_would_carry():
+    # Wall time per step follows the largest mesh. This is the whole point.
+    text = deck.generate(Design.load(BASELINE))
+    ijk = _mesh_ijk(text)
+    _, j, k = ijk[0]
+    uniform_per_mesh = (deck.WINDOW_M[1] - deck.WINDOW_M[0]) / deck.DX_M * j * k / len(ijk)
+    assert max(i * j * k for i, j, k in ijk) <= 0.75 * uniform_per_mesh
+
+
+def test_every_obstruction_face_lies_on_a_cell_face_of_its_mesh():
+    # FDS snaps an obstruction to the nearest cell face without a word. A face
+    # that already sits on one moves nowhere; a fine-lattice face inside a
+    # coarse mesh would shift by up to half a coarse cell.
+    text = deck.generate(Design.load(BASELINE))
+    ijk, xb = _mesh_ijk(text), _mesh_xb(text)
+    meshes = list(zip((b[0] for b in xb), (b[1] for b in xb), _mesh_dx(xb, ijk)))
+
+    def on_a_face(x: float) -> bool:
+        for x0, x1, dx in meshes:
+            if x0 - 1e-6 <= x <= x1 + 1e-6:
+                n = (x - x0) / dx
+                if abs(n - round(n)) < 1e-6:
+                    return True
+        return False
+
+    faces = [float(v) for ln in text.splitlines() if ln.startswith("&OBST")
+             for v in ln.split("XB=")[1].split(",")[:2]]
+    assert faces
+    assert all(on_a_face(x) for x in faces), sorted({x for x in faces if not on_a_face(x)})
 
 
 def test_the_mesh_is_padded_to_whole_cells_and_the_wall_fills_the_padding():
