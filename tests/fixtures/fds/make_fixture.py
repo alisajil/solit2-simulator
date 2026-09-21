@@ -12,7 +12,8 @@ AMBIENT_C = 33.0
 
 # Order matters: `unit_of` takes the FIRST marker found in the device id, and
 # "_CO2_" and "_COP_" both contain "_CO".
-UNITS = {"_TCREF": "C", "_CO2_": "%", "_COP_": "ppm", "_O2_": "%", "_UBI_": "m/s",
+UNITS = {"TC-": "C", "HF-": "kW/m2", "VI-": "m", "AN-": "m/s", "GA-": "ppm",
+         "_TCREF": "C", "_CO2_": "%", "_COP_": "ppm", "_O2_": "%", "_UBI_": "m/s",
          "_RH": "%", "_TC": "C", "_HF": "kW/m2", "_VIS": "m", "_CO": "ppm",
          "_FED": "1", "_U": "m/s", "CEIL": "C", "TARGET_FLUX": "kW/m2"}
 # (t=0, t=1, t=2) per quantity: ambient, then a developing fire

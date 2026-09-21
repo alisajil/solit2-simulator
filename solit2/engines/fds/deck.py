@@ -725,15 +725,78 @@ def _gauge_orientation(x_m: float) -> str:
 # to be. These carry their own IDs and nothing reads them: they exist to be
 # compared against measurements.
 _SPECIES_PROFILE = (("O2", "OXYGEN"), ("CO2", "CARBON DIOXIDE"), ("COP", "CARBON MONOXIDE"))
-# A cross-section carrying at least this many thermocouples gets a second tree
-# in the plane of the fuel load -- see `_table_5_profiles`.
+# A cross-section carrying at least this many thermocouples is laid out the way
+# Annex 7 Figure 16 lays one out -- see `_figure_16_positions`.
 LOAD_SIDE_TREE_MIN_TC = 5
+# Annex 7 section 6.4.10 names a measurement "<type>-<location>-<position>",
+# e.g. TC-D40-01: thermocouple, at D40, cross-section position 1. These are
+# that scheme's type codes, for the devices laid out to Figure 16.
+ANNEX7_TYPE_CODES = {"thermocouple": "TC", "heat_flux": "HF", "gas": "GA",
+                     "visibility": "VI", "anemometer": "AN"}
 
 
 def _inside_any(x_m: float, y_m: float, z_m: float, boxes: tuple[Box, ...]) -> bool:
     """Is this point inside one of the deck's own solid blocks?"""
     return any(b.x0 <= x_m <= b.x1 and b.y0 <= y_m <= b.y1 and b.z0 <= z_m <= b.z1
                for b in boxes)
+
+
+def annex7_id(type_key: str, station: str, position: int) -> str:
+    """Annex 7 section 6.4.10's own identifier, e.g. `TC-D05-01`."""
+    return f"{ANNEX7_TYPE_CODES[type_key]}-{station}-{position:02d}"
+
+
+def _figure_16_positions(station: str, kit, x_m: float, geom: SectionGeometry,
+                         dx_m: float, fuel: Box, solids: tuple[Box, ...]) -> list[str]:
+    """The cross-section laid out as Annex 7 Figure 16 draws it.
+
+    Figure 16 numbers seven thermocouples round a cross-section, and it is not
+    the vertical rake on the centreline that this engine's own ladder builds:
+
+        01, 02   left side wall, at the fuel's base and top heights
+        03       ceiling, on the centreline
+        04, 05   right side wall, at the fuel's top and base heights
+        06       beside the load at its platform level
+        07       just above the load's top
+
+    A five-thermocouple section gets 01 to 05, the walls and the ceiling.
+
+    HEIGHTS ARE READ OFF THE FIGURE'S STRUCTURE, NOT OFF DIMENSIONS. Figure 16
+    is schematic and carries no numbers. What it does show unambiguously is
+    what each sensor is keyed TO -- the wall pairs bracket the load between its
+    platform and its top, one sensor sits at the ceiling, and two sit on the
+    load itself -- so every height here comes from the fuel geometry the design
+    already states rather than from a measurement off the drawing.
+
+    Positions 06 and 07 attach to the load, so at a station whose plane misses
+    the mock-up they have nothing to attach to and fall back to the centreline
+    at the same two heights. Nothing is placed inside the load: 06 stands off
+    its outboard face and 07 above its top, and every position is then checked
+    against the solids like any other device.
+
+    These are additional to the centreline ladder, which stays because it is
+    the only thing Tier 1 can be compared against -- that engine resolves a
+    vertical profile and no lateral one at all.
+    """
+    if kit.thermocouples < LOAD_SIDE_TREE_MIN_TC:
+        return []
+    ceiling = ceiling_z_at(geom, 0.0, dx_m)
+    wall_y = geom.width_at(fuel.z0) / 2.0 - dx_m
+    in_plane = fuel.x0 <= x_m <= fuel.x1
+    outboard = fuel.y1 + dx_m / 2.0 if in_plane else 0.0
+    layout = [(1, -wall_y, fuel.z0), (2, -wall_y, fuel.z1), (3, 0.0, ceiling),
+              (4, wall_y, fuel.z1), (5, wall_y, fuel.z0)]
+    if kit.thermocouples >= 7:
+        layout += [(6, outboard, fuel.z0), (7, fuel.y_centre_m if in_plane else 0.0,
+                                            fuel.z1 + dx_m / 2.0)]
+    lines = []
+    for position, y, z in layout[:kit.thermocouples]:
+        placed = clear_of_solids_z_m(min(z, ceiling), x_m, y, solids, ceiling, dx_m)
+        if placed is None:
+            continue
+        lines.append(f"&DEVC ID='{annex7_id('thermocouple', station, position)}', "
+                     f"XYZ={x_m:.2f},{y:.2f},{placed:.2f}, QUANTITY='THERMOCOUPLE' /")
+    return lines
 
 
 def _table_5_profiles(name: str, kit, x_m: float, geom: SectionGeometry,
@@ -772,29 +835,6 @@ def _table_5_profiles(name: str, kit, x_m: float, geom: SectionGeometry,
         # reading means nothing without the temperature it was taken at.
         lines.append(f"&DEVC ID='{name}_TCREF', XYZ={x_m:.2f},0.0,{BREATHING_HEIGHT_M:.2f}, "
                      f"QUANTITY='THERMOCOUPLE' /")
-    if kit.thermocouples >= LOAD_SIDE_TREE_MIN_TC and abs(load_y_m) > dx_m:
-        # A second tree in the plane of the fuel load. Annex 7 gives counts and
-        # cross-sections and never a lateral position, and Tier 1 resolves none
-        # at all -- it models a vertical profile, not a lateral one -- so the
-        # criteria stay on the centreline, which is the only place the two
-        # tiers can be compared. That left the result silent about a real and
-        # large gradient: measured on a 6.8 MW run, the ceiling over the load
-        # read 133 C against 78 C on the centreline at the same station.
-        # These rungs record it. Nothing reads them and no criterion moves.
-        for rung, z in enumerate(thermocouple_heights_m(kit.thermocouples,
-                                                        geom.crown_height_m)):
-            placed = gas_z_m(geom, load_y_m, z, dx_m)
-            # This tree stands in the load's own plane, so at a cross-section
-            # that cuts the mock-up or the target it runs THROUGH them. A real
-            # test cannot put a thermocouple inside the burning load either.
-            # The rungs above the fuel are the valuable ones -- they sit in the
-            # plume directly over it -- so the buried rungs are dropped and the
-            # rest keep their own index, which is what names their height.
-            if _inside_any(x_m, load_y_m, placed, solids):
-                continue
-            lines.append(
-                f"&DEVC ID='{name}_TCL{rung}', XYZ={x_m:.2f},{load_y_m:.2f},"
-                f"{placed:.2f}, QUANTITY='THERMOCOUPLE' /")
     return lines
 
 
@@ -843,6 +883,7 @@ def _stations(design: Design, geom: SectionGeometry, dx_m: float) -> list[str]:
                 f"&DEVC ID='{name}_U', XYZ={x_m:.2f},0.0,{BREATHING_HEIGHT_M:.2f}, "
                 f"QUANTITY='U-VELOCITY' /")
         lines += _table_5_profiles(name, kit, x_m, geom, dx_m, load_y_m, solids)
+        lines += _figure_16_positions(name, kit, x_m, geom, dx_m, fuel, solids)
     # Ceiling line over the core for the lining temperature and the exposed
     # length: OVER THE FUEL LOAD, at the ceiling that exists there, not at the
     # crown centre 2-3 m to the side of an eccentric plume.

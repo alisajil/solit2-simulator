@@ -685,48 +685,8 @@ def test_profile_instruments_sit_in_gas_like_every_other_device():
             assert float(line.split("XYZ=")[1].split(",")[2]) < open_top, line
 
 
-def test_a_second_thermocouple_tree_stands_in_the_plane_of_the_fuel_load():
-    """Annex 7 gives cross-sections and counts, never a lateral position, and
-    Tier 1 resolves none at all -- so the criteria stay on the centreline,
-    where the tiers can be compared. That left the result silent about a real
-    gradient: on a 6.8 MW run the ceiling over the load read 133 C against
-    78 C on the centreline at the same station."""
-    from solit2.engines.reduced.criteria import INSTRUMENTS, thermocouple_heights_m
-    from solit2.engines.reduced.geometry import section_geometry
-    design = Design.load(BASELINE)
-    geom = section_geometry(design)
-    load_y = deck.fuel_box(design, geom).y_centre_m
-    text = deck.generate(design)
-    for name, kit in INSTRUMENTS.items():
-        if kit.thermocouples < deck.LOAD_SIDE_TREE_MIN_TC:
-            assert text.count(f"ID='{name}_TCL") == 0, name
-            continue
-        # Every rung the tree can actually stand in. At a cross-section that
-        # cuts the mock-up the rungs inside it are dropped, so the count is the
-        # full ladder only where the plane is clear of the load.
-        assert 0 < text.count(f"ID='{name}_TCL") <= kit.thermocouples, name
-    heights = thermocouple_heights_m(INSTRUMENTS["D05"].thermocouples, geom.crown_height_m)
-    for rung, z in enumerate(heights):
-        line = next(ln for ln in text.splitlines() if f"ID='D05_TCL{rung}'" in ln)
-        x, y, placed = (float(v) for v in line.split("XYZ=")[1].split(",")[:3])
-        assert y == pytest.approx(load_y) and y != 0.0, "in the load's plane, not the centre"
-        # the deck writes heights to two decimals
-        assert placed == pytest.approx(deck.gas_z_m(geom, load_y, z), abs=0.005), "and in gas there"
-    # the centreline tree the criteria read is untouched and still complete
-    assert text.count("ID='D05_TC0'") == 1
-    assert all(",0.0," in next(ln for ln in text.splitlines() if f"ID='D05_TC{r}'" in ln)
-               for r in range(len(heights)))
 
 
-def test_a_centred_load_gets_no_duplicate_tree():
-    """Nothing is gained by a second tree on top of the first."""
-    from solit2.engines.reduced.geometry import section_geometry
-    design = Design.load(BASELINE)
-    geom = section_geometry(design)
-    centred = design.fire.model_copy(
-        update={"lane_centre_offset_from_wall_m": geom.road_width_m / 2.0})
-    text = deck.generate(design.model_copy(update={"fire": centred}))
-    assert "_TCL" not in text
 
 
 def _devices(text: str) -> list[tuple[str, float, float, float]]:
@@ -805,19 +765,52 @@ def test_the_target_gauge_really_is_on_the_target_surface():
     assert x == pytest.approx(box.x0) and box.y0 <= y <= box.y1 and box.z0 < z < box.z1
 
 
-def test_the_load_side_tree_keeps_the_rungs_above_the_fuel_it_cannot_stand_in():
-    """Dropping the whole tree where it cuts the mock-up would throw away the
-    most useful rungs of all: the ones in the plume directly over the load."""
+
+def test_the_cross_section_is_laid_out_the_way_annex_7_figure_16_draws_it():
+    """Figure 16 numbers seven thermocouples round a cross-section, and it is
+    not the vertical rake on the centreline this engine's ladder builds: two on
+    each side wall bracketing the load, one at the ceiling, and two on the load
+    itself."""
+    from solit2.engines.reduced.criteria import INSTRUMENTS
     from solit2.engines.reduced.geometry import section_geometry
     design = Design.load(BASELINE)
     geom = section_geometry(design)
     fuel = deck.fuel_box(design, geom)
-    text = deck.generate(design)
-    at_d03 = [d for d in _devices(text) if d[0].startswith("D03_TCL")]
-    assert at_d03, "a station inside the mock-up still gets the rungs it can have"
-    assert all(z > fuel.z1 or z < fuel.z0 for _, _, _, z in at_d03)
-    assert any(z > fuel.z1 for _, _, _, z in at_d03), "including ones above the load"
-    # a station clear of the mock-up keeps its whole tree
-    from solit2.engines.reduced.criteria import INSTRUMENTS
-    assert len([d for d in _devices(text) if d[0].startswith("D05_TCL")]) == \
-        INSTRUMENTS["D05"].thermocouples
+    devices = {n: (x, y, z) for n, x, y, z in _devices(deck.generate(design))}
+
+    at = {p: devices[deck.annex7_id("thermocouple", "D03", p)] for p in range(1, 8)}
+    # the wall pair, bracketing the load between its platform and its top
+    assert at[1][1] == at[2][1] < 0 and at[4][1] == at[5][1] > 0, "one pair per side wall"
+    assert at[1][1] == pytest.approx(-at[5][1]), "and symmetric about the centreline"
+    assert at[1][2] == at[5][2] == pytest.approx(fuel.z0), "lower pair at the fuel's base"
+    assert at[2][2] == at[4][2] == pytest.approx(fuel.z1), "upper pair at the fuel's top"
+    # the ceiling sensor, on the centreline
+    assert at[3][1] == 0.0 and at[3][2] == pytest.approx(deck.ceiling_z_at(geom, 0.0), abs=0.005)
+    # and the two on the load: beside its outboard face, and above its top
+    assert fuel.y1 < at[6][1] < fuel.y1 + deck.DX_M, "06 stands off the load, not in it"
+    assert at[7][2] > fuel.z1, "07 sits above the load's top"
+    assert at[7][1] == pytest.approx(fuel.y_centre_m)
+
+    # a five-thermocouple section gets the walls and the ceiling only
+    assert INSTRUMENTS["D15"].thermocouples == 5
+    assert deck.annex7_id("thermocouple", "D15", 5) in devices
+    assert deck.annex7_id("thermocouple", "D15", 6) not in devices
+    # and a two-thermocouple far-field section gets no Figure 16 layout at all
+    assert INSTRUMENTS["D215"].thermocouples == 2
+    assert deck.annex7_id("thermocouple", "D215", 1) not in devices
+
+
+def test_figure_16_ids_follow_annex_7s_own_naming_scheme():
+    """Section 6.4.10: "<type>-<location>-<position>", e.g. TC-D40-01."""
+    assert deck.annex7_id("thermocouple", "D40", 1) == "TC-D40-01"
+    assert deck.annex7_id("heat_flux", "U15", 2) == "HF-U15-02"
+    assert f"ID='{deck.annex7_id('thermocouple', 'U05', 3)}'" in deck.generate(Design.load(BASELINE))
+
+
+def test_the_load_positions_fall_back_to_the_centreline_where_there_is_no_load():
+    """06 and 07 attach to the mock-up. U45 carries seven thermocouples and is
+    45 m from it, so there is nothing there to attach them to."""
+    design = Design.load(BASELINE)
+    devices = {n: (x, y, z) for n, x, y, z in _devices(deck.generate(design))}
+    for position in (6, 7):
+        assert devices[deck.annex7_id("thermocouple", "U45", position)][1] == 0.0
