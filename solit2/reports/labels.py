@@ -48,6 +48,30 @@ LABELS: dict[str, tuple[str, str, int]] = {
     "fed_d45": ("Fractional effective dose at D45", "", 3),
     "backlayering_m": ("Backlayering length", "m", 1),
     "velocity_ms": ("Ventilation velocity", "m/s", 2),
+    # the sized system, as `hydraulics.size_system` reports it
+    "active_heads": ("Heads discharging at once", "", 0),
+    "flow_lpm": ("System flow", "L/min", 0),
+    "flow_design_lpm": ("Design flow", "L/min", 0),
+    "density_mm_min": ("Application density", "mm/min", 2),
+    "density_l_m3_min": ("Volumetric application density", "L/m³·min", 3),
+    "power_kw": ("Pump power", "kW", 0),
+    "tank_m3": ("Water tank", "m³", 1),
+    "required_pump_bar": ("Pump pressure required", "bar", 1),
+    "rated_pump_bar": ("Pump pressure rated", "bar", 1),
+    "ring_loss_bar": ("Ring main loss", "bar", 2),
+    "zone_loss_bar": ("Zone header loss", "bar", 2),
+    "pumps_duty": ("Duty pumps", "", 0),
+    "pumps_standby": ("Standby pumps", "", 0),
+    # the priced quantities
+    "zones": ("Zones", "", 0),
+    "heads": ("Nozzles", "", 0),
+    "section_valves": ("Section valves", "", 0),
+    "ring_main_m": ("Ring main", "m", 0),
+    "zone_header_m": ("Zone header pipe", "m", 0),
+    "row_pipe_m": ("Row pipe", "m", 0),
+    "pumps": ("Pump units", "", 0),
+    "total": ("Cost total", "", 1),
+    "index": ("Cost index", "", 3),
 }
 
 DEFAULT_DECIMALS = 2

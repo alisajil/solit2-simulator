@@ -14,7 +14,8 @@ from solit2.engines.fds import deck as fds_deck
 from solit2.engines.fds import reader as fds_reader
 from solit2.engines.fds import runner as fds_runner
 from solit2.engines.reduced import envelope
-from solit2.reports import correlation, test_plan
+from solit2.reports import archive as archive_mod
+from solit2.reports import assessment, correlation, test_plan
 from solit2.schema.design import Design
 from solit2.schema.result import Result
 
@@ -191,6 +192,38 @@ def _cmd_report_correlation(args: argparse.Namespace) -> int:
     return _emit_report(correlation.render(test_result, site_result), args.out)
 
 
+def _cmd_report_assessment(args: argparse.Namespace) -> int:
+    try:
+        design = Design.load(args.design)
+    except (ValidationError, ValueError, FileNotFoundError, KeyError) as exc:
+        return _fail(str(exc), getattr(exc, "field", "design"),
+                     "correct the design JSON and try again", EXIT_BAD_INPUT)
+    try:
+        result = envelope.run(design)
+    except (ValueError, KeyError) as exc:
+        return _fail(str(exc), "engine",
+                     "the design validated but the engine could not finish the run",
+                     EXIT_ENGINE)
+    tier2 = None
+    if args.tier2:
+        try:
+            tier2 = _load_result(args.tier2)
+        except (ValidationError, ValueError, OSError) as exc:
+            return _fail(str(exc), "--tier2",
+                         "point --tier2 at a result JSON from `solit2 run --engine fds --out`",
+                         EXIT_BAD_INPUT)
+    validation = archive_mod.validation_text() if args.with_validation else None
+    markdown = assessment.render(design, result, tier2=tier2, validation=validation)
+    if args.archive:
+        try:
+            written = archive_mod.write(Path(args.archive), design, result, markdown,
+                                        tier2=tier2, validation=validation)
+        except OSError as exc:
+            return _fail(str(exc), "--archive", "choose a writable directory", EXIT_BAD_INPUT)
+        print(f"archived {len(written)} files to {written[0].parent}", file=sys.stderr)
+    return _emit_report(markdown, args.out)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="solit2", description="SOLIT2 tunnel water-mist simulator")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -252,6 +285,19 @@ def build_parser() -> argparse.ArgumentParser:
     rc.add_argument("--site", required=True)
     rc.add_argument("--out")
     rc.set_defaults(func=_cmd_report_correlation)
+
+    ra = report_sub.add_parser(
+        "assessment", help="the full assessment document for a design")
+    ra.add_argument("design")
+    ra.add_argument("--tier2", help="a Tier 2 result JSON to correlate against")
+    ra.add_argument("--with-validation", action="store_true",
+                    help="include the engine's standing against the reference fire tests")
+    ra.add_argument("--archive", metavar="DIR",
+                    help="also save the report and every input and output behind it into a "
+                         "timestamped folder under DIR, so the assessment can be reproduced "
+                         "and audited later")
+    ra.add_argument("--out")
+    ra.set_defaults(func=_cmd_report_assessment)
     return parser
 
 

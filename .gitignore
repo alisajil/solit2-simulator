@@ -36,3 +36,6 @@ htmlcov/
 # os
 .DS_Store
 .serena/
+
+# generated assessments and their archives -- outputs, not source
+reports/

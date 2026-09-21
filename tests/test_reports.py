@@ -131,3 +131,99 @@ def test_a_result_without_a_clock_gets_no_invented_caveat():
     blank = Result(**{**full.model_dump(), "meta": {"design_name": "og", "engine": "fds"},
                       "timeseries": {}})
     assert correlation.coverage_note(full, blank) is None
+
+
+def _baseline_pair():
+    from solit2.engines.reduced import envelope
+    from solit2.schema.design import Design
+    design = Design.load("designs/og-dbr-rev0.json")
+    return design, envelope.run(design)
+
+
+def test_the_assessment_states_its_standing_before_any_number():
+    """A reader who is handed only this document must not take it for a test
+    report, and must not take a fitted engine for a validated one."""
+    from solit2.reports import assessment
+    design, result = _baseline_pair()
+    text = assessment.render(design, result)
+    standing = text.index("Standing of this assessment")
+    assert standing < text.index("## 4. Results"), "standing comes before results"
+    assert "not a test report" in text
+    assert "No physical fire test was performed" in text
+    assert result.meta["calibration_note"][:60] in text, "the engine's own note, verbatim"
+
+
+def test_the_assessment_never_reads_as_approval_while_criteria_are_unjudged():
+    from solit2.reports import assessment
+    design, result = _baseline_pair()
+    assert result.score["criteria_unset"], "this design has unjudged criteria"
+    text = assessment.render(design, result)
+    assert "were not judged" in text
+    assert "An unjudged criterion is not a passed one" in text
+    assert "not judged" in text, "and each such row says so in the table"
+
+
+def test_the_assessment_names_quantities_the_way_an_engineer_would():
+    from solit2.reports import assessment
+    design, result = _baseline_pair()
+    text = assessment.render(design, result)
+    assert "Peak air temperature (°C)" in text and "max_air_temp_c" not in text
+    assert "Application density (mm/min)" in text and "density_mm_min" not in text
+    # and rounded: a raw float is unreadable in a report
+    assert "42.971843487711226" not in text
+
+
+def test_the_assessment_carries_the_instrument_layout():
+    from solit2.reports import assessment
+    from solit2.engines.reduced.criteria import STATIONS
+    design, result = _baseline_pair()
+    text = assessment.render(design, result)
+    for station in STATIONS:
+        assert station in text, station
+    assert "Figure 16" in text
+
+
+def test_a_tier_2_result_and_the_validation_standing_are_included_when_given():
+    from solit2.reports import assessment
+    design, result = _baseline_pair()
+    plain = assessment.render(design, result)
+    assert "Tier 1 against Tier 2" not in plain and "reference tests" not in plain
+    rich = assessment.render(design, result, tier2=result, validation="c4 ... NO")
+    assert "Tier 1 against Tier 2" in rich
+    assert "c4 ... NO" in rich and "a property of the engine" in rich
+
+
+def test_the_archive_keeps_everything_needed_to_re_read_the_report(tmp_path):
+    """A report ages badly alone: the calibration that produced it is a file in
+    this repository that moves."""
+    import json
+
+    from solit2.reports import archive, assessment
+    design, result = _baseline_pair()
+    written = archive.write(tmp_path, design, result, assessment.render(design, result))
+    names = {p.name for p in written}
+    assert names == {"assessment.md", "result.json", "design.resolved.json",
+                     "calibration.json", "provenance.json"}
+    folder = written[0].parent
+    assert folder.name.startswith(design.meta.name)
+    # the design as the ENGINE saw it, presets merged, not the source file
+    resolved = json.loads((folder / "design.resolved.json").read_text())
+    assert resolved["fire"]["design_hrr_mw"] == design.fire.design_hrr_mw
+    assert resolved["nozzles"]["mounting"]["pitch_m"] is not None
+    prov = json.loads((folder / "provenance.json").read_text())
+    assert prov["design_sha"] == result.meta["design_sha"]
+    assert prov["engine_version"] and prov["tool_commit"]
+
+
+def test_a_second_archive_does_not_overwrite_the_first(tmp_path):
+    """An archive that replaces the previous one cannot show that an answer
+    changed, which is most of why it exists."""
+    from solit2.reports import archive, assessment
+    design, result = _baseline_pair()
+    text = assessment.render(design, result)
+    first = archive.write(tmp_path, design, result, text)[0].parent
+    second = archive.write(tmp_path, design, result, text)[0].parent
+    assert first.exists() and second.exists()
+    if first == second:      # same second; the stamp cannot separate them
+        return
+    assert first != second
