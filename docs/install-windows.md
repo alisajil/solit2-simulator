@@ -168,6 +168,16 @@ uv run pytest -q
 `uv sync` after a pull picks up any dependency change; the test run is the
 cheapest way to know the machine is still in a state you can trust.
 
+## After changing engine code while the app is running
+
+Streamlit reloads the app's own scripts when they change, but not always the
+engine modules under `solit2/` that those scripts import. A stale one shows up
+as an `AttributeError` for something you just added, on a line that looks
+correct, because the running server still holds the older copy of the module.
+
+Stop the server with Ctrl+C and start it again. Nothing is wrong with the code
+when this happens, and no edit will fix it.
+
 ## If something fails
 
 - **`uv` not recognised** — PowerShell was not restarted after the install.

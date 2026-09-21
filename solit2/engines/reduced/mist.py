@@ -566,18 +566,44 @@ def _coverage(geometries: tuple[_ModeGeometry, ...],
 
 
 def _cooling_fraction(design: Design, geometries: tuple[_ModeGeometry, ...], head_count: int,
-                      flow_fraction: float, q_conv_kw: float, cap: float) -> float:
-    """Only the water that evaporates in flight removes heat from the gas."""
+                      flow_fraction: float, q_conv_kw: float) -> float:
+    """Fraction of the fire's convective heat the evaporating spray removes.
+
+    The demand side is straightforward: the water that evaporates in flight
+    carries off its sensible heat plus its latent heat. On this system that
+    demand comes to about three times the fire's whole convective output.
+
+    It cannot have three times. Heat that is not there cannot be removed, and
+    the droplets cannot evaporate without it -- the two are the same energy.
+    The model used to resolve that by clipping the ratio at a fitted constant,
+    `mist.chi_cool_max`, which held it at exactly 0.558 for 94 % of every run
+    and at all three of 150, 200 and 250 MW. A term pinned to a constant is
+    not modelling anything: it cannot respond to a larger fire, to more water,
+    or to a better nozzle.
+
+    What actually limits it is a feedback the demand calculation leaves out.
+    Evaporation is driven by how far the gas is above the droplets, so as the
+    spray cools the gas it slows itself down. Taking the potential `ratio` as
+    computed at the UNCOOLED gas and correcting it to first order for the
+    cooling it causes:
+
+        chi = ratio * (1 - chi)   ->   chi = ratio / (1 + ratio)
+
+    which needs no constant, is smooth, and behaves correctly at both ends:
+    a weak spray removes `ratio` of the heat, and an overwhelming one
+    approaches all of it without ever exceeding it, because the gas it is
+    cooling runs out.
+    """
     if q_conv_kw <= 0:
         return 0.0
     sensible = WATER_CP_KJKGK * (WATER_BOILING_C - WATER_INLET_TEMP_C) + WATER_LATENT_HEAT_KJKG
-    total = 0.0
+    ratio = 0.0
     for g in geometries:
         evaporated = 1.0 - g.surviving_fraction
         mdot = (design.nozzles.mode_flow_lpm(g.mode_id) * head_count * flow_fraction
                 / LPM_PER_M3S * WATER_DENSITY_KGM3)
-        total += evaporated * mdot * sensible / q_conv_kw
-    return min(total, cap)
+        ratio += evaporated * mdot * sensible / q_conv_kw
+    return ratio / (1.0 + ratio)
 
 
 def _curtain_transmissivity(design: Design, geom: SectionGeometry,
@@ -687,8 +713,7 @@ def evaluate(design: Design, geom: SectionGeometry, positions: tuple[NozzlePosit
                                   burning_fraction(hrr_mw, hrr_free_mw))
 
     head_count = len(positions)
-    chi_cool = _cooling_fraction(design, geometries, head_count, flow_fraction,
-                                 q_conv_kw, cal["chi_cool_max"]["value"])
+    chi_cool = _cooling_fraction(design, geometries, head_count, flow_fraction, q_conv_kw)
     tau_mist = _curtain_transmissivity(design, geom, geometries, head_count,
                                        flow_fraction, u_eff_ms)
 

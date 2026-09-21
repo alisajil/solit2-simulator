@@ -88,11 +88,6 @@
       "anchor": "none",
       "note": "SET BY CONSTRAINT, NOT BY THE FIT, and 0.0 switches the term off. p in eta = eta_max * (1 - exp(-(w_fuel * f_cov / w_ref) * f_burn ** p)), where f_burn = hrr / hrr_free is the share of the free-burning fire still alive. p > 0 says the residual fire is the hard part: the exposed fuel the spray can reach burns away or is wetted first and what is left is the shielded, deep-seated load, so each further increment of knockdown costs disproportionately more water. That is what SOLIT2 Annex 2 6.1 and 6.2 report -- the HRR 'was limited to a significantly lower level' for the full 30 minutes of discharge and the brigade still had to 'finally extinguish the remaining fire'. Held off the evaporation cliff the term does exactly what it should: at p=0.5 c4 settles at 32.6 MW within a 2.4% band and the level falls monotonically with water (630/840/1260/1680 lpm -> 47.2/32.6/19.0/13.8 MW). It CANNOT be switched on in this engine. w_fuel falls 109x between 275 K and 350 K of ceiling excess and is flat at 0.013 mm/min above that; a 30 MW plateau sits at ~200 K on the shoulder of that cliff, so any p >= 0.10 lifts c4 over it and the fire escapes to ~144 MW (p=0.05 -> peak 38.3 MW, p=0.10 -> 143.1 MW). 0.0 is the only value that does not make c4 and c5 worse, and it reproduces the previous law exactly. DELIBERATELY NOT IN FITTED_KEYS: the peak-HRR residual is a step in p and not a continuous function of it, and least_squares' relative DIFF_STEP is identically zero at p=0 in any case. Raise it only once the delivery stops being near-binary in gas temperature -- evaporation_k_ref_m2s is already resting on its lower bound, so the fit cannot move the cliff."
     },
-    "chi_cool_max": {
-      "value": 0.5577542796669825,
-      "anchor": "none",
-      "note": "basis removed with c3; refit required. This value has no surviving reference case and is carried unchanged pending a refit against c4-c6."
-    },
     "evaporation_k_ref_m2s": {
       "value": 4.207779235658093e-08,
       "anchor": "none",

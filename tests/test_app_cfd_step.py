@@ -394,3 +394,76 @@ def test_the_panel_says_unknown_rather_than_guessing(run_view, monkeypatch, tmp_
     assert shown["Speed"] == "—" and shown["Left, at this speed"] == "—"
     assert shown["Heat release"] == "—"
     assert shown["Mist"] == "not yet triggered"
+
+
+def _trace_for(design_path=EXAMPLE):
+    from solit2.engines.reduced.sim import run_once
+    design = Design.load(design_path)
+    result = envelope.run(design)
+    return run_once(design, result.worst_case["section"], result.worst_case["velocity_ms"])
+
+
+def test_the_live_heat_release_chart_sets_tier_2_beside_tier_1():
+    """The comparison is the point of running Tier 2, and it is more use while
+    the run is going than after it."""
+    from app.views import cfd
+    trace = _trace_for()
+    hrr = {"t_s": [0.0, 10.0], "HRR": [0.0, 5000.0], "Q_PART": [0.0, -1200.0]}
+    fig = cfd.heat_release_chart(hrr, trace)
+    names = [t.name for t in fig.data]
+    assert "Tier 2 · live" in names
+    assert "Tier 1 · predicted" in names and "Tier 1 · free burn" in names
+    live = next(t for t in fig.data if t.name == "Tier 2 · live")
+    assert list(live.y) == [0.0, 5.0], "kilowatts from FDS, megawatts on the axis"
+    spray = next(t for t in fig.data if t.name == "into the spray")
+    assert list(spray.y) == [0.0, 1.2], "FDS signs droplet energy negative; the chart does not"
+
+
+def test_the_flux_chart_marks_the_threshold_the_verdict_turns_on():
+    from app.views import cfd
+    from solit2.engines.reduced.criteria import FLAME_CONTACT_FLUX_KWM2
+    fig = cfd.exposure_chart({"t_s": [0.0, 1.0], "TARGET_FLUX": [0.0, 12.0]})
+    assert [t.name for t in fig.data] == ["at the target"]
+    lines = [s for s in fig.layout.shapes if s.type == "line"]
+    assert lines and lines[0].y0 == FLAME_CONTACT_FLUX_KWM2
+
+
+def test_no_chart_is_drawn_from_output_that_does_not_exist_yet():
+    from app.views import cfd
+    trace = _trace_for()
+    assert cfd.heat_release_chart({}, trace) is None
+    assert cfd.temperature_chart({}) is None
+    assert cfd.exposure_chart({}) is None
+    # and a run carrying only some of the devices charts only those
+    partial = cfd.temperature_chart({"t_s": [0.0], "CEIL13": [40.0]})
+    assert [t.name for t in partial.data] == ["ceiling, over the load"]
+
+
+def test_a_running_run_draws_the_live_statistics(run_view, monkeypatch, tmp_path):
+    from app.views import cfd
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    _fake_run(run_dir, "Time Step 10\n Total Time:  120.0 s\n", t_end=1200.0)
+
+    def fake_series(d, suffix, columns, max_points=400):
+        if suffix == "_hrr.csv":
+            return {"t_s": [0.0, 60.0], "HRR": [0.0, 8000.0], "Q_PART": [0.0, -2000.0]}
+        return {"t_s": [0.0, 60.0], "CEIL13": [30.0, 190.0], "TARGET_FLUX": [0.0, 3.0]}
+
+    monkeypatch.setattr(cfd.fds_runner, "series", fake_series)
+    monkeypatch.setattr(cfd, "_load_slice", lambda *a, **kw: None)
+    at = run_view("cfd")
+    assert not at.exception
+    keys = {e.key for e in at.get("plotly_chart")}
+    assert {"cfd_live_hrr", "cfd_live_temp", "cfd_live_flux"} <= keys
+
+
+def test_a_finished_run_shows_no_live_statistics(run_view, monkeypatch, tmp_path):
+    from app.views import cfd
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    _fake_run(run_dir, "Total Time: 1200.0 s\nSTOP: FDS completed successfully\n")
+    monkeypatch.setattr(cfd, "_load_slice", lambda *a, **kw: None)
+    monkeypatch.setattr(fds_reader, "read", lambda d, design, **kw: envelope.run(Design.load(EXAMPLE)))
+    at = run_view("cfd")
+    assert not at.exception
+    keys = {e.key for e in at.get("plotly_chart")}
+    assert "cfd_live_hrr" not in keys, "live charts belong to a live run"

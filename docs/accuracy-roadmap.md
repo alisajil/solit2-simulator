@@ -108,6 +108,19 @@ Each is a real disagreement with a measured test, not a tolerance to widen.
       temperatures the assumed one cannot survive. Do not settle it by
       choosing a multiplier.
 
+- [x] **The mist's cooling fraction was pinned to a fitted constant.** It sat
+      at exactly 0.558 for 94 % of every run and at all three of 150, 200 and
+      250 MW, so it could not respond to fire size, to more water or to a
+      better nozzle. The constant's own note recorded that it had no surviving
+      reference case. Replaced by the constraint it was standing in for: the
+      spray cannot remove heat that is not there, and it slows itself as it
+      cools the gas, so `chi = ratio / (1 + ratio)`. It now takes 38 distinct
+      values over a run. **This cost one anchor comparison** -- c5's D15
+      temperature fell from 34 C to 29.5 C against 55 C measured, crossing its
+      40 % tolerance. That is a fitted constant's error becoming visible
+      rather than a new error appearing, and it points at the same place
+      everything else does: the assumed spray.
+
 - [ ] **Heat flux at D15 is 2.6× high** while the gas around it is too cool.
       Those errors point opposite ways, so they are unlikely to share a cause.
       Not yet investigated.

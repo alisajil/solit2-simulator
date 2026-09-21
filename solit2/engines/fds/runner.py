@@ -408,3 +408,55 @@ def live(run_dir: Path, t_end_s: float | None = None) -> dict:
             if t_end_s is not None and simulated < t_end_s:
                 out["eta_s"] = (t_end_s - simulated) / out["rate_s_per_s"]
     return out
+
+
+# A live chart wants shape, not every sample: a full-length run writes 3600
+# rows and no reader can see that many points on one axis.
+MAX_SERIES_POINTS = 400
+
+
+def series(run_dir: Path, suffix: str, columns: tuple[str, ...],
+           max_points: int = MAX_SERIES_POINTS) -> dict[str, list[float]]:
+    """Named columns of one of the run's CSVs, against its first column.
+
+    Returns `{"t_s": [...], "<column>": [...]}` for every column present, and
+    an empty dict when the file has no complete data row yet. Columns the file
+    does not carry are left out rather than filled: a run that has not written
+    a device cannot be charted as if it read zero.
+
+    The file is being appended to while it is read, so a half-written last row
+    is dropped rather than parsed.
+    """
+    path = next(iter(sorted(Path(run_dir).glob(f"*{suffix}"))), None)
+    if path is None:
+        return {}
+    try:
+        lines = [ln for ln in path.read_text().splitlines() if ln.strip()]
+    except OSError:
+        return {}
+    if len(lines) < 3:
+        return {}
+    header = [c.strip() for c in lines[1].split(",")]
+    wanted = {name: header.index(name) for name in columns if name in header}
+    if not wanted:
+        return {}
+    widest = max(wanted.values())
+    rows = []
+    for line in lines[2:]:
+        parts = line.split(",")
+        if len(parts) <= widest:
+            continue                       # a row still being written
+        try:
+            rows.append([float(parts[0])] + [float(parts[i]) for i in wanted.values()])
+        except ValueError:
+            continue
+    if not rows:
+        return {}
+    stride = max(1, len(rows) // max_points)
+    kept = rows[::stride]
+    if kept[-1] is not rows[-1]:
+        kept.append(rows[-1])              # never drop the newest sample
+    out: dict[str, list[float]] = {"t_s": [r[0] for r in kept]}
+    for offset, name in enumerate(wanted, start=1):
+        out[name] = [r[offset] for r in kept]
+    return out

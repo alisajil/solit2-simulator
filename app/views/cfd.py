@@ -25,6 +25,7 @@ from solit2.engines.fds import deck as fds_deck
 from solit2.engines.fds import reader as fds_reader
 from solit2.engines.fds import runner as fds_runner
 from solit2.engines.fds import slices
+from solit2.engines.reduced.criteria import FLAME_CONTACT_FLUX_KWM2
 from solit2.engines.reduced.state import RunTrace
 from solit2.schema.design import Design
 from solit2.schema.result import Result
@@ -131,6 +132,101 @@ def live_metrics(live: dict) -> list[tuple[str, str, str | None]]:
         ("Mist", " · ".join(f for f in fired if f) or "not yet triggered",
          "read from FDS's own control log, not from the design's timetable"),
     ]
+
+
+# What a live chart is worth watching for: the fire, the water taking heat out
+# of it, and the two criteria that decide the verdict.
+HRR_COLUMNS = ("HRR", "Q_PART")
+DEVC_COLUMNS = ("TARGET_FLUX", "D15_HF", "CEIL13", "D15_TC1", "D45_VIS")
+STATS_CHART_HEIGHT = 260
+
+
+def _line(x, y, name, colour, dash="solid"):
+    return go.Scatter(x=x, y=y, mode="lines", name=name,
+                      line={"color": colour, "dash": dash})
+
+
+def _stats_layout(fig: go.Figure, title: str, y_title: str) -> go.Figure:
+    fig.update_layout(
+        height=STATS_CHART_HEIGHT, margin={"l": 60, "r": 10, "t": 34, "b": 34},
+        xaxis_title="simulated time (s)", yaxis_title=y_title,
+        legend={"orientation": "h", "y": -0.32},
+        title={"text": title, "x": 0.02, "xanchor": "left", "font": {"size": 13}})
+    return fig
+
+
+def heat_release_chart(hrr: dict, trace: RunTrace) -> go.Figure | None:
+    """The fire as FDS is computing it, against what Tier 1 predicted.
+
+    The comparison is the point of running Tier 2 at all, and it is far more
+    use while the run is going than after it: a Tier 2 curve departing from
+    Tier 1 early is the first sign that the two engines disagree, and it is
+    visible hours before the run finishes.
+    """
+    if not hrr.get("HRR"):
+        return None
+    fig = go.Figure([_line(hrr["t_s"], [v / 1000.0 for v in hrr["HRR"]],
+                           "Tier 2 · live", palette.PRIMARY)])
+    if "Q_PART" in hrr:
+        # FDS reports energy taken by the droplets as negative.
+        fig.add_trace(_line(hrr["t_s"], [abs(v) / 1000.0 for v in hrr["Q_PART"]],
+                            "into the spray", palette.STEAM))
+    fig.add_trace(_line([s.t_s for s in trace.steps], [s.hrr_mw for s in trace.steps],
+                        "Tier 1 · predicted", palette.PRIMARY, "dot"))
+    fig.add_trace(_line([s.t_s for s in trace.steps], [s.hrr_free_mw for s in trace.steps],
+                        "Tier 1 · free burn", palette.FAIL, "dot"))
+    return _stats_layout(fig, "Heat release", "MW")
+
+
+def temperature_chart(devc: dict) -> go.Figure | None:
+    """Gas temperature where the criteria are judged."""
+    named = [("CEIL13", "ceiling, over the load", palette.FAIL),
+             ("D15_TC1", "D15, breathing height", palette.PRIMARY)]
+    present = [(k, label, colour) for k, label, colour in named if k in devc]
+    if not present:
+        return None
+    fig = go.Figure([_line(devc["t_s"], devc[k], label, colour)
+                     for k, label, colour in present])
+    return _stats_layout(fig, "Gas temperature", "°C")
+
+
+def exposure_chart(devc: dict) -> go.Figure | None:
+    """The two readings the Annex 7 verdict turns on."""
+    if "TARGET_FLUX" not in devc and "D15_HF" not in devc:
+        return None
+    fig = go.Figure()
+    if "TARGET_FLUX" in devc:
+        fig.add_trace(_line(devc["t_s"], devc["TARGET_FLUX"], "at the target", palette.FAIL))
+    if "D15_HF" in devc:
+        fig.add_trace(_line(devc["t_s"], devc["D15_HF"], "at D15", palette.PRIMARY))
+    fig.add_hline(y=FLAME_CONTACT_FLUX_KWM2, line={"color": palette.FAIL, "dash": "dash"},
+                  annotation_text=f"flame contact, {FLAME_CONTACT_FLUX_KWM2:.0f} kW/m²",
+                  annotation_position="top left")
+    return _stats_layout(fig, "Incident heat flux", "kW/m²")
+
+
+@st.fragment(run_every=POLL)
+def _live_statistics(run_dir: Path, trace: RunTrace) -> None:
+    """Charts polled from the run's own CSVs while it works.
+
+    Separate from the progress metrics and on its own fragment clock, because
+    these read whole files rather than their last line and there is no reason
+    to make the progress figures wait on that.
+    """
+    hrr = fds_runner.series(run_dir, "_hrr.csv", HRR_COLUMNS)
+    devc = fds_runner.series(run_dir, "_devc.csv", DEVC_COLUMNS)
+    charts = [("cfd_live_hrr", heat_release_chart(hrr, trace)),
+              ("cfd_live_temp", temperature_chart(devc)),
+              ("cfd_live_flux", exposure_chart(devc))]
+    drawn = [(key, fig) for key, fig in charts if fig is not None]
+    if not drawn:
+        st.caption("No output to chart yet. FDS writes its first rows once it has "
+                   "taken a few time steps.")
+        return
+    for column, (key, fig) in zip(st.columns(len(drawn)), drawn):
+        column.plotly_chart(fig, key=key, use_container_width=True)
+    st.caption(f"Read from the run's own CSV output every {POLL}, while it is still "
+               f"being written. The last row is dropped if it is half written.")
 
 
 @st.fragment(run_every=POLL)
@@ -332,6 +428,7 @@ def render() -> None:
 
     if running:
         _live_progress(run_dir)
+        _live_statistics(run_dir, trace)
     elif not problems:
         verb = "Re-run FDS" if status else "Start FDS run"
         _start_controls(design, run_dir, verb if suppression else f"{verb} (free burn)", suppression)

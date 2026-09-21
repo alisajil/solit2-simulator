@@ -413,3 +413,51 @@ def test_a_half_written_step_row_is_skipped_not_fatal(tmp_path):
         fh.write("2,2026-09-21T03:00:10.0")
     live = runner.live(tmp_path, t_end_s=100.0)
     assert live["time_step"] == 1
+
+
+def _csv(tmp_path, name, header, rows):
+    lines = ["s," + ",".join("x" for _ in header[1:]), ",".join(header)]
+    lines += [",".join(str(v) for v in r) for r in rows]
+    (tmp_path / name).write_text("\n".join(lines) + "\n")
+
+
+def test_series_reads_named_columns_against_the_clock(tmp_path):
+    _csv(tmp_path, "abc_hrr.csv", ["Time", "HRR", "Q_PART"],
+         [(0.0, 0.0, 0.0), (1.0, 100.0, -5.0), (2.0, 250.0, -9.0)])
+    out = runner.series(tmp_path, "_hrr.csv", ("HRR", "Q_PART"))
+    assert out["t_s"] == [0.0, 1.0, 2.0]
+    assert out["HRR"] == [0.0, 100.0, 250.0]
+    assert out["Q_PART"] == [0.0, -5.0, -9.0]
+
+
+def test_series_omits_a_column_the_run_does_not_carry(tmp_path):
+    """A device the run never wrote must be absent, not charted as zero."""
+    _csv(tmp_path, "abc_devc.csv", ["Time", "TARGET_FLUX"], [(0.0, 1.0), (1.0, 2.0)])
+    out = runner.series(tmp_path, "_devc.csv", ("TARGET_FLUX", "NOT_PRESENT"))
+    assert set(out) == {"t_s", "TARGET_FLUX"}
+    assert runner.series(tmp_path, "_devc.csv", ("NOT_PRESENT",)) == {}
+
+
+def test_series_is_empty_until_there_is_a_complete_row(tmp_path):
+    assert runner.series(tmp_path, "_hrr.csv", ("HRR",)) == {}
+    (tmp_path / "abc_hrr.csv").write_text("s,kW\nTime,HRR\n")
+    assert runner.series(tmp_path, "_hrr.csv", ("HRR",)) == {}
+
+
+def test_series_drops_a_half_written_last_row_but_keeps_the_newest_whole_one(tmp_path):
+    """The file is appended to while it is read."""
+    _csv(tmp_path, "abc_hrr.csv", ["Time", "HRR"], [(0.0, 0.0), (1.0, 100.0)])
+    with (tmp_path / "abc_hrr.csv").open("a") as fh:
+        fh.write("2.0,")
+    out = runner.series(tmp_path, "_hrr.csv", ("HRR",))
+    assert out["t_s"] == [0.0, 1.0] and out["HRR"] == [0.0, 100.0]
+
+
+def test_series_subsamples_a_long_run_but_never_drops_the_newest_sample(tmp_path):
+    rows = [(float(i), float(i) * 2) for i in range(5000)]
+    _csv(tmp_path, "abc_hrr.csv", ["Time", "HRR"], rows)
+    out = runner.series(tmp_path, "_hrr.csv", ("HRR",), max_points=100)
+    assert len(out["t_s"]) <= 102
+    assert out["t_s"][0] == 0.0
+    assert out["t_s"][-1] == 4999.0, "the latest sample is what a live chart is for"
+    assert out["HRR"][-1] == 9998.0

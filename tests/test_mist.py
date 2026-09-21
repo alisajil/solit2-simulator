@@ -421,10 +421,27 @@ def test_all_fine_split_loses_fuel_wetting_at_tunnel_velocity():
     assert fine.w_fuel_mm_min < base.w_fuel_mm_min
 
 
-def test_cooling_fraction_is_capped():
-    cap = load_calibration()["mist"]["chi_cool_max"]["value"]
-    _, _, _, _, effect = _setup(gas_excess_k=900.0)
-    assert effect.chi_cool <= cap + 1e-9
+def test_cooling_fraction_cannot_remove_more_heat_than_the_fire_makes():
+    """It used to be clipped at a fitted constant, `mist.chi_cool_max`, which
+    pinned it to exactly 0.558 for 94 % of every run and at every fire size --
+    a term stuck on a constant models nothing. It is now self-limiting:
+    evaporation is driven by how far the gas sits above the droplets, so the
+    spray slows itself as it cools the gas, and the fraction approaches one
+    without reaching it."""
+    _, _, _, _, overwhelmed = _setup(gas_excess_k=900.0)
+    assert 0.0 <= overwhelmed.chi_cool < 1.0, "cannot remove heat that is not there"
+
+    # and it must still MOVE, which the cap is what stopped it doing
+    _, _, _, _, mild = _setup(gas_excess_k=50.0)
+    assert mild.chi_cool != overwhelmed.chi_cool
+    assert mild.chi_cool < overwhelmed.chi_cool, "a hotter gas evaporates more spray"
+
+
+def test_the_cooling_fraction_has_no_fitted_cap_left_to_pin_it():
+    from solit2.schema.presets import load_calibration
+    assert "chi_cool_max" not in load_calibration()["mist"], (
+        "the cap is retired; its own note recorded that it had no surviving "
+        "reference case behind it")
 
 
 def test_shielding_does_not_widen_the_geometry_cache_key():

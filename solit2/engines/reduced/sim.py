@@ -178,9 +178,10 @@ def _mist_water_ratio(mist: MistEffect, q_conv_kw: float, air_kgs: float) -> flo
 
     Recovered from `MistEffect.chi_cool` rather than modelled again, so the
     water reported as humidity is exactly the water charged for as cooling.
-    `chi_cool` is capped by calibration's `chi_cool_max`, so where that cap
-    binds this UNDER-states the evaporated mass -- an under-report of humidity,
-    never an over-report.
+    `chi_cool` is self-limiting rather than clipped -- it approaches 1 as the
+    spray overwhelms the fire and never exceeds it -- so this tracks the
+    cooling it is derived from instead of flattening wherever a cap used to
+    bind.
     """
     if q_conv_kw <= 0 or air_kgs <= 0:
         return 0.0
