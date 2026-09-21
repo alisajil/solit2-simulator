@@ -1,0 +1,19 @@
+{
+  "preset": "hgv_250mw",
+  "note": "A 250 MW Class A design fire. SOLIT2 Annex 7 section 5.2.1 sets 150 MW as a MINIMUM potential heat release and section 5.2.2 gives the mock-up for it. The standard specifies no mock-up above that minimum, so everything here that differs from the 150 MW preset is this project's own extrapolation and must be read as one. WHAT IS KEPT: the Annex 7 section 5.2.2 mock-up geometry exactly -- 10.0 x 2.4 m, 1.5 to 4.0 m high -- and with it section 6.3's station identity, 'the ends of the HGV Class A mock-up are located in U5 and D5. Correspondingly the fire target is located at D10'. Lengthening the mock-up would raise the heat release per unit area back to the standard's own figure but would silently break that correspondence, because U05, D05 and the target are placed from the footprint. WHAT IS SCALED: the pallet count, from 408 to 680, in proportion to the peak. Fuel energy sets how long a fire can hold its peak, not how high the peak is: at 408 pallets a 250 MW fire exhausts its 140 GJ in 560 s and is not a 250 MW fire at all, only a brief one. THE CONSEQUENCE: heat release per unit area rises from 6250 to 10417 kW/m2 over the same 24 m2 footprint. The CFD burner is a prescribed surface rather than real pyrolysing fuel, so it accepts this, and the mesh still resolves the plume (D*/dx = 14.6, inside the 10-16 band). It does mean the burner is denser than any single road vehicle: a real fire of this size is more than one, and this preset represents it as one hotter mock-up rather than as several.",
+  "class": "A",
+  "design_hrr_mw": 250.0,
+  "growth": "ultrafast",
+  "incubation_s": 60.0,
+  "pallets": 680,
+  "energy_mj_per_pallet": 343.0,
+  "covered": false,
+  "footprint": {
+    "length_m": 10.0,
+    "width_m": 2.4,
+    "top_height_m": 4.0,
+    "base_height_m": 1.5
+  },
+  "lane_centre_offset_from_wall_m": 2.5,
+  "target_distance_m": 5.0
+}

@@ -459,13 +459,26 @@ def _geometry_key(design: Design, positions: tuple[NozzlePosition, ...],
             u_bucket_ms, gas_bucket_k, positions, envelope)
 
 
-def _geometry(design: Design, positions: tuple[NozzlePosition, ...],
-              envelope: FuelEnvelope, fire_top_m: float, u_eff_ms: float,
-              gas_excess_k: float) -> tuple[_ModeGeometry, ...]:
-    """Cached spray geometry for one quantised flight condition."""
-    drop_height_m = _drop_height_m(design, fire_top_m)
-    u_bucket_ms = _bucket(u_eff_ms, VELOCITY_BUCKET_MS)
-    gas_bucket_k = _bucket(gas_excess_k, GAS_EXCESS_BUCKET_K)
+def _blend(lo: _ModeGeometry, hi: _ModeGeometry, f: float) -> _ModeGeometry:
+    """`lo` and `hi` mixed `f` of the way from one to the other."""
+    def mix(a: float, b: float) -> float:
+        return a + (b - a) * f
+    return _ModeGeometry(
+        mode_id=lo.mode_id,
+        drift_m=mix(lo.drift_m, hi.drift_m),
+        surviving_fraction=mix(lo.surviving_fraction, hi.surviving_fraction),
+        footprint_radius_m=mix(lo.footprint_radius_m, hi.footprint_radius_m),
+        unit_top_per_lpm=mix(lo.unit_top_per_lpm, hi.unit_top_per_lpm),
+        unit_flank_per_lpm=mix(lo.unit_flank_per_lpm, hi.unit_flank_per_lpm),
+        # A mask is a set of cells and does not average; the nearer bucket's
+        # footprint is the honest one to carry.
+        coverage_mask=(lo if f < 0.5 else hi).coverage_mask,
+    )
+
+
+def _at_bucket(design: Design, positions: tuple[NozzlePosition, ...],
+               envelope: FuelEnvelope, drop_height_m: float, u_bucket_ms: float,
+               gas_bucket_k: float) -> tuple[_ModeGeometry, ...]:
     key = _geometry_key(design, positions, envelope, drop_height_m,
                         u_bucket_ms, gas_bucket_k)
     cached = _GEOMETRY_CACHE.get(key)
@@ -475,6 +488,39 @@ def _geometry(design: Design, positions: tuple[NozzlePosition, ...],
                                    u_bucket_ms, gas_bucket_k)
         _GEOMETRY_CACHE[key] = cached
     return cached
+
+
+def _geometry(design: Design, positions: tuple[NozzlePosition, ...],
+              envelope: FuelEnvelope, fire_top_m: float, u_eff_ms: float,
+              gas_excess_k: float) -> tuple[_ModeGeometry, ...]:
+    """Spray geometry for this flight condition, interpolated between two
+    cached gas temperatures.
+
+    The cache is quantised because computing a spectrum of trajectories is the
+    expensive part of a step. SNAPPING the physics to a bucket centre is a
+    different thing, and it put the engine into a period-2 limit cycle: gas
+    temperature drives evaporation, evaporation drives how much water lands,
+    and water landing drives gas temperature back down, so a step change in
+    delivery across a bucket edge is a feedback loop with a discontinuity in
+    it. On the twin-bore example the ceiling alternated 41.6 C and 55.8 C
+    every second for two thirds of the run -- a 14 C swing, entirely an
+    artefact of a 25 K bucket -- and every temperature-derived criterion
+    inherited it.
+
+    Reading BOTH bracketing buckets and interpolating costs one extra cache
+    lookup, keeps every entry self-consistent, and makes delivery continuous
+    in gas temperature, which is what removes the cycle.
+    """
+    drop_height_m = _drop_height_m(design, fire_top_m)
+    u_bucket_ms = _bucket(u_eff_ms, VELOCITY_BUCKET_MS)
+    lower = math.floor(gas_excess_k / GAS_EXCESS_BUCKET_K) * GAS_EXCESS_BUCKET_K
+    fraction = (gas_excess_k - lower) / GAS_EXCESS_BUCKET_K
+    lo = _at_bucket(design, positions, envelope, drop_height_m, u_bucket_ms, lower)
+    if fraction <= 0.0:
+        return lo
+    hi = _at_bucket(design, positions, envelope, drop_height_m, u_bucket_ms,
+                    lower + GAS_EXCESS_BUCKET_K)
+    return tuple(_blend(a, b, fraction) for a, b in zip(lo, hi))
 
 
 def _deliveries(design: Design, geometries: tuple[_ModeGeometry, ...],

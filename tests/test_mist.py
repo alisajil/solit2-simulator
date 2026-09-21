@@ -760,3 +760,61 @@ def test_reloading_calibration_busts_the_geometry_cache_for_the_spectrum_too(
     assert wide != narrow, (
         "the second call was served trajectories computed under the FIRST "
         "droplet_size_spread, not the value just reloaded")
+
+
+def test_spray_delivery_is_continuous_in_gas_temperature():
+    """The cache is quantised because trajectories are expensive. Snapping the
+    PHYSICS to a bucket centre is a different thing, and it put the engine in a
+    period-2 limit cycle: gas temperature drives evaporation, evaporation
+    drives how much water lands, and that drives gas temperature back -- so a
+    step in delivery across a bucket edge is a feedback loop with a
+    discontinuity in it."""
+    from solit2.engines.reduced import mist as mist_mod
+    from solit2.engines.reduced.geometry import nozzle_positions, section_geometry
+    from solit2.schema.design import Design
+
+    design = Design.load("examples/designs/road-tunnel-twin-bore.json")
+    geom = section_geometry(design)
+    positions = nozzle_positions(design, geom, 0.0)
+    fp = design.fire.footprint
+    envelope = mist_mod.fuel_envelope(0.0, 0.0, fp.length_m, fp.width_m,
+                                      mist_mod.flank_reach_m(fp.top_height_m))
+    width = mist_mod.GAS_EXCESS_BUCKET_K
+
+    def surviving(excess_k):
+        g = mist_mod._geometry(design, positions, envelope, fp.top_height_m, 4.0, excess_k)
+        return sum(m.surviving_fraction for m in g) / len(g)
+
+    # straddle a bucket edge by a tenth of a kelvin
+    edge = 2 * width
+    below, above = surviving(edge - 0.05), surviving(edge + 0.05)
+    assert abs(above - below) < 0.01, (
+        f"delivery jumps {abs(above - below):.3f} across a bucket edge at {edge} K")
+    # and the response is monotone and smooth across a whole bucket
+    samples = [surviving(edge - width / 2 + i * width / 20) for i in range(21)]
+    steps = [abs(b - a) for a, b in zip(samples, samples[1:])]
+    assert max(steps) < 0.02, f"largest step within a bucket {max(steps):.3f}"
+
+
+def test_the_engine_does_not_oscillate_step_to_step():
+    """The symptom this was found by: the ceiling at D03 alternated 41.6 C and
+    55.8 C every second for two thirds of the run, which is what a 25 K
+    quantisation looks like inside a feedback loop."""
+    from solit2.engines.reduced import envelope as env
+    from solit2.engines.reduced.sim import run_once
+    from solit2.schema.design import Design
+
+    design = Design.load("examples/designs/road-tunnel-twin-bore.json")
+    result = env.run(design)
+    trace = run_once(design, result.worst_case["section"], result.worst_case["velocity_ms"])
+    tops = [s.stations["D03"].temps_c[-1] for s in trace.steps]
+    jumps = [abs(b - a) for a, b in zip(tops, tops[1:])]
+    assert max(jumps) < 2.0, f"largest one-second change {max(jumps):.1f} C"
+    # and the cooling fraction that drives it, once the pumps are at full
+    # pressure. Before that the valves opening and the pumps ramping are real
+    # step changes in the system, not artefacts of the model.
+    settled = trace.events["t_full_pressure_s"]
+    chis = [s.mist.chi_cool for s in trace.steps if s.t_s >= settled]
+    chi_jumps = [abs(b - a) for a, b in zip(chis, chis[1:])]
+    assert max(chi_jumps) < 0.02, (
+        f"cooling fraction jumps {max(chi_jumps):.3f} in one second after full pressure")

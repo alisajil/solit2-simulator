@@ -37,6 +37,20 @@ def _steaming_step(trace):
     return next(s for s in trace.steps if s.mist.chi_cool > tc.STEAM_MIN_CHI_COOL)
 
 
+def _spraying_but_not_steaming(trace):
+    """A step with water flowing and evaporation below the drawing threshold.
+
+    Built rather than found. Since spray delivery became continuous in gas
+    temperature, cooling reaches 16 % on the very first wet step of this
+    scenario, so no real step in it meets this condition -- and the drawing
+    rule still has to be right for the one that would.
+    """
+    import dataclasses
+    wet = _wet_step(trace)
+    return dataclasses.replace(
+        wet, mist=dataclasses.replace(wet.mist, chi_cool=tc.STEAM_MIN_CHI_COOL / 2))
+
+
 def _exposed_target_step(trace):
     return next(s for s in trace.steps
                if 0.0 < tc._target_ignition_progress(s) < 1.0)
@@ -140,9 +154,13 @@ def test_fire_marker_grows_with_heat_release(design, geom, trace):
     assert cold.marker.size >= tc.FIRE_MARKER_MIN_PX and hot.marker.size <= tc.FIRE_MARKER_MAX_PX
 
 
-def test_mist_layer_is_one_trace_always_and_one_rectangle_only_when_discharging(design, geom, trace):
+def test_mist_layer_is_one_trace_always_and_draws_the_spray_only_when_discharging(design, geom, trace):
+    """Select the step by the condition the shape depends on, not by "the first
+    wet one": cooling now ramps from activation rather than switching on, so the
+    first wet step may already be steaming and carry a second shape."""
+    no_steam = _spraying_but_not_steaming(trace)
     dry_traces, dry_shapes = tc.mist_layer(design, geom, trace.steps[0])
-    wet_traces, wet_shapes = tc.mist_layer(design, geom, _wet_step(trace))
+    wet_traces, wet_shapes = tc.mist_layer(design, geom, no_steam)
     assert len(dry_traces) == 1 and dry_shapes == []
     assert len(wet_traces) == 1 and len(wet_shapes) == 1
     half = design.zones.section_length_m * design.zones.sections_simultaneous / 2
@@ -280,12 +298,13 @@ def test_the_spray_zone_has_a_visible_border(design, geom, trace):
 
 
 def test_steam_appears_above_the_spray_zone_once_evaporation_is_real(design, geom, trace):
+    barely = _spraying_but_not_steaming(trace)
     dry_shapes = tc.mist_layer(design, geom, trace.steps[0])[1]
-    barely_wet_shapes = tc.mist_layer(design, geom, _wet_step(trace))[1]
+    barely_wet_shapes = tc.mist_layer(design, geom, barely)[1]
     steaming_shapes = tc.mist_layer(design, geom, _steaming_step(trace))[1]
 
     assert dry_shapes == []
-    assert len(barely_wet_shapes) == 1, "no meaningful evaporation yet -- no steam shape"
+    assert len(barely_wet_shapes) == 1, "water flowing but no meaningful evaporation yet"
     assert len(steaming_shapes) == 2
 
     spray, steam = steaming_shapes
