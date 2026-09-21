@@ -356,3 +356,41 @@ def test_switching_to_the_free_burn_while_the_mist_field_is_selected_does_not_br
     _control(at, "cfd_scenario").set_value("Free burn").run()
     assert not at.exception, "a held field that the new scenario does not offer must not crash"
     assert asked[-1] != "FINE MPUV", "a free burn has no particles to show"
+
+
+def test_a_running_run_shows_what_it_is_actually_doing(run_view, monkeypatch, tmp_path):
+    """A bare percentage says nothing about whether a run is worth waiting for.
+    Everything on the panel is polled from the run's own output."""
+    from app.views import cfd
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    _fake_run(run_dir, "Time Step 10\n Total Time:  120.0 s\n", t_end=1200.0)
+    monkeypatch.setattr(cfd.fds_runner, "live", lambda d, t_end_s=None: {
+        "time_step": 4321, "simulated_s": 120.0, "t_end_s": 1200.0,
+        "step_size_s": 0.042, "elapsed_s": 3900.0, "rate_s_per_s": 0.05,
+        "eta_s": 21600.0, "hrr_mw": 6.8, "detect_s": 168.0, "activate_s": 228.0})
+    at = run_view("cfd")
+    assert not at.exception
+    shown = {m.label: m.value for m in at.get("metric")}
+    assert shown["Simulated"] == "120 s"
+    assert shown["Running for"] == "1h 05m"
+    assert shown["Speed"] == "3.0 s/min", "simulated seconds per minute, not per second"
+    assert shown["Left, at this speed"] == "6h 00m"
+    assert shown["Heat release"] == "6.8 MW"
+    assert shown["Time step"] == "42 ms"
+    assert "detected 168 s" in shown["Mist"] and "discharging from 228 s" in shown["Mist"]
+
+
+def test_the_panel_says_unknown_rather_than_guessing(run_view, monkeypatch, tmp_path):
+    from app.views import cfd
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    _fake_run(run_dir, "Time Step 1\n", t_end=1200.0)
+    monkeypatch.setattr(cfd.fds_runner, "live", lambda d, t_end_s=None: {
+        "time_step": None, "simulated_s": None, "t_end_s": 1200.0, "step_size_s": None,
+        "elapsed_s": None, "rate_s_per_s": None, "eta_s": None, "hrr_mw": None,
+        "detect_s": None, "activate_s": None})
+    at = run_view("cfd")
+    assert not at.exception
+    shown = {m.label: m.value for m in at.get("metric")}
+    assert shown["Speed"] == "—" and shown["Left, at this speed"] == "—"
+    assert shown["Heat release"] == "—"
+    assert shown["Mist"] == "not yet triggered"

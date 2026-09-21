@@ -94,12 +94,57 @@ def _start_controls(design: Design, run_dir: Path, verb: str, suppression: bool)
         st.rerun()
 
 
+def _clock(seconds: float | None) -> str:
+    """A duration a person can read at a glance."""
+    if seconds is None:
+        return "—"
+    seconds = int(max(seconds, 0))
+    if seconds < 3600:
+        return f"{seconds // 60}m {seconds % 60:02d}s"
+    return f"{seconds // 3600}h {(seconds % 3600) // 60:02d}m"
+
+
+def live_metrics(live: dict) -> list[tuple[str, str, str | None]]:
+    """(label, value, help) for what the run is doing, from its own output.
+
+    Every one of these is measured. Where a quantity needs something the run
+    has not produced yet -- a rate needs two timestamps, an estimate needs a
+    rate and a target -- it reads as unknown rather than being guessed at.
+    """
+    rate = live["rate_s_per_s"]
+    fired = [f"detected {live['detect_s']:.0f} s" if live["detect_s"] else None,
+             f"discharging from {live['activate_s']:.0f} s" if live["activate_s"] else None]
+    return [
+        ("Simulated", f"{live['simulated_s']:.0f} s" if live["simulated_s"] is not None else "—",
+         f"of the deck's {live['t_end_s']:.0f} s window" if live["t_end_s"] else None),
+        ("Running for", _clock(live["elapsed_s"]), "wall clock since the first time step"),
+        ("Speed", f"{rate * 60:.1f} s/min" if rate else "—",
+         "simulated seconds per minute, over the last 60 time steps rather than "
+         "the whole run"),
+        ("Left, at this speed", _clock(live["eta_s"]),
+         "this run's speed has varied thirtyfold; treat it as the current rate "
+         "carried forward, not a forecast"),
+        ("Heat release", f"{live['hrr_mw']:.1f} MW" if live["hrr_mw"] is not None else "—",
+         "the latest row of the run's own HRR output"),
+        ("Time step", f"{live['step_size_s'] * 1000:.0f} ms" if live["step_size_s"] else "—",
+         "shrinks as the fire grows, which is why progress is not linear"),
+        ("Mist", " · ".join(f for f in fired if f) or "not yet triggered",
+         "read from FDS's own control log, not from the design's timetable"),
+    ]
+
+
 @st.fragment(run_every=POLL)
 def _live_progress(run_dir: Path) -> None:
     status = fds_runner.status(run_dir)
+    live = fds_runner.live(run_dir)
     st.progress(min(status["progress"], 1.0),
                 text=f"FDS running — {status['progress'] * 100:.0f} % of the simulated window. "
                      f"{status['detail']}".strip())
+    metrics = live_metrics(live)
+    for column, (label, value, help_text) in zip(st.columns(len(metrics)), metrics):
+        column.metric(label, value, help=help_text)
+    st.caption(f"Polled from the run's own output every {POLL}. "
+               f"Step {live['time_step'] or 0:,}.")
     if status["state"] != "running":
         st.rerun(scope="app")
 

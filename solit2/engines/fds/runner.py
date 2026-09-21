@@ -11,6 +11,7 @@ import re
 import shutil
 import subprocess
 import time
+from datetime import datetime
 from pathlib import Path
 
 BIN_ENV = "SOLIT2_FDS_BIN"
@@ -298,3 +299,112 @@ def open_smokeview(run_dir: Path) -> None:
     if not smv:
         raise FileNotFoundError(f"no .smv file in {run_dir} yet")
     subprocess.Popen([binary, smv[0].name], cwd=Path(run_dir), **_DETACHED)
+
+
+# FDS writes one row per time step to `<CHID>_steps.csv`: step number, a real
+# wall-clock timestamp, the step size, the simulated time reached, CPU seconds.
+# That file is the honest source for live progress -- the `.out` log gives
+# simulated time and nothing to measure a rate against.
+STEPS_SUFFIX = "_steps.csv"
+# How many of the most recent steps the rate is measured over. A run's average
+# rate since launch is not its current rate: this one spent a night throttled
+# to a thirtieth of its speed, and an average over that would have predicted
+# days of remaining work for a run that finished in the hour.
+RATE_WINDOW_STEPS = 60
+
+
+def _read_steps(run_dir: Path) -> list[tuple[int, datetime, float, float]]:
+    """(step, wall clock, step size, simulated time) for every complete row."""
+    path = next(iter(sorted(Path(run_dir).glob(f"*{STEPS_SUFFIX}"))), None)
+    if path is None:
+        return []
+    rows = []
+    for line in path.read_text().splitlines()[2:]:      # units row, header row
+        parts = line.split(",")
+        if len(parts) < 4:
+            continue
+        try:
+            rows.append((int(parts[0]), datetime.fromisoformat(parts[1].strip()),
+                         float(parts[2]), float(parts[3])))
+        except ValueError:
+            continue                                     # a row still being written
+    return rows
+
+
+def _latest_csv_value(run_dir: Path, suffix: str, column: str) -> float | None:
+    """The last value in a named column of one of the run's CSVs."""
+    path = next(iter(sorted(Path(run_dir).glob(f"*{suffix}"))), None)
+    if path is None:
+        return None
+    lines = [ln for ln in path.read_text().splitlines() if ln.strip()]
+    if len(lines) < 3:
+        return None
+    header = [c.strip() for c in lines[1].split(",")]
+    if column not in header:
+        return None
+    try:
+        return float(lines[-1].split(",")[header.index(column)])
+    except (ValueError, IndexError):
+        return None
+
+
+def _control_times(run_dir: Path) -> dict[str, float | None]:
+    path = next(iter(sorted(Path(run_dir).glob("*_ctrl.csv"))), None)
+    out: dict[str, float | None] = {"detect_s": None, "activate_s": None}
+    if path is None:
+        return out
+    lines = [ln for ln in path.read_text().splitlines() if ln.strip()]
+    if len(lines) < 3:
+        return out
+    header = [c.strip() for c in lines[1].split(",")]
+    for key, control in (("detect_s", "DETECT"), ("activate_s", "ACT")):
+        if control not in header:
+            continue
+        column = header.index(control)
+        for line in lines[2:]:
+            parts = line.split(",")
+            try:
+                if float(parts[column]) > 0:
+                    out[key] = float(parts[0])
+                    break
+            except (ValueError, IndexError):
+                continue
+    return out
+
+
+def live(run_dir: Path, t_end_s: float | None = None) -> dict:
+    """What the run is doing right now, polled from its own output.
+
+    Everything here is measured, never assumed: the rate comes from FDS's own
+    wall-clock timestamps over the last `RATE_WINDOW_STEPS` steps, so it is
+    the speed the run is going at now rather than its average since launch,
+    and the estimate it feeds is only offered when there is a window to
+    measure over and a target to aim at.
+    """
+    run_dir = Path(run_dir)
+    if t_end_s is None:
+        deck = run_dir / "deck.fds"
+        match = _T_END.search(deck.read_text()) if deck.exists() else None
+        t_end_s = float(match.group(1)) if match else None
+    rows = _read_steps(run_dir)
+    out: dict = {"time_step": None, "simulated_s": None, "t_end_s": t_end_s,
+                 "step_size_s": None, "elapsed_s": None, "rate_s_per_s": None,
+                 "eta_s": None, "hrr_mw": None,
+                 **_control_times(run_dir)}
+    hrr_kw = _latest_csv_value(run_dir, "_hrr.csv", "HRR")
+    if hrr_kw is not None:
+        out["hrr_mw"] = hrr_kw / 1000.0
+    if not rows:
+        return out
+    step, wall, size, simulated = rows[-1]
+    out.update(time_step=step, simulated_s=simulated, step_size_s=size,
+               elapsed_s=(wall - rows[0][1]).total_seconds())
+    window = rows[-RATE_WINDOW_STEPS:] if len(rows) > 1 else []
+    if len(window) > 1:
+        wall_span = (window[-1][1] - window[0][1]).total_seconds()
+        sim_span = window[-1][3] - window[0][3]
+        if wall_span > 0 and sim_span > 0:
+            out["rate_s_per_s"] = sim_span / wall_span
+            if t_end_s is not None and simulated < t_end_s:
+                out["eta_s"] = (t_end_s - simulated) / out["rate_s_per_s"]
+    return out

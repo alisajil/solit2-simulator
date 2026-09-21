@@ -336,3 +336,80 @@ def test_a_run_is_launched_detached_so_it_outlives_the_app():
         assert runner._DETACHED == {"creationflags": 0x00000008 | 0x00000200}
     else:
         assert runner._DETACHED == {"start_new_session": True}
+
+
+def _steps_csv(tmp_path, rows):
+    """FDS's own `<CHID>_steps.csv`: units row, header row, then one row a step."""
+    lines = [",,s,s,s", "Time Step,Wall Time,Step Size,Simulation Time,CPU Time"]
+    for step, wall, size, simulated in rows:
+        lines.append(f"{step},{wall},{size},{simulated},0.0")
+    (tmp_path / "abc_steps.csv").write_text("\n".join(lines) + "\n")
+
+
+def test_live_progress_measures_the_rate_from_fds_own_wall_clock(tmp_path):
+    base = "2026-09-21T03:00:{:02d}.000+05:30"
+    # 10 s of wall clock buys 1 s of simulation: a tenth of real time
+    _steps_csv(tmp_path, [(i, base.format(i * 10), 0.05, i * 1.0) for i in range(6)])
+    (tmp_path / "deck.fds").write_text("&TIME T_END=100.0 /\n")
+    live = runner.live(tmp_path)
+    assert live["time_step"] == 5
+    assert live["simulated_s"] == pytest.approx(5.0)
+    assert live["elapsed_s"] == pytest.approx(50.0)
+    assert live["rate_s_per_s"] == pytest.approx(0.1)
+    assert live["eta_s"] == pytest.approx((100.0 - 5.0) / 0.1)
+
+
+def test_the_rate_is_the_current_one_not_the_average_since_launch(tmp_path):
+    """This matters: one real run spent a night throttled to a thirtieth of its
+    speed, and an average over that would have predicted days of work left for
+    a run that finished within the hour."""
+    from datetime import datetime, timedelta
+    start = datetime.fromisoformat("2026-09-21T03:00:00.000+05:30")
+
+    def at(seconds):
+        return (start + timedelta(seconds=seconds)).isoformat()
+
+    # 40 steps at a tenth of a simulated second per minute, then 90 at one a
+    # second. 90 exceeds RATE_WINDOW_STEPS, so the window is entirely fast.
+    slow = [(i, at(i * 60), 0.05, i * 0.1) for i in range(40)]
+    t0, sim0 = 40 * 60, slow[-1][3]
+    fast = [(40 + i, at(t0 + i), 0.05, sim0 + i * 1.0) for i in range(1, 91)]
+    assert len(fast) > runner.RATE_WINDOW_STEPS
+    _steps_csv(tmp_path, slow + fast)
+    (tmp_path / "deck.fds").write_text("&TIME T_END=1000.0 /\n")
+    live = runner.live(tmp_path)
+    assert live["rate_s_per_s"] == pytest.approx(1.0, rel=0.05), "the recent rate, not 0.1"
+
+
+def test_live_progress_reads_heat_release_and_the_control_log(tmp_path):
+    _steps_csv(tmp_path, [(1, "2026-09-21T03:00:00.000+05:30", 0.05, 1.0)])
+    (tmp_path / "abc_hrr.csv").write_text(
+        "s,kW\nTime,HRR\n0.0,0.0\n1.0,4200.0\n")
+    (tmp_path / "abc_ctrl.csv").write_text(
+        "s,status,status\nTime,DETECT,ACT\n0.0,-1,-1\n9.0,1,-1\n20.0,1,1\n")
+    live = runner.live(tmp_path, t_end_s=100.0)
+    assert live["hrr_mw"] == pytest.approx(4.2)
+    assert live["detect_s"] == pytest.approx(9.0)
+    assert live["activate_s"] == pytest.approx(20.0)
+
+
+def test_live_progress_reports_unknown_rather_than_guessing(tmp_path):
+    """A run that has written nothing yet has no rate and no estimate, and must
+    not invent either."""
+    live = runner.live(tmp_path, t_end_s=100.0)
+    assert live["simulated_s"] is None and live["rate_s_per_s"] is None
+    assert live["eta_s"] is None and live["hrr_mw"] is None
+    # one step is a position but not yet a rate
+    _steps_csv(tmp_path, [(1, "2026-09-21T03:00:00.000+05:30", 0.05, 1.0)])
+    one = runner.live(tmp_path, t_end_s=100.0)
+    assert one["simulated_s"] == pytest.approx(1.0)
+    assert one["rate_s_per_s"] is None and one["eta_s"] is None
+
+
+def test_a_half_written_step_row_is_skipped_not_fatal(tmp_path):
+    """The file is appended to while it is read."""
+    _steps_csv(tmp_path, [(1, "2026-09-21T03:00:00.000+05:30", 0.05, 1.0)])
+    with (tmp_path / "abc_steps.csv").open("a") as fh:
+        fh.write("2,2026-09-21T03:00:10.0")
+    live = runner.live(tmp_path, t_end_s=100.0)
+    assert live["time_step"] == 1
