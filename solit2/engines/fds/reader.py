@@ -43,6 +43,15 @@ ACT_CTRL = "ACT"
 # peak, not the peak itself -- and everything computed FROM that peak (ceiling
 # and lining temperature, target flux and exposure) inherits the same bound.
 PEAK_PASSED_DROP_FRACTION = 0.10
+# The rule above is applied to a centred moving average, not to the raw HRR.
+# "A few percent" is the run-to-run scatter of a PEAK; the instantaneous LES
+# HRR of one run swings far more than that about its own mean -- the c4 test's
+# oxygen-calorimetry trace (SOLIT2 Annex 2 Figure 9) spikes to 34 MW on a
+# 30 MW plateau -- so a raw maximum is usually a spike, and a plateau that
+# merely ends below one spike would be declared "passed". 31 samples is 30 s at
+# the deck's 1 s output interval (`deck.DEVC_DT_S`): longer than a turbulent
+# puff, far shorter than the minutes over which a fire turns over.
+PEAK_SMOOTHING_SAMPLES = 31
 
 
 def _read_csv(path: Path) -> tuple[list[str], list[list[float]]]:
@@ -252,21 +261,34 @@ def _trace(design: Design, steps: list[StepRecord], ctrl: dict[str, float | None
                     section=design.tunnel.section, velocity_ms=velocity)
 
 
-def hrr_peak_passed(hrr_mw: list[float]) -> bool:
+def _centred_mean(values: list[float], window: int) -> list[float]:
+    """Moving average over `window` samples centred on each one, truncated at
+    the ends rather than padded, so no sample is invented."""
+    half = window // 2
+    return [sum(values[max(i - half, 0):i + half + 1])
+            / len(values[max(i - half, 0):i + half + 1]) for i in range(len(values))]
+
+
+def hrr_peak_passed(hrr_mw: list[float],
+                    smoothing_samples: int = PEAK_SMOOTHING_SAMPLES) -> bool:
     """Whether the run's simulated window actually passed the HRR's peak.
 
-    Passed iff the time of the maximum is before the last sample AND the HRR
+    On the HRR averaged over `smoothing_samples` (see PEAK_SMOOTHING_SAMPLES):
+    passed iff the time of the maximum is before the last sample AND the HRR
     at the last sample has fallen to at most
     `(1 - PEAK_PASSED_DROP_FRACTION)` of that maximum -- see the constant's own
     comment for why 10%. A curve that never rises above zero (no fire, or read
     before ignition) has no peak to have passed, so that is False too rather
     than a vacuous True from `0 <= 0`.
     """
-    peak_i = max(range(len(hrr_mw)), key=lambda i: hrr_mw[i])
-    peak_mw = hrr_mw[peak_i]
-    if peak_mw <= 0.0 or peak_i >= len(hrr_mw) - 1:
+    if smoothing_samples < 1:
+        raise ValueError(f"smoothing_samples must be at least 1, got {smoothing_samples}")
+    smooth = _centred_mean(hrr_mw, smoothing_samples)
+    peak_i = max(range(len(smooth)), key=lambda i: smooth[i])
+    peak_mw = smooth[peak_i]
+    if peak_mw <= 0.0 or peak_i >= len(smooth) - 1:
         return False
-    return hrr_mw[-1] <= peak_mw * (1.0 - PEAK_PASSED_DROP_FRACTION)
+    return smooth[-1] <= peak_mw * (1.0 - PEAK_PASSED_DROP_FRACTION)
 
 
 def _peaks_of(steps: list[StepRecord], modelled: list[str],

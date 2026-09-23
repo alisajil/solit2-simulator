@@ -372,30 +372,32 @@ def _extend_run(run_dir, hrr_kw_extra: list[float]):
 
 
 def test_hrr_peak_passed_true_after_a_ten_percent_fall():
-    assert reader.hrr_peak_passed([0.0, 10.0, 20.0, 20.0, 18.0]) is True
+    assert reader.hrr_peak_passed([0.0, 10.0, 20.0, 20.0, 18.0], smoothing_samples=1) is True
 
 
 def test_hrr_peak_passed_true_at_exactly_the_ten_percent_threshold():
-    assert reader.hrr_peak_passed([0.0, 20.0, 18.0]) is True
+    assert reader.hrr_peak_passed([0.0, 20.0, 18.0], smoothing_samples=1) is True
 
 
 def test_hrr_peak_passed_false_when_still_at_its_max_at_the_end():
-    assert reader.hrr_peak_passed([0.0, 10.0, 20.0]) is False
+    assert reader.hrr_peak_passed([0.0, 10.0, 20.0], smoothing_samples=1) is False
 
 
 def test_hrr_peak_passed_false_under_a_ten_percent_fall():
     # 20 -> 18.5 is a 7.5% fall, short of PEAK_PASSED_DROP_FRACTION
-    assert reader.hrr_peak_passed([0.0, 10.0, 20.0, 18.5]) is False
+    assert reader.hrr_peak_passed([0.0, 10.0, 20.0, 18.5], smoothing_samples=1) is False
 
 
 def test_hrr_peak_passed_false_for_a_curve_that_never_rises():
     # 0 <= 0 * 0.9 would be trivially true; a fire that never got going has no
     # peak to have passed
-    assert reader.hrr_peak_passed([0.0, 0.0, 0.0]) is False
+    assert reader.hrr_peak_passed([0.0, 0.0, 0.0], smoothing_samples=1) is False
 
 
 def test_the_result_reports_the_peak_passed_when_the_run_reaches_it(run_dir):
-    _extend_run(run_dir, [20.0, 18.0])  # rises from the fixture's own 22 MW... falls back
+    # From the fixture's own 22 MW maximum, a minute-long decline to about
+    # 15 MW: long enough that the 30 s smoothing sees a fire turning over.
+    _extend_run(run_dir, [22.0 - 0.12 * (i + 1) for i in range(60)])
     result = reader.read(run_dir, Design.load(BASELINE))
     assert result.peaks["hrr_mw"] == pytest.approx(22.0)
     assert result.peaks["hrr_peak_passed"] is True
@@ -447,3 +449,24 @@ def test_a_run_that_passes_full_pressure_carries_no_such_caveat(run_dir):
     result = reader.read(run_dir, instant)
     assert result.events["t_full_pressure_s"] == pytest.approx(2.0)
     assert not any("before the pumps reach full pressure" in w for w in result.warnings)
+
+
+def test_a_noisy_plateau_that_ends_below_one_spike_has_not_passed_its_peak():
+    """LES HRR swings about its own mean -- the c4 calorimetry trace spikes to
+    34 MW on a 30 MW plateau. A raw maximum would read that spike as the peak
+    and the plateau's last sample, 12 % below it, as a fire that had turned
+    over. Averaged over 30 s, it has not."""
+    plateau = [30.0 + (4.0 if i == 200 else (1.0 if i % 2 else -1.0)) for i in range(401)]
+    assert reader.hrr_peak_passed(plateau, smoothing_samples=1) is True
+    assert reader.hrr_peak_passed(plateau) is False
+
+
+def test_a_fire_that_really_turns_over_still_passes_after_smoothing():
+    rise = [0.1 * i for i in range(300)]              # to 30 MW over 300 s
+    fall = [30.0 - 0.05 * i for i in range(300)]      # to 15 MW over the next 300 s
+    assert reader.hrr_peak_passed(rise + fall) is True
+
+
+def test_peak_smoothing_refuses_a_window_below_one_sample():
+    with pytest.raises(ValueError, match="smoothing_samples"):
+        reader.hrr_peak_passed([0.0, 1.0, 0.5], smoothing_samples=0)
