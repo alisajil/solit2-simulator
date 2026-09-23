@@ -3,20 +3,51 @@
   "weight": 1.0,
   "source": "SOLIT2 Engineering Guidance Annex 2 section 6.2 (Class A without cover)",
   "design": {
-    "meta": {"name": "c5-solit2-class-a-nocover", "notes": "150 MW potential, no tarpaulin, 1.25 m/s"},
-    "tunnel": {"preset": "solit2_test", "section": "test", "ambient_temp_c": 20.0},
-    "fire": {"preset": "hgv_150mw", "covered": false},
-    "nozzles": {"preset": "solit2_reference"},
-    "zones": {"section_length_m": 60.0, "sections_simultaneous": 1,
-              "manual_activation_s": 240.0, "activation_delay_s": 0.0,
-              "pump_ramp_s": 30.0, "duration_min": 42.0},
-    "ventilation": {"mode": "longitudinal", "velocity_ms": 1.25, "velocity_range_ms": [1.25, 1.25]},
-    "detection": {"type": "linear_heat", "threshold_c": 60.0, "sensor_spacing_m": 12.0},
-    "hydraulics": {"preset": "template"},
+    "meta": {
+      "name": "c5-solit2-class-a-nocover",
+      "notes": "150 MW potential, no tarpaulin, 1.25 m/s"
+    },
+    "tunnel": {
+      "preset": "solit2_test",
+      "section": "test",
+      "ambient_temp_c": 20.0
+    },
+    "fire": {
+      "preset": "hgv_150mw",
+      "covered": false,
+      "incubation_s": 102.0
+    },
+    "nozzles": {
+      "preset": "solit2_reference"
+    },
+    "zones": {
+      "section_length_m": 60.0,
+      "sections_simultaneous": 1,
+      "manual_activation_s": 240.0,
+      "activation_delay_s": 0.0,
+      "pump_ramp_s": 30.0,
+      "duration_min": 42.0
+    },
+    "ventilation": {
+      "mode": "longitudinal",
+      "velocity_ms": 1.25,
+      "velocity_range_ms": [
+        1.25,
+        1.25
+      ]
+    },
+    "detection": {
+      "type": "linear_heat",
+      "threshold_c": 60.0,
+      "sensor_spacing_m": 12.0
+    },
+    "hydraulics": {
+      "preset": "template"
+    },
     "criteria": {}
   },
   "measured": {
-    "peak_hrr_mw": 20.0,
+    "peak_hrr_mw": 15.5,
     "peak_ceiling_temp_c": 580.0,
     "u15_temp_c": 22.0,
     "d15_temp_c": 55.0,
@@ -26,16 +57,43 @@
     "target_ignited": false
   },
   "tolerances": {
-    "peak_hrr_mw": {"kind": "relative", "value": 0.25},
-    "peak_ceiling_temp_c": {"kind": "relative", "value": 0.20},
-    "u15_temp_c": {"kind": "absolute", "value": 15.0},
-    "d15_temp_c": {"kind": "relative", "value": 0.40},
-    "d100_temp_c": {"kind": "relative", "value": 0.40},
-    "hf_d15_kwm2": {"kind": "factor", "value": 2.0},
-    "backlayering": {"kind": "exact"},
-    "target_ignited": {"kind": "exact"}
+    "peak_hrr_mw": {
+      "kind": "relative",
+      "value": 0.25
+    },
+    "peak_ceiling_temp_c": {
+      "kind": "relative",
+      "value": 0.2
+    },
+    "u15_temp_c": {
+      "kind": "absolute",
+      "value": 15.0
+    },
+    "d15_temp_c": {
+      "kind": "relative",
+      "value": 0.4
+    },
+    "d100_temp_c": {
+      "kind": "relative",
+      "value": 0.4
+    },
+    "hf_d15_kwm2": {
+      "kind": "factor",
+      "value": 2.0
+    },
+    "backlayering": {
+      "kind": "exact"
+    },
+    "target_ignited": {
+      "kind": "exact"
+    }
   },
   "measured_notes": {
-    "target_ignited": "Annex 7 section 7.2.1's pass condition, inferred rather than read off a measurement. Annex 2 section 6.2 does not state a per-test target outcome. The basis is: section 5.2.6 requires a fire target in every Class A test and Annex 7 Figure 12 captions one as an \"Example of undamaged target after a fire test\"; section 7.2.1 makes non-ignition the pass condition, \"Prevention of fire spread is essential in every case\"; and Annex 2 section 6.2 reports this test as a successful suppressed test -- the same, with \"The radiation was blocked by the water mist\", and its Figure 16 shows the \"Target object after a fire test with a SOLIT truck fire load\". Treat as an inference, not a published datum."
+    "target_ignited": "Annex 7 section 7.2.1's pass condition, inferred rather than read off a measurement. Annex 2 section 6.2 does not state a per-test target outcome. The basis is: section 5.2.6 requires a fire target in every Class A test and Annex 7 Figure 12 captions one as an \"Example of undamaged target after a fire test\"; section 7.2.1 makes non-ignition the pass condition, \"Prevention of fire spread is essential in every case\"; and Annex 2 section 6.2 reports this test as a successful suppressed test -- the same, with \"The radiation was blocked by the water mist\", and its Figure 16 shows the \"Target object after a fire test with a SOLIT truck fire load\". Treat as an inference, not a published datum.",
+    "backlayering": "Read off the U15 thermocouple tree, as Annex 2 judged it (Figure 20; section 6.2: 'Although the fire reached ~ 20 MW with an air velocity of only 1-1,5 m/s, no back layering was observed'). Figure 20 is not perfectly flat: the 5.0 m thermocouple spikes intermittently to about 40 C between 0:18 and 0:23, at the HRR peak, the tip of a marginal layer touching U15. The text's 'no' is kept as the measured value.",
+    "peak_hrr_mw": "Read off Figure 18, not the summary text. Digitised at 250 dpi, the HRR trace peaks at 15.2 MW as a 30 s median (16.1 MW at its highest single point) near 0:19; 15.5 MW is kept between the two. Section 6.2's summary says the fire 'reached ~ 20 MW', which this anchor used to carry, but the figure is the measurement and the text rounds it. c4's 30 MW agrees with its own Figure 9 (29.3 MW as a 30 s median), so only c5 needed correcting."
+  },
+  "input_notes": {
+    "incubation_s": "Digitised from the SOLIT2 Engineering Guidance Annex 2 v2.1 PDF at 250 dpi: the plot frame fixes both axes, the red 'Start BBA/FFFS' line fixes activation, and the HRR trace is the per-column median of the blue curve. Figure 18 reads 3.55 MW over the 30 s before activation, whose line it places at 245 s (240 s kept). 0.1876 * (240 - 102)^2 = 3.57 MW; the preset's 60 s gave 6.1 MW. Annex 2 section 6.2: 'After 1-2 minutes the fire growth rate started raised rapidly', consistent with 102 s."
   }
 }

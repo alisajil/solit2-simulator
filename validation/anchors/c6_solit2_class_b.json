@@ -3,16 +3,45 @@
   "weight": 1.0,
   "source": "SOLIT2 Engineering Guidance Annex 2 section 6.3 (Class B, longitudinal)",
   "design": {
-    "meta": {"name": "c6-solit2-class-b", "notes": "60 MW diesel pools, longitudinal"},
-    "tunnel": {"preset": "solit2_test", "section": "test", "ambient_temp_c": 20.0},
-    "fire": {"preset": "pool_60mw"},
-    "nozzles": {"preset": "solit2_reference"},
-    "zones": {"section_length_m": 60.0, "sections_simultaneous": 1,
-              "manual_activation_s": 300.0, "activation_delay_s": 0.0,
-              "pump_ramp_s": 30.0, "duration_min": 30.0},
-    "ventilation": {"mode": "longitudinal", "velocity_ms": 1.5, "velocity_range_ms": [1.5, 1.5]},
-    "detection": {"type": "linear_heat", "threshold_c": 60.0, "sensor_spacing_m": 12.0},
-    "hydraulics": {"preset": "template"},
+    "meta": {
+      "name": "c6-solit2-class-b",
+      "notes": "60 MW diesel pools, longitudinal"
+    },
+    "tunnel": {
+      "preset": "solit2_test",
+      "section": "test",
+      "ambient_temp_c": 20.0
+    },
+    "fire": {
+      "preset": "pool_60mw"
+    },
+    "nozzles": {
+      "preset": "solit2_reference"
+    },
+    "zones": {
+      "section_length_m": 60.0,
+      "sections_simultaneous": 1,
+      "manual_activation_s": 175.0,
+      "activation_delay_s": 0.0,
+      "pump_ramp_s": 30.0,
+      "duration_min": 30.0
+    },
+    "ventilation": {
+      "mode": "longitudinal",
+      "velocity_ms": 2.35,
+      "velocity_range_ms": [
+        2.35,
+        2.35
+      ]
+    },
+    "detection": {
+      "type": "linear_heat",
+      "threshold_c": 60.0,
+      "sensor_spacing_m": 12.0
+    },
+    "hydraulics": {
+      "preset": "template"
+    },
     "criteria": {}
   },
   "measured": {
@@ -21,8 +50,23 @@
     "pools_extinguished": true
   },
   "tolerances": {
-    "peak_hrr_mw": {"kind": "relative", "value": 0.25},
-    "backlayering": {"kind": "exact"},
-    "pools_extinguished": {"kind": "exact"}
+    "peak_hrr_mw": {
+      "kind": "relative",
+      "value": 0.25
+    },
+    "backlayering": {
+      "kind": "exact"
+    },
+    "pools_extinguished": {
+      "kind": "exact"
+    }
+  },
+  "input_notes": {
+    "manual_activation_s": "Digitised from the SOLIT2 Engineering Guidance Annex 2 v2.1 PDF at 250 dpi: the plot frame fixes both axes, the red 'Start BBA/FFFS' line fixes activation, and the HRR trace is the per-column median of the blue curve. Figures 27, 28 and 29 place the activation line at 167, 180 and 175 s. The previous 300 s had no source and ran the unsuppressed pool fire two minutes longer than the test did.",
+    "velocity_ms": "Digitised from the SOLIT2 Engineering Guidance Annex 2 v2.1 PDF at 250 dpi: the plot frame fixes both axes, the red 'Start BBA/FFFS' line fixes activation, and the velocity is the per-column median of the five coloured height traces. Annex 2 gives no velocity in words for this test. The value follows the convention the c4 and c5 anchors already use, which take section 6.1's '2-2,5 m/s' and section 6.2's '1-1,5 m/s' -- the U45 velocity while the fire burns, not the fans' pre-fire duty: Figure 10 reads 2.31 m/s over c4's 420-900 s, matching its anchor's 2.25. Figure 28 reads 2.44 m/s over 175-300 s and 2.30 m/s over 300-480 s, so 2.35 m/s; before the fire it read 3.7 m/s. The previous 1.5 m/s had no source."
+  },
+  "measured_notes": {
+    "backlayering": "Read off the U15 thermocouple tree, as Annex 2 judged it: Figure 29, 'A strong backlayering before the activation of the FFFS can be observed', peaking near 190 C at 5.0 m just before activation; section 6.3: 'The fire created a large back layering of smoke which completely disappeared shortly after activation'.",
+    "pools_extinguished": "Section 6.3: 'After a few minutes the fire was extinguished pool by pool', and the pools were re-ignited afterwards, which 'ensures that the fire was extinguished by the FFFS and not by a lack of fuel'. Figure 27 has the HRR down to about 2 MW by roughly 570 s."
   }
 }

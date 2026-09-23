@@ -12,7 +12,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from solit2.engines.reduced import envelope
-from solit2.engines.reduced.criteria import FLAME_CONTACT_FLUX_KWM2, IGNITION_EXPOSURE_S
+from solit2.engines.reduced.criteria import (FLAME_CONTACT_FLUX_KWM2, IGNITION_EXPOSURE_S,
+                                             STATIONS)
 from solit2.schema.design import Design
 
 ANCHOR_DIR = Path(__file__).resolve().parent / "anchors"
@@ -102,6 +103,28 @@ def _target_ignited(result) -> bool:
                 or peaks["target_max_exposure_s"] >= IGNITION_EXPOSURE_S)
 
 
+# Where the anchor tests looked for backlayering. Annex 2 judges it from one
+# instrument in all three: "Temperatures in various heights at U15. No
+# backlayering of smoke is observed" (Figures 11 and 20) and "A strong
+# backlayering before the activation of the FFFS can be observed" (Figure 29).
+BACKLAYERING_STATION = "U15"
+
+
+def _backlayering_at_u15(result) -> bool:
+    """Did smoke reach the U15 thermocouple tree, which is what the tests reported.
+
+    The engine's own `events.backlayering.occurred` flags ANY upstream layer, a
+    metre of it included. The tests could not see a metre: they saw the U15
+    ladder or nothing. Comparing the two answered a question no test asked, and
+    on c4 scored a 3 m layer that never left the mock-up as a miss. The engine
+    already decides the ladder the same way -- `sim._sample_stations` holds a
+    station at ambient unless `abs(x) <= backlayer_m` -- so this is that
+    condition on the run's longest layer, not a new threshold.
+    """
+    reach = abs(STATIONS[BACKLAYERING_STATION])
+    return bool(result.events["backlayering"]["max_length_m"] >= reach)
+
+
 # How each comparable quantity is pulled out of a result. Every entry reads the
 # trace or the peaks, never a criterion: the acceptance criteria are what an
 # authority sets, not what a fire test measured, so an anchor must not depend on
@@ -114,7 +137,7 @@ EXTRACTORS = {
     "d15_temp_c": lambda r: max(r.timeseries["d15_temp_c"]),
     "d100_temp_c": lambda r: max(r.timeseries["d100_temp_c"]),
     "hf_d15_kwm2": lambda r: max(r.timeseries["hf_d15_kwm2"]),
-    "backlayering": lambda r: bool(r.events["backlayering"]["occurred"]),
+    "backlayering": _backlayering_at_u15,
     "pools_extinguished": lambda r: r.events["pools_extinguished_at_s"] is not None,
     "target_ignited": _target_ignited,
 }
