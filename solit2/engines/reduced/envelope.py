@@ -185,6 +185,36 @@ def _placeholder_warnings(design: Design) -> list[str]:
     ]
 
 
+def _head_count_warnings(design: Design) -> list[str]:
+    """A declared head count that its own layout does not support.
+
+    `zones.heads_per_zone`, when set, wins over rows x pitch outright -- see
+    `Design.heads_per_zone`. That is deliberate: a real installation's head
+    count is a procurement fact, not something to be re-derived. But it means
+    changing `mounting.rows` alone moves the spray pattern and leaves flow,
+    pump power and tank size costing the old layout, with nothing in the
+    result to show for it. Silence there is the tool reporting a system nobody
+    specified.
+
+    Not an error and not a penalty. The declared figure still governs; this
+    only says the two disagree and by how much.
+    """
+    declared = design.zones.heads_per_zone
+    if declared is None:
+        return []
+    mount = design.nozzles.mounting
+    implied = round(design.zones.section_length_m / (mount.pitch_m / mount.rows))
+    if declared == implied:
+        return []
+    return [
+        f"zones.heads_per_zone declares {declared} head(s) per section, but "
+        f"{mount.rows} row(s) at {mount.pitch_m:g} m pitch over a "
+        f"{design.zones.section_length_m:g} m section implies {implied}. The "
+        f"declared figure governs, so flow, pump power and tank size follow "
+        f"{declared}, not the layout drawn"
+    ]
+
+
 def _constraint_warnings(constraints: dict[str, Criterion]) -> list[str]:
     """A declared limit that is exceeded. Visible, but never a SOLIT2 gate."""
     return [
@@ -241,6 +271,7 @@ def run(design: Design, sections: tuple[str, ...] | None = None,
     scored = score_mod.compute(merged, hyd, cost, trace, peak_lining,
                                design.constraints.max_application_density_mm_min)
     warnings = (_placeholder_warnings(design)
+                + _head_count_warnings(design)
                 + _critical_velocity_warnings(trace)
                 + _constraint_warnings(constraints)
                 + list(scored.penalties))
