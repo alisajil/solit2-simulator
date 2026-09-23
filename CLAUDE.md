@@ -11,19 +11,19 @@ this loop is allowed to change.
 
 ## Before the loop can mean anything: declare the limits
 
-Run the baseline today and it scores 8.24 with every gate passed. That number is close to
+Run the baseline today and it scores 7.83 with every gate passed. That number is close to
 meaningless, and the tool says so itself:
 
 ```
-criteria_unset: hrr_below_tvs_design_mw, max_air_temp_c, max_heat_flux_kwm2,
-                min_visibility_m, max_fed, max_co_ppm,
-                structure_exposure_length_m, structure_exposure_duration_s
+criteria_unset: max_air_temp_c, max_heat_flux_kwm2, min_visibility_m, max_fed,
+                max_co_ppm, structure_exposure_length_m, structure_exposure_duration_s
 ```
 
-Eight of the nine Annex 7 criteria have no limit to be judged against. Only `target_ignited`
-— the one absolute rule Annex 7 states outright — is live. So `score.components.margin`
-reads **1.0**, a perfect score, off a single boolean. Margin is 30% of the total. Optimising
-against that is optimising against nothing.
+Seven of the nine Annex 7 criteria have no limit to be judged against. Two are live:
+`target_ignited` -- the one absolute rule Annex 7 states outright -- and
+`hrr_below_tvs_design_mw`, from the tender's 50 MW. So `score.components.margin` is the
+mean of two margins. Margin is 30% of the total. Optimising against two of nine criteria is
+optimising against very little.
 
 **The loop starts when the `ahj` block is filled in**, from the project's own authority —
 the tender, the fire strategy, the AHJ's risk analysis. Not from this tool, not from a
