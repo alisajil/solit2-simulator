@@ -10,7 +10,10 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from solit2 import history as history_mod
+from solit2.engines.fds import calibrate as fds_calibrate
+from solit2.engines.fds import campaign as fds_campaign
 from solit2.engines.fds import deck as fds_deck
+from solit2.engines.fds import grid as fds_grid
 from solit2.engines.fds import reader as fds_reader
 from solit2.engines.fds import runner as fds_runner
 from solit2.engines.reduced import envelope
@@ -62,6 +65,81 @@ def _cmd_fds_deck(args: argparse.Namespace) -> int:
 def _cmd_fds_status(args: argparse.Namespace) -> int:
     state = fds_runner.status(Path(args.run_dir))
     print(f"{state['state']}  {state['progress'] * 100:.0f}%  {state.get('detail', '')}".rstrip())
+    return EXIT_OK
+
+
+def _cmd_fds_calibrate_e(args: argparse.Namespace) -> int:
+    from validation import compare
+    try:
+        anchors = compare.load_anchors(tuple(args.anchor))
+    except (FileNotFoundError, ValidationError, ValueError, KeyError) as exc:
+        return _fail(str(exc), "--anchor",
+                     "use anchor ids that exist under validation/anchors/", EXIT_BAD_INPUT)
+    out = Path(args.out)
+    e_values = tuple(args.e)
+    try:
+        fds_calibrate.write_decks(anchors, e_values, args.dx, out)
+    except ValueError as exc:
+        return _fail(str(exc), "--dx",
+                     "choose a cell size that tiles the window into equal "
+                     "whole-cell meshes, e.g. 0.5 or 0.6", EXIT_BAD_INPUT)
+    if args.run:
+        problems = fds_runner.preflight()
+        if problems:
+            return _fail("; ".join(problems), "--run",
+                         "install FDS and mpiexec, or free disk space, before launching",
+                         EXIT_ENGINE)
+        fds_calibrate.launch_and_wait(anchors, e_values, args.dx, out)
+    if args.report:
+        points = fds_calibrate.read_points(anchors, e_values, args.dx, out)
+        errors = fds_calibrate.weighted_error_by_e(anchors, points)
+        fit = fds_calibrate.best_e(errors)
+        markdown = fds_calibrate.render(anchors, points, errors, fit, args.dx)
+        print(markdown)
+        try:
+            out.mkdir(parents=True, exist_ok=True)
+            (out / "report.md").write_text(markdown + "\n")
+            (out / "report.json").write_text(json.dumps(
+                fds_calibrate.to_json(anchors, points, errors, fit, args.dx), indent=2))
+        except OSError as exc:
+            return _fail(str(exc), "--out", "choose a writable output directory",
+                         EXIT_BAD_INPUT)
+    return EXIT_OK
+
+
+def _cmd_fds_grid_study(args: argparse.Namespace) -> int:
+    try:
+        design = Design.load(args.design)
+    except (ValidationError, ValueError, FileNotFoundError, KeyError) as exc:
+        return _fail(str(exc), getattr(exc, "field", "design"),
+                     "correct the design JSON and try again", EXIT_BAD_INPUT)
+    out = Path(args.out)
+    dx_values = tuple(args.dx)
+    try:
+        fds_grid.write_decks(design, dx_values, args.t_end, out)
+    except ValueError as exc:
+        return _fail(str(exc), "--dx",
+                     "choose cell sizes that each tile the window into equal "
+                     "whole-cell meshes, e.g. 0.5, 0.6, 0.75, 1.0 or 1.2", EXIT_BAD_INPUT)
+    if args.run:
+        problems = fds_runner.preflight()
+        if problems:
+            return _fail("; ".join(problems), "--run",
+                         "install FDS and mpiexec, or free disk space, before launching",
+                         EXIT_ENGINE)
+        fds_grid.launch_and_wait(design, dx_values, out, t_end_s=args.t_end)
+    if args.report:
+        grids = fds_grid.read_grids(design, dx_values, out)
+        markdown = fds_grid.render(grids, args.t_end)
+        print(markdown)
+        try:
+            out.mkdir(parents=True, exist_ok=True)
+            (out / "report.md").write_text(markdown + "\n")
+            (out / "report.json").write_text(json.dumps(fds_grid.to_json(grids, args.t_end),
+                                                         indent=2))
+        except OSError as exc:
+            return _fail(str(exc), "--out", "choose a writable output directory",
+                         EXIT_BAD_INPUT)
     return EXIT_OK
 
 
@@ -224,6 +302,29 @@ def _cmd_report_assessment(args: argparse.Namespace) -> int:
     return _emit_report(markdown, args.out)
 
 
+def _cmd_fds_campaign(args: argparse.Namespace) -> int:
+    try:
+        design = Design.load(args.design)
+    except (ValidationError, ValueError, FileNotFoundError, KeyError) as exc:
+        return _fail(str(exc), getattr(exc, "field", "design"),
+                     "correct the design JSON and try again", EXIT_BAD_INPUT)
+    problems = fds_runner.preflight()
+    if problems:
+        return _fail("; ".join(problems), "campaign",
+                     "install FDS and mpiexec, or free disk space, before launching",
+                     EXIT_ENGINE)
+    try:
+        fds_campaign.run_campaign(
+            design, Path(args.out), e_anchor_ids=tuple(args.e_anchor),
+            e_values=tuple(args.e), dx_m=args.dx, grid_dx=tuple(args.grid_dx),
+            grid_t_end_s=args.grid_t_end,
+            print_fn=lambda msg: print(msg, file=sys.stderr))
+    except (ArithmeticError, RuntimeError, ValueError, KeyError, FileNotFoundError) as exc:
+        return _fail(str(exc), "campaign", "see the message for which step failed and why",
+                     EXIT_ENGINE)
+    return EXIT_OK
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="solit2", description="SOLIT2 tunnel water-mist simulator")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -258,6 +359,66 @@ def build_parser() -> argparse.ArgumentParser:
     fstat = sub.add_parser("fds-status", help="progress of an FDS run directory")
     fstat.add_argument("run_dir")
     fstat.set_defaults(func=_cmd_fds_status)
+
+    fcal = sub.add_parser(
+        "fds-calibrate-e",
+        help="sweep FDS's E_COEFFICIENT against the published anchor fire tests")
+    fcal.add_argument("--anchor", nargs="+", required=True,
+                      help="anchor ids from validation/anchors/, e.g. c4 c5")
+    fcal.add_argument("--e", nargs="+", type=float, required=True,
+                      help="E_COEFFICIENT values to sweep, e.g. 0.1 0.2 0.4 0.8")
+    fcal.add_argument("--dx", type=float, default=fds_deck.DX_M,
+                      help="cell size for every sweep point; a fitted E applies at "
+                           "this dx only")
+    fcal.add_argument("--out", required=True,
+                      help="decks are written to <out>/<anchor>/e_<E>_dx_<dx>/deck.fds")
+    fcal.add_argument("--run", action="store_true",
+                      help="launch every sweep point sequentially and wait for each; "
+                           "without this, only the decks are written")
+    fcal.add_argument("--report", action="store_true",
+                      help="read whatever sweep points have finished and write "
+                           "<out>/report.md and <out>/report.json")
+    fcal.set_defaults(func=_cmd_fds_calibrate_e)
+
+    fgrid = sub.add_parser(
+        "fds-grid-study",
+        help="a Celik et al. (2008) grid-convergence study across three cell sizes")
+    fgrid.add_argument("design")
+    fgrid.add_argument("--dx", nargs=3, type=float, required=True, metavar=("H1", "H2", "H3"),
+                       help="three cell sizes, finest first, each valid for `deck`")
+    fgrid.add_argument("--t-end", type=float, required=True,
+                       help="simulated window in seconds; a grid study need not run "
+                            "the full design duration")
+    fgrid.add_argument("--out", required=True,
+                       help="decks are written to <out>/<chid>/dx_<dx>/deck.fds")
+    fgrid.add_argument("--run", action="store_true",
+                       help="launch every grid sequentially and wait for each; "
+                            "without this, only the decks are written")
+    fgrid.add_argument("--report", action="store_true",
+                       help="read whatever grids have finished and write "
+                            "<out>/report.md and <out>/report.json")
+    fgrid.set_defaults(func=_cmd_fds_grid_study)
+
+    fcamp = sub.add_parser(
+        "fds-campaign",
+        help="chain the E sweep, the grid study and a full-duration run behind one "
+             "command; battery refusal and the caffeinate wrap live in "
+             "scripts/tier2_campaign.sh, the supported way to run this")
+    fcamp.add_argument("design", help="the design the grid study and the full-duration "
+                                      "run assess")
+    fcamp.add_argument("--e-anchor", nargs="+", default=["c4", "c5"],
+                       help="anchor ids for the E sweep (default: c4 c5)")
+    fcamp.add_argument("--e", nargs="+", type=float, default=[0.1, 0.2, 0.4, 0.8],
+                       help="E_COEFFICIENT values to sweep")
+    fcamp.add_argument("--dx", type=float, default=fds_deck.DX_M,
+                       help="cell size for the E sweep and the full-duration run")
+    fcamp.add_argument("--grid-dx", nargs=3, type=float, required=True,
+                       metavar=("H1", "H2", "H3"),
+                       help="three cell sizes for the grid-convergence study")
+    fcamp.add_argument("--grid-t-end", type=float, required=True,
+                       help="simulated window, in seconds, for the grid study")
+    fcamp.add_argument("--out", required=True)
+    fcamp.set_defaults(func=_cmd_fds_campaign)
 
     hist = sub.add_parser("history", help="show the leaderboard")
     hist.add_argument("--history", default=str(history_mod.DEFAULT_PATH))

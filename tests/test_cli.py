@@ -222,3 +222,64 @@ def test_fds_deck_minutes_shortens_the_run_not_the_design():
     a = [ln for ln in full.stdout.splitlines() if not ln.startswith("&TIME")]
     b = [ln for ln in short.stdout.splitlines() if not ln.startswith("&TIME")]
     assert a == b
+
+
+def test_fds_calibrate_e_writes_decks_and_reports_what_did_not_finish(tmp_path):
+    out = tmp_path / "ecal"
+    proc = _run(["fds-calibrate-e", "--anchor", "c4", "c5", "--e", "0.1", "0.2", "0.4", "0.8",
+                "--dx", "0.6", "--out", str(out), "--report"])
+    assert proc.returncode == 0, proc.stderr
+    assert len(list(out.rglob("deck.fds"))) == 8
+    assert (out / "report.md").exists() and (out / "report.json").exists()
+    payload = json.loads((out / "report.json").read_text())
+    assert payload["dx_m"] == 0.6
+    assert len(payload["points"]) == 8
+    assert all(not p["included"] for p in payload["points"]), "nothing was actually run"
+    assert payload["fit"]["best_e"] is None
+
+
+def test_fds_calibrate_e_on_an_unknown_anchor_exits_two(tmp_path):
+    proc = _run(["fds-calibrate-e", "--anchor", "not-a-real-anchor", "--e", "0.4",
+                "--dx", "0.6", "--out", str(tmp_path / "ecal")])
+    assert proc.returncode == 2
+    err = json.loads(proc.stderr)
+    assert err["fix"]
+
+
+def test_fds_calibrate_e_run_refuses_without_a_binary(tmp_path):
+    proc = _run(["fds-calibrate-e", "--anchor", "c4", "--e", "0.4", "--dx", "0.6",
+                "--out", str(tmp_path / "ecal"), "--run"])
+    assert proc.returncode == 3
+    err = json.loads(proc.stderr)
+    assert "fds" in err["error"]
+
+
+def test_fds_grid_study_writes_three_decks_and_reports_what_is_missing(tmp_path):
+    out = tmp_path / "grid"
+    proc = _run(["fds-grid-study", "designs/og-dbr-rev0.json", "--dx", "1.2", "0.75", "0.6",
+                "--t-end", "300", "--out", str(out), "--report"])
+    assert proc.returncode == 0, proc.stderr
+    assert len(list(out.rglob("deck.fds"))) == 3
+    payload = json.loads((out / "report.json").read_text())
+    assert payload["t_end_s"] == 300.0
+    assert len(payload["grids"]) == 3
+    assert all(not g["included"] for g in payload["grids"])
+    assert "needs exactly 3" in payload["error"]
+
+
+def test_fds_grid_study_on_a_bad_dx_exits_two(tmp_path):
+    proc = _run(["fds-grid-study", "designs/og-dbr-rev0.json", "--dx", "0.37", "0.6", "1.2",
+                "--t-end", "300", "--out", str(tmp_path / "grid")])
+    assert proc.returncode == 2
+    err = json.loads(proc.stderr)
+    assert "--dx" in err["field"]
+
+
+def test_fds_campaign_refuses_without_a_binary_before_writing_anything(tmp_path):
+    out = tmp_path / "campaign"
+    proc = _run(["fds-campaign", "designs/og-dbr-rev0.json", "--grid-dx", "1.2", "0.75", "0.6",
+                "--grid-t-end", "300", "--out", str(out)])
+    assert proc.returncode == 3
+    err = json.loads(proc.stderr)
+    assert "fds" in err["error"]
+    assert not out.exists(), "preflight must refuse before any deck is written"
