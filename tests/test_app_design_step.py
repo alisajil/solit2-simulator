@@ -187,3 +187,62 @@ def test_the_app_and_the_cli_identify_an_unedited_design_identically():
     # the notes differ by design, so the shas differ; the NAME is what a reader
     # matches on, and it no longer says something unrelated to the file
     assert deck.chid(as_app_would) != "" and from_cli.meta.name == "og-dbr-rev0"
+
+
+def test_a_design_loaded_from_a_file_is_not_quietly_rebuilt_from_presets():
+    """`_assemble` used to compose a design from the four presets plus twelve
+    form fields, whatever the source file said. Everything the form does not
+    expose was replaced: drop size, cone angle and launch velocity came from
+    the nozzle preset, and row offsets, detection, activation delay and
+    discharge duration were hardcoded.
+
+    A user who loads their own design file and presses Build is told "every
+    field below starts from" that file. They must not then be assessing a
+    different system. Anything the form cannot edit has to survive."""
+    from pathlib import Path
+    from solit2.schema.design import Design
+
+    path = Path("designs/og-ds01-rev00-cd-meas.json")
+    if not path.is_file():
+        import pytest
+        pytest.skip("needs a project design file carrying real nozzle data")
+    raw_source = json.loads(path.read_text())
+    n = raw_source["nozzles"]
+    # pitch and some other fields live in the preset, not the file, so read the
+    # form's starting values off the RESOLVED design, exactly as the form does.
+    resolved = Design.from_dict(raw_source)
+    built = design_view._assemble(
+        raw_source["tunnel"]["preset"], raw_source["fire"]["preset"],
+        n["preset"], raw_source["hydraulics"]["preset"],
+        n["k_factor_lpm_bar05"], n["pressure_bar"],
+        resolved.nozzles.mounting.rows, resolved.nozzles.mounting.pitch_m,
+        raw_source["zones"]["section_length_m"], raw_source["zones"]["sections_simultaneous"],
+        raw_source["ventilation"]["velocity_range_ms"][0],
+        raw_source["ventilation"]["velocity_range_ms"][1],
+        raw_source.get("ahj") or {}, raw_source)
+
+    from_file, from_form = Design.from_dict(raw_source), Design.from_dict(built)
+    mode_of = lambda d: d.nozzles.modes[0]
+    assert mode_of(from_form).smd_um == mode_of(from_file).smd_um, "drop size was dropped"
+    assert mode_of(from_form).launch_velocity_ms == mode_of(from_file).launch_velocity_ms
+    assert mode_of(from_form).cone_half_angle_deg == mode_of(from_file).cone_half_angle_deg
+    assert (from_form.nozzles.mounting.row_lateral_offsets_m
+            == from_file.nozzles.mounting.row_lateral_offsets_m), "offsets were hardcoded"
+    assert (from_form.nozzles.mounting.height_above_carriageway_m
+            == from_file.nozzles.mounting.height_above_carriageway_m)
+    assert from_form.zones.activation_delay_s == from_file.zones.activation_delay_s
+    assert from_form.zones.duration_min == from_file.zones.duration_min
+    assert from_form.detection.threshold_c == from_file.detection.threshold_c
+    assert from_form.zones.manual_activation_s == from_file.zones.manual_activation_s, \
+        "the form's manual-activation default must not override the file's timetable"
+
+
+def test_building_without_a_source_file_still_composes_from_the_presets():
+    """The from-scratch path is what a user gets with no file chosen, and it
+    must keep working."""
+    from solit2.schema.design import Design
+    raw = design_view._assemble("twin_bore_11m", "hgv_150mw", "single_mode_fine_example",
+                                "example", 4.1, 50.0, 2, 2.4, 30.0, 3, 3.88, 5.08, {}, None)
+    built = Design.from_dict(raw)
+    assert built.meta.name == "streamlit-design"
+    assert built.nozzles.mounting.rows == 2

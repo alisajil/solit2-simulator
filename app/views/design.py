@@ -9,6 +9,7 @@ shortcut, it is how this schema is meant to be driven.
 """
 from __future__ import annotations
 
+import copy
 import json
 from pathlib import Path
 
@@ -366,14 +367,81 @@ def design_identity(raw_source: dict) -> dict:
                        "whether it is still identical to the file."}
 
 
+DEFAULT_ROW_OFFSETS_M = {1: [0.0], 2: [-2.5, 2.5], 3: [-2.8, 0.0, 2.8]}
+
+
+def _deep_merge(base: dict, over: dict) -> dict:
+    """`over` laid on `base`, nested dicts merged rather than replaced."""
+    out = copy.deepcopy(base)
+    for key, value in over.items():
+        if isinstance(value, dict) and isinstance(out.get(key), dict):
+            out[key] = _deep_merge(out[key], value)
+        else:
+            out[key] = copy.deepcopy(value)
+    return out
+
+
+def _overlay(scratch: dict, raw_source: dict, k_factor: float, pressure_bar: float,
+             rows: int, pitch_m: float, section_length_m: float,
+             sections_simultaneous: int, velocity_lo: float, velocity_hi: float,
+             ahj: dict) -> dict:
+    """Three layers, in order: the form's own defaults, then the source FILE, then
+    the twelve fields the form actually edits.
+
+    The file sits in the middle rather than being composed away, so everything
+    the form cannot show -- drop size, cone angle, launch velocity, mounting
+    height, detection, activation delay, discharge duration -- survives. The
+    defaults stay underneath so a partial file still yields a complete design.
+
+    Row offsets are the one field that cannot simply be kept: a file listing two
+    offsets cannot describe three rows. They survive while the row COUNT is
+    unchanged, and fall back to the spaced default when the user changes it.
+    """
+    raw = _deep_merge(scratch, raw_source)
+    # An OVERRIDE the file did not ask for must not arrive from the defaults.
+    # `zones.manual_activation_s` pins the activation to an absolute clock time
+    # and overrides the detection timetable entirely -- the schema keeps it None
+    # for that reason, and it exists for validation anchors transcribed from
+    # tests the operator started by hand. The form's own defaults set it to 60 s,
+    # so merging naively gave a file that specifies a detection delay BOTH a
+    # detector and a manual start.
+    if "zones" in raw_source and "manual_activation_s" not in raw_source["zones"]:
+        raw["zones"].pop("manual_activation_s", None)
+    raw["meta"] = design_identity(raw_source)
+    nozzles = raw.setdefault("nozzles", {})
+    nozzles["k_factor_lpm_bar05"] = k_factor
+    nozzles["pressure_bar"] = pressure_bar
+    kept = (raw_source.get("nozzles", {}).get("mounting", {}) or {}).get("row_lateral_offsets_m")
+    mount = nozzles.setdefault("mounting", {})
+    mount["rows"] = rows
+    mount["pitch_m"] = pitch_m
+    mount["row_lateral_offsets_m"] = (list(kept) if kept and len(kept) == rows
+                                      else DEFAULT_ROW_OFFSETS_M[rows])
+    zones = raw.setdefault("zones", {})
+    zones["section_length_m"] = section_length_m
+    zones["sections_simultaneous"] = sections_simultaneous
+    raw.setdefault("ventilation", {})["velocity_range_ms"] = [velocity_lo, velocity_hi]
+    raw["ahj"] = ahj
+    return raw
+
+
 def _assemble(tunnel_preset: str, fire_preset: str, nozzle_preset: str,
              hydraulics_preset: str, k_factor: float, pressure_bar: float,
              rows: int, pitch_m: float, section_length_m: float,
              sections_simultaneous: int, velocity_lo: float, velocity_hi: float,
              ahj: dict, raw_source: dict | None = None) -> dict:
-    """Every override lands inside its own block, on top of the chosen preset."""
-    offsets = {1: [0.0], 2: [-2.5, 2.5], 3: [-2.8, 0.0, 2.8]}[rows]
-    return {
+    """Every override lands inside its own block, on top of the chosen preset.
+
+    With a source file, the FILE is the base and the form's twelve fields are
+    edits on top of it. Composing from the presets instead silently replaced
+    everything the form cannot show -- drop size, cone angle, launch velocity,
+    row offsets, detection, activation delay, discharge duration -- while the
+    caption still said every field started from that file. A design file
+    carrying a real nozzle's measured spray came back as the placeholder
+    preset's, and the user had no way to see it.
+    """
+    offsets = DEFAULT_ROW_OFFSETS_M[rows]
+    scratch = {
         "meta": design_identity(raw_source or {}),
         "tunnel": {"preset": tunnel_preset},
         "fire": {"preset": fire_preset},
@@ -399,3 +467,8 @@ def _assemble(tunnel_preset: str, fire_preset: str, nozzle_preset: str,
         "hydraulics": {"preset": hydraulics_preset},
         "ahj": ahj,
     }
+    if not raw_source:
+        return scratch
+    return _overlay(scratch, raw_source, k_factor, pressure_bar, rows, pitch_m,
+                    section_length_m, sections_simultaneous,
+                    velocity_lo, velocity_hi, ahj)
