@@ -835,3 +835,21 @@ def test_the_engine_does_not_oscillate_step_to_step():
     chi_jumps = [abs(b - a) for a, b in zip(chis, chis[1:])]
     assert max(chi_jumps) < 0.02, (
         f"cooling fraction jumps {max(chi_jumps):.3f} in one second after full pressure")
+
+
+def test_backlayer_heat_is_the_plume_heat_when_no_spray_runs():
+    assert mist.backlayer_heat_kw(10_000.0, 0.0) == 10_000.0
+
+
+def test_backlayer_heat_is_cooled_again_by_the_upstream_spray():
+    """chi = 0.5 means the spray could take ratio = 1 times the plume's heat;
+    the plume stage used 0.5 of it, and half the 0.5 left over stands upstream.
+    Against the 0.5 q the smoke still carries that is a ratio of 0.5, so the
+    closure leaves 0.5 q / 1.5 = q / 3."""
+    q = 9_000.0
+    assert mist.backlayer_heat_kw(q, 0.5) == pytest.approx(q / 3.0)
+    assert mist.backlayer_heat_kw(q, 0.5) < q * (1.0 - 0.5)
+
+
+def test_backlayer_heat_vanishes_when_the_plume_is_fully_cooled():
+    assert mist.backlayer_heat_kw(9_000.0, 1.0) == 0.0

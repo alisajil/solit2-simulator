@@ -606,6 +606,48 @@ def _cooling_fraction(design: Design, geometries: tuple[_ModeGeometry, ...], hea
     return ratio / (1.0 + ratio)
 
 
+# The share of the active zone's spray that stands upstream of the fire, over
+# the path a backlayer has to take. The engine centres the zone on the fire --
+# `sim._Scene.half_active_length_m` is used both ways -- so half of it does.
+UPSTREAM_SPRAY_SHARE = 0.5
+
+
+def backlayer_heat_kw(q_conv_kw: float, chi_cool: float) -> float:
+    """Convective heat the smoke still carries once it has pushed upstream
+    through the spray -- what drives backlayering under an operating system.
+
+    `chi_cool` cools the fire's plume. The backlayer then has to travel
+    UPSTREAM under the same zone's upstream half, and is cooled again there.
+    Treating the plume stage as the whole effect was the defect behind the
+    backlayering misses: on c5 it left 2.5 MW of buoyancy at 1.25 m/s and a
+    49 m layer, where Annex 2 section 6.2 reports "Although the fire reached ~
+    20 MW with an air velocity of only 1-1,5 m/s, no back layering was
+    observed". The published finding this follows is that the critical Froude
+    number still governs with water mist, but "only when the mist cools the
+    rising hot plume and backlayering flow can the critical velocity be
+    reduced" (Tunnelling and Underground Space Technology, 2021, "Estimation
+    of the effects of water mist system on the tunnel critical velocity due to
+    smoke cooling").
+
+    No new constant. `_cooling_fraction` returns chi = ratio / (1 + ratio), so
+    the spray's full evaporative capacity is ratio = chi / (1 - chi) times the
+    plume's heat; the plume stage used chi of it, and the upstream share of
+    what is left meets the backlayer's remaining heat through the same
+    first-order closure. OUR ENGINEERING CHOICE, stated plainly: the second
+    stage acts on the heat entering the correlation rather than on a resolved
+    temperature profile along the layer, because the Li, Lei & Ingason
+    backlayering correlation takes a heat release and gives a length, and has
+    no profile to cool.
+    """
+    q_gas = q_conv_kw * (1.0 - chi_cool)
+    if q_gas <= 0 or chi_cool <= 0:
+        return max(q_gas, 0.0)
+    ratio = chi_cool / (1.0 - chi_cool)
+    spare = ratio - chi_cool
+    upstream_ratio = UPSTREAM_SPRAY_SHARE * spare * q_conv_kw / q_gas
+    return q_gas / (1.0 + upstream_ratio)
+
+
 def _curtain_transmissivity(design: Design, geom: SectionGeometry,
                             geometries: tuple[_ModeGeometry, ...], head_count: int,
                             flow_fraction: float, u_eff_ms: float) -> float:

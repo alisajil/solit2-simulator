@@ -359,7 +359,10 @@ def run_once(design: Design, section: str, velocity_ms: float) -> RunTrace:
         # `mist` here is the previous step's, the same one-step lag
         # `fire_mod.step` above already runs on.
         q_conv_gas = q_conv * (1.0 - mist.chi_cool)
-        vent = ventilation.evaluate(scene.geom, velocity_ms, q_conv_gas)
+        # The smoke that turns upstream is cooled a second time by the spray it
+        # has to pass under; see `mist.backlayer_heat_kw`.
+        vent = ventilation.evaluate(scene.geom, velocity_ms, q_conv_gas,
+                                    mist_mod.backlayer_heat_kw(q_conv, mist.chi_cool))
         _detect(scene, events, state.hrr_mw, state.t_s)
         flow_fraction = _flow_fraction(scene.design.zones, events, state.t_s)
 

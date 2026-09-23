@@ -75,3 +75,22 @@ def test_throttled_velocity_rejects_a_reversed_fan_velocity():
     # velocity would be a silent wrong answer, so it must refuse instead.
     with pytest.raises(ValueError, match="-2.0"):
         vent.throttled_velocity_ms(-2.0, CONV_150MW_KW, BORE.free_area_m2)
+
+
+def test_the_backlayer_heat_sets_the_backlayer_and_the_plume_heat_throttles_the_fans():
+    """Under a spray the smoke that turns upstream carries less heat than the
+    plume (mist.backlayer_heat_kw). Only the backlayer and the critical velocity
+    read it; the fans are still throttled by the plume."""
+    plume, backlayer = 20_000.0, 2_000.0
+    both = vent.evaluate(SPDA, 1.5, plume, backlayer)
+    plume_only = vent.evaluate(SPDA, 1.5, plume)
+    assert both.u_eff_ms == plume_only.u_eff_ms
+    assert both.u_critical_ms == pytest.approx(vent.critical_velocity_ms(backlayer, SPDA.crown_height_m))
+    assert both.backlayer_m == pytest.approx(
+        vent.backlayering_length_m(backlayer, SPDA.crown_height_m, both.u_eff_ms))
+    assert both.backlayer_m < plume_only.backlayer_m
+
+
+def test_a_negative_backlayer_heat_is_refused():
+    with pytest.raises(ValueError, match="backlayer heat"):
+        vent.evaluate(SPDA, 1.5, 20_000.0, -1.0)
