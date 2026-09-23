@@ -605,6 +605,62 @@ def test_resume_refuses_when_the_mesh_moved_under_the_checkpoints(monkeypatch):
     assert "RESTART=.TRUE." not in (d / "deck.fds").read_text(), "deck was rewritten anyway"
 
 
+def test_run_or_resume_skips_a_done_run(monkeypatch, tmp_path):
+    from solit2.schema.design import Design
+    monkeypatch.setattr(runner, "status", lambda d: {"state": "done"})
+    calls = []
+    monkeypatch.setattr(runner, "run", lambda deck, out: calls.append("run"))
+    monkeypatch.setattr(runner, "resume", lambda d, design, t_end_s=None: calls.append("resume"))
+    result = runner.run_or_resume(tmp_path / "deck.fds", tmp_path,
+                                  Design.load("designs/og-dbr-rev0.json"))
+    assert result == "done"
+    assert calls == []
+
+
+def test_run_or_resume_resumes_a_run_with_restart_files(monkeypatch, tmp_path):
+    from solit2.schema.design import Design
+    monkeypatch.setattr(runner, "status", lambda d: {"state": "stopped"})
+    (tmp_path / "x.restart").write_text("")
+    calls = []
+    monkeypatch.setattr(runner, "run", lambda deck, out: calls.append("run"))
+    monkeypatch.setattr(runner, "resume",
+                        lambda d, design, t_end_s=None: calls.append("resume") or "launched")
+    result = runner.run_or_resume(tmp_path / "deck.fds", tmp_path,
+                                  Design.load("designs/og-dbr-rev0.json"), t_end_s=300.0)
+    assert result == "launched"
+    assert calls == ["resume"]
+
+
+def test_run_or_resume_launches_fresh_with_no_restart_files(monkeypatch, tmp_path):
+    from solit2.schema.design import Design
+    monkeypatch.setattr(runner, "status", lambda d: {"state": "failed", "detail": "no log"})
+    calls = []
+    monkeypatch.setattr(runner, "run", lambda deck, out: calls.append("run") or "launched")
+    monkeypatch.setattr(runner, "resume", lambda d, design, t_end_s=None: calls.append("resume"))
+    result = runner.run_or_resume(tmp_path / "deck.fds", tmp_path,
+                                  Design.load("designs/og-dbr-rev0.json"))
+    assert result == "launched"
+    assert calls == ["run"]
+
+
+def test_resume_continues_at_the_e_the_run_was_launched_with(monkeypatch):
+    """A calibration run launched at E=0.25 must resume at E=0.25, not drift to
+    whatever the module's default happens to be -- that would be silently
+    continuing the checkpointed run under different suppression physics."""
+    from solit2.engines.fds import deck as deck_mod
+    from solit2.schema.design import Design
+    import tempfile
+    from pathlib import Path
+    design = Design.load("designs/og-dbr-rev0.json")
+    d = Path(tempfile.mkdtemp())
+    (d / "deck.fds").write_text(deck_mod.generate(design, e_coefficient=0.25))
+    runner.pause(d)
+    (d / "x.restart").write_text("")
+    monkeypatch.setattr(runner, "run", lambda deck, out: "launched")
+    assert runner.resume(d, design) == "launched"
+    assert deck_mod.stored_e_coefficient(d) == pytest.approx(0.25)
+
+
 def test_resume_refuses_when_the_checkpoints_have_no_deck_to_check_against(monkeypatch):
     """Checkpoints with no deck beside them cannot be shown to match the mesh
     this design generates now, and resuming on that basis is a guess."""

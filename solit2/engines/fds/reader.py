@@ -32,6 +32,17 @@ ENGINE = "fds"
 ENGINE_VERSION_UNKNOWN = "fds-unknown"
 DETECT_CTRL = "DETECT"
 ACT_CTRL = "ACT"
+# How far the HRR must have fallen from its own maximum, within the simulated
+# window, before that maximum is reported as the fire's PEAK rather than as a
+# lower bound on it. A 10% fall sits outside LES's own turbulent HRR noise
+# (a few percent, run to run, at fixed conditions -- see the deck's own
+# convergence study on droplet sampling for the scale of that noise), so a
+# drop this size means the fire has actually turned over, not that the run
+# merely stopped sampling a still-rising or still-plateaued curve. A run whose
+# HRR sits at its maximum when it stops has measured a lower bound on the
+# peak, not the peak itself -- and everything computed FROM that peak (ceiling
+# and lining temperature, target flux and exposure) inherits the same bound.
+PEAK_PASSED_DROP_FRACTION = 0.10
 
 
 def _read_csv(path: Path) -> tuple[list[str], list[list[float]]]:
@@ -241,9 +252,27 @@ def _trace(design: Design, steps: list[StepRecord], ctrl: dict[str, float | None
                     section=design.tunnel.section, velocity_ms=velocity)
 
 
+def hrr_peak_passed(hrr_mw: list[float]) -> bool:
+    """Whether the run's simulated window actually passed the HRR's peak.
+
+    Passed iff the time of the maximum is before the last sample AND the HRR
+    at the last sample has fallen to at most
+    `(1 - PEAK_PASSED_DROP_FRACTION)` of that maximum -- see the constant's own
+    comment for why 10%. A curve that never rises above zero (no fire, or read
+    before ignition) has no peak to have passed, so that is False too rather
+    than a vacuous True from `0 <= 0`.
+    """
+    peak_i = max(range(len(hrr_mw)), key=lambda i: hrr_mw[i])
+    peak_mw = hrr_mw[peak_i]
+    if peak_mw <= 0.0 or peak_i >= len(hrr_mw) - 1:
+        return False
+    return hrr_mw[-1] <= peak_mw * (1.0 - PEAK_PASSED_DROP_FRACTION)
+
+
 def _peaks_of(steps: list[StepRecord], modelled: list[str],
-              peak_lining_c: float) -> dict[str, float]:
-    peaks = {"hrr_mw": max(s.hrr_mw for s in steps),
+              peak_lining_c: float, peak_passed: bool) -> dict[str, float | bool]:
+    peaks: dict[str, float | bool] = {
+             "hrr_mw": max(s.hrr_mw for s in steps),
              "hrr_free_burn_mw": max(s.hrr_free_mw for s in steps),
              "ceiling_temp_c": max(s.ceiling_temp_c for s in steps),
              "lining_temp_c": peak_lining_c,
@@ -251,7 +280,11 @@ def _peaks_of(steps: list[StepRecord], modelled: list[str],
              "target_peak_flux_kwm2": max(s.target_flux_kwm2 for s in steps),
              "target_max_exposure_s": max(s.target_exposure_s for s in steps),
              "structure_exposure_length_m": max(s.structure_exposure_length_m
-                                                for s in steps)}
+                                                for s in steps),
+             # Whether the window above actually passed the HRR's turnover --
+             # see `hrr_peak_passed`. When False every peak here is a lower
+             # bound, not the run's true peak, and `_warnings` says so.
+             "hrr_peak_passed": peak_passed}
     # smoke_layer_temp_d15_c and smoke_layer_temp_d100_c: only if the station
     # is in the modelled set (within the window); else omit to avoid KeyError
     for station, key in (("D15", "smoke_layer_temp_d15_c"),
@@ -281,7 +314,8 @@ def _rake_note(design: Design, geom: SectionGeometry) -> str:
 def _warnings(design: Design, geom: SectionGeometry, velocity_ms: float, engine_version: str,
               skipped: list[str], free_burn: bool, deck_current: bool | None,
               hottest: tuple[str, float], above_fire_c: float,
-              events: dict[str, float | None], last_t_s: float) -> list[str]:
+              events: dict[str, float | None], last_t_s: float,
+              peak_passed: bool, e_coefficient: float) -> list[str]:
     """Everything a reader must know that the numbers do not say themselves.
 
     A Tier 2 result is interchangeable with a Tier 1 one downstream, so every
@@ -315,7 +349,7 @@ def _warnings(design: Design, geom: SectionGeometry, velocity_ms: float, engine_
         f"the target flux gauge sits on the solid target's face at x = {target.x0:.1f} m; "
         f"Tier 1 evaluates its flux at x = {design.fire.target_x_m:.1f} m",
         f"suppression of the prescribed burner is FDS's E_COEFFICIENT = "
-        f"{deck_mod.E_COEFFICIENT}, an empirical extinguishing coefficient not fitted to "
+        f"{e_coefficient}, an empirical extinguishing coefficient not fitted to "
         f"this nozzle or this fuel; the suppressed HRR scales directly with it",
         "fire growth is the design's free-burn curve distributed over burner segments "
         "lit in turn from the upstream end, so the total follows the curve exactly and "
@@ -337,6 +371,14 @@ def _warnings(design: Design, geom: SectionGeometry, velocity_ms: float, engine_
         f"{velocity_ms:.2f} m/s, not Tier 1's section x velocity envelope; "
         f"criteria_cases is empty for the same reason",
     ]
+    if not peak_passed:
+        warnings.append(
+            f"the HRR never fell back by {PEAK_PASSED_DROP_FRACTION * 100:.0f}% from its "
+            f"maximum within the simulated window: the peak HRR reported here, and every "
+            f"peak derived from it (ceiling and lining temperature, target flux and "
+            f"exposure, structure exposure length), is a LOWER BOUND on the run's true "
+            f"peak, not the peak itself. Extend the simulated window until the HRR has "
+            f"turned over.")
     activate, full = events["t_activate_s"], events["t_full_pressure_s"]
     if activate is not None and last_t_s < (full or activate):
         # Measured on a 250 s pair: the mist had 22 s at up to 72 % of flow, and
@@ -416,6 +458,10 @@ def read(run_dir: Path, design: Design, *, free_burn_dir: Path | None = None) ->
     cost = cost_index(design, hyd)
     criteria = evaluate(trace, hyd, cost, design)
     peak_lining = max(s.lining_temp_c for s in trace.steps)
+    peak_passed = hrr_peak_passed([s.hrr_mw for s in trace.steps])
+    e_used = deck_mod.stored_e_coefficient(run_dir)
+    if e_used is None:
+        e_used = deck_mod.E_COEFFICIENT
     scored = compute_score(criteria, hyd, cost, trace, peak_lining,
                            design.constraints.max_application_density_mm_min)
 
@@ -432,7 +478,7 @@ def read(run_dir: Path, design: Design, *, free_burn_dir: Path | None = None) ->
         criteria=criteria,
         criteria_cases={},
         constraints=evaluate_constraints(hyd, design),
-        peaks=_peaks_of(steps, modelled, peak_lining),
+        peaks=_peaks_of(steps, modelled, peak_lining, peak_passed),
         mist={},
         hydraulics=hyd.__dict__,
         cost=cost.__dict__,
@@ -449,5 +495,6 @@ def read(run_dir: Path, design: Design, *, free_burn_dir: Path | None = None) ->
                            hottest_ceiling(devc_ids, devc_rows),
                            max(_at(devc_ids, row, deck_mod.fire_ceiling_device_id())
                                for row in devc_rows),
-                           trace.events, steps[-1].t_s),
+                           trace.events, steps[-1].t_s,
+                           peak_passed, e_used),
     )

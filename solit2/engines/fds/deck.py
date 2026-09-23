@@ -18,6 +18,7 @@ geometry FDS actually ran.
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from functools import lru_cache
@@ -596,12 +597,13 @@ def segment_ramps(curve: list[tuple[float, float]], n_segments: int) -> list[lis
     return ramps
 
 
-def _fire(design: Design, geom: SectionGeometry, dx_m: float, horizon_s: float) -> list[str]:
+def _fire(design: Design, geom: SectionGeometry, dx_m: float, horizon_s: float,
+          e_coefficient: float) -> list[str]:
     """The unsuppressed fire as a sequence of burner segments; suppression is FDS's job.
 
     Tier 1 bakes suppression into its HRR curve because it has no droplets.
     Here the deck declares the FREE-BURN curve segment by segment and lets
-    `E_COEFFICIENT` fall out of the water that actually lands on each.
+    `e_coefficient` fall out of the water that actually lands on each.
     """
     f = design.fire
     box = fuel_box(design, geom, dx_m)
@@ -621,7 +623,7 @@ def _fire(design: Design, geom: SectionGeometry, dx_m: float, horizon_s: float) 
     for k in range(n):
         lines += [
             f"&SURF ID='FIRE{k}', HRRPUA={hrrpua:.1f}, RAMP_Q='FIRE_RAMP{k}', "
-            f"E_COEFFICIENT={E_COEFFICIENT}, COLOR='RED' /",
+            f"E_COEFFICIENT={e_coefficient}, COLOR='RED' /",
             f"&OBST XB={box.x0 + k * seg_len:.2f},{box.x0 + (k + 1) * seg_len:.2f},"
             f"{box.y0:.2f},{box.y1:.2f},{box.z0:.2f},{box.z1:.2f}, "
             f"SURF_IDS='FIRE{k}','INERT','INERT' /",
@@ -997,6 +999,26 @@ def _without_run_window(text: str) -> str:
     return "\n".join(ln for ln in text.splitlines() if not ln.startswith("&TIME "))
 
 
+_E_COEFFICIENT_RE = re.compile(r"E_COEFFICIENT=([-+]?[0-9]*\.?[0-9]+(?:[eE][-+]?[0-9]+)?)")
+
+
+def stored_e_coefficient(run_dir: Path) -> float | None:
+    """The E_COEFFICIENT this run's own deck.fds actually carries, or None when
+    there is no deck.fds to read it from (or it names none at all).
+
+    A result must never describe what a run used by naming this module's
+    CURRENT default instead: a run made with E=0.25 must not be reported as
+    E=0.4 just because that happens to be what this build of the deck emits
+    today. Every `&SURF ID='FIRE...'` line in a deck this module wrote carries
+    the same value, so the first match is the run's own E.
+    """
+    deck_path = Path(run_dir) / "deck.fds"
+    if not deck_path.exists():
+        return None
+    match = _E_COEFFICIENT_RE.search(deck_path.read_text())
+    return float(match.group(1)) if match else None
+
+
 def matches_design(run_dir: Path, design: Design) -> bool | None:
     """Whether a run's own deck is still the deck this design generates.
 
@@ -1005,6 +1027,14 @@ def matches_design(run_dir: Path, design: Design) -> bool | None:
     reads as current while describing a different experiment -- which is how a
     result gets attributed to geometry it never simulated. `T_END` is excluded
     because a deliberately shortened window is not a different deck.
+
+    Compared against THIS MODULE'S CURRENT default `e_coefficient`, exactly
+    like every other generator default (`dx_m`, for one) that this function
+    does not accept as an argument: a design carries no E of its own, so "the
+    deck this design generates now" means the deck at today's default E. A run
+    deliberately made at a different E -- an `fds-calibrate-e` sweep point --
+    is therefore correctly reported as not matching: it IS a different deck,
+    for a different run, exactly as it should be.
     """
     deck_path = Path(run_dir) / "deck.fds"
     if not deck_path.exists():
@@ -1023,7 +1053,7 @@ def matches_design(run_dir: Path, design: Design) -> bool | None:
 
 def generate(design: Design, dx_m: float = DX_M,
              t_end_s: float | None = None, *, suppression: bool = True,
-             restart: bool = False) -> str:
+             restart: bool = False, e_coefficient: float = E_COEFFICIENT) -> str:
     """The deck. `suppression=False` is the SAME fire in the SAME tunnel with no
     mist system at all -- the free-burn reference the mist run is judged against.
 
@@ -1031,12 +1061,18 @@ def generate(design: Design, dx_m: float = DX_M,
     left behind, instead of starting over. Everything else must match what that
     run was given, which is why it is a flag on the same generator rather than
     a separate one.
+
+    `e_coefficient` overrides the module default for a calibration sweep
+    (`solit2 fds-calibrate-e`); the deck text carries whatever value is passed,
+    so a run's own deck.fds is always the record of the E it actually used --
+    see `stored_e_coefficient`.
     """
     geom = section_geometry(design)
     duration_s = design.zones.duration_min * 60.0
     horizon_s = max(duration_s, t_end_s or 0.0)
     blocks = (_head(design, suppression) + _time(design, t_end_s, restart) + _meshes(geom, dx_m)
-              + _tunnel(geom, dx_m) + _portals(design) + _fire(design, geom, dx_m, horizon_s)
+              + _tunnel(geom, dx_m) + _portals(design)
+              + _fire(design, geom, dx_m, horizon_s, e_coefficient)
               + _target(design, geom, dx_m)
               + (_nozzles(design, geom) if suppression else [])
               + _detection(design, geom, dx_m)

@@ -86,7 +86,10 @@ class Result(BaseModel):
     # a reader must be able to tell which verdict is which. Nothing here can
     # appear in `score.gates_failed`.
     constraints: dict[str, Criterion] = Field(default_factory=dict)
-    peaks: dict[str, float]
+    # Almost every peak is a float; `hrr_peak_passed` (FDS reader only) is a
+    # bool saying whether the window actually passed the HRR's turnover -- see
+    # `solit2.engines.fds.reader.hrr_peak_passed`.
+    peaks: dict[str, float | bool]
     mist: dict[str, Any]
     hydraulics: dict[str, Any]
     cost: dict[str, Any]

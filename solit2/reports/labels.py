@@ -38,6 +38,7 @@ LABELS: dict[str, tuple[str, str, int]] = {
     "smoke_layer_temp_d100_c": ("Smoke layer temperature at D100", "°C", 1),
     "target_peak_flux_kwm2": ("Peak flux at the target", "kW/m²", 2),
     "target_max_exposure_s": ("Target exposure above limit", "s", 0),
+    "hrr_peak_passed": ("HRR peak passed within the window", "", 0),
     "t_s": ("Test clock", "s", 0),
     "u45_temp_c": ("Temperature at U45", "°C", 1),
     "u15_temp_c": ("Temperature at U15", "°C", 1),

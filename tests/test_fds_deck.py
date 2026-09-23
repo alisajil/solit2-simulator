@@ -641,6 +641,39 @@ def test_the_free_burn_deck_is_the_same_fire_with_no_mist_system():
     assert "&CTRL ID='DETECT'" in free, "detection is still timed in the free burn"
 
 
+def test_e_coefficient_threads_through_to_every_fire_surf_line():
+    design = Design.load(BASELINE)
+    text = deck.generate(design, e_coefficient=0.25)
+    surfs = [ln for ln in text.splitlines() if ln.startswith("&SURF ID='FIRE")]
+    assert surfs
+    assert all("E_COEFFICIENT=0.25" in ln for ln in surfs)
+    assert "E_COEFFICIENT=0.4" not in text
+
+
+def test_e_coefficient_defaults_to_the_module_constant():
+    design = Design.load(BASELINE)
+    assert deck.generate(design) == deck.generate(design, e_coefficient=deck.E_COEFFICIENT)
+
+
+def test_stored_e_coefficient_is_none_with_no_deck(tmp_path):
+    assert deck.stored_e_coefficient(tmp_path) is None
+
+
+def test_stored_e_coefficient_reads_back_what_the_deck_was_written_with(tmp_path):
+    design = Design.load(BASELINE)
+    (tmp_path / "deck.fds").write_text(deck.generate(design, e_coefficient=0.25))
+    assert deck.stored_e_coefficient(tmp_path) == pytest.approx(0.25)
+
+
+def test_matches_design_treats_a_non_default_e_as_a_different_deck(tmp_path):
+    # a design carries no E of its own, so "the deck this design generates
+    # now" means the deck at today's module default -- a calibration sweep
+    # point at a different E is correctly a different deck, a different run
+    design = Design.load(BASELINE)
+    (tmp_path / "deck.fds").write_text(deck.generate(design, e_coefficient=0.25))
+    assert deck.matches_design(tmp_path, design) is False
+
+
 def test_a_run_knows_whether_its_deck_is_still_the_one_this_design_generates(tmp_path):
     """The run directory is named after the DESIGN, so a run made before this
     module changed keeps its name while describing a different experiment. That

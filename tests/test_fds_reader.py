@@ -347,6 +347,91 @@ def test_a_run_that_stops_before_full_pressure_says_its_suppression_means_nothin
     assert "must not be read as the suppression this system achieves" in named[0]
 
 
+def _extend_run(run_dir, hrr_kw_extra: list[float]):
+    """Append more samples to the fixture's devc/hrr CSVs, one per value in
+    `hrr_kw_extra`, each a whole second after the last. The devc rows repeat
+    the last real row's values -- only the clock and the HRR move -- because
+    these tests are about the HRR peak-passed rule, not about what every
+    other device reads."""
+    from solit2.engines.reduced.envelope import _design_sha
+    chid = _design_sha(Design.load(BASELINE))
+    hrr_path = run_dir / f"{chid}_hrr.csv"
+    hrr_lines = hrr_path.read_text().splitlines()
+    last_t = float(hrr_lines[-1].split(",")[0])
+    n_extra_cols = len(hrr_lines[-1].split(",")) - 2
+    new_hrr_rows = [f"{last_t + i + 1:.1f},{kw * 1000.0:.1f}," + ",".join(["0.0"] * n_extra_cols)
+                    for i, kw in enumerate(hrr_kw_extra)]
+    hrr_path.write_text("\n".join(hrr_lines + new_hrr_rows) + "\n")
+
+    devc_path = run_dir / f"{chid}_devc.csv"
+    devc_lines = devc_path.read_text().splitlines()
+    last_row = devc_lines[-1].split(",")
+    new_devc_rows = [",".join([f"{last_t + i + 1:.1f}"] + last_row[1:])
+                     for i in range(len(hrr_kw_extra))]
+    devc_path.write_text("\n".join(devc_lines + new_devc_rows) + "\n")
+
+
+def test_hrr_peak_passed_true_after_a_ten_percent_fall():
+    assert reader.hrr_peak_passed([0.0, 10.0, 20.0, 20.0, 18.0]) is True
+
+
+def test_hrr_peak_passed_true_at_exactly_the_ten_percent_threshold():
+    assert reader.hrr_peak_passed([0.0, 20.0, 18.0]) is True
+
+
+def test_hrr_peak_passed_false_when_still_at_its_max_at_the_end():
+    assert reader.hrr_peak_passed([0.0, 10.0, 20.0]) is False
+
+
+def test_hrr_peak_passed_false_under_a_ten_percent_fall():
+    # 20 -> 18.5 is a 7.5% fall, short of PEAK_PASSED_DROP_FRACTION
+    assert reader.hrr_peak_passed([0.0, 10.0, 20.0, 18.5]) is False
+
+
+def test_hrr_peak_passed_false_for_a_curve_that_never_rises():
+    # 0 <= 0 * 0.9 would be trivially true; a fire that never got going has no
+    # peak to have passed
+    assert reader.hrr_peak_passed([0.0, 0.0, 0.0]) is False
+
+
+def test_the_result_reports_the_peak_passed_when_the_run_reaches_it(run_dir):
+    _extend_run(run_dir, [20.0, 18.0])  # rises from the fixture's own 22 MW... falls back
+    result = reader.read(run_dir, Design.load(BASELINE))
+    assert result.peaks["hrr_mw"] == pytest.approx(22.0)
+    assert result.peaks["hrr_peak_passed"] is True
+    assert not any("never fell back" in w for w in result.warnings)
+
+
+def test_the_result_warns_when_the_window_stops_before_the_peak(run_dir):
+    # the raw 3-sample fixture ends AT its own maximum, 22 MW at the last sample
+    result = reader.read(run_dir, Design.load(BASELINE))
+    assert result.peaks["hrr_peak_passed"] is False
+    named = [w for w in result.warnings if "never fell back" in w]
+    assert named
+    assert "LOWER BOUND" in named[0] and "10%" in named[0]
+
+
+def test_the_e_coefficient_warning_names_the_runs_own_deck_not_the_module_default(run_dir):
+    from solit2.engines.fds import deck as deck_mod
+    design = Design.load(BASELINE)
+    (run_dir / "deck.fds").write_text(
+        deck_mod.generate(design, e_coefficient=0.25))
+    result = reader.read(run_dir, design)
+    named = [w for w in result.warnings if "E_COEFFICIENT" in w]
+    assert named
+    assert "0.25" in named[0] and "0.4" not in named[0]
+
+
+def test_the_e_coefficient_warning_falls_back_to_the_module_default_with_no_deck(run_dir):
+    # no deck.fds in this run_dir: nothing on disk to read the actual E from,
+    # so the module's own default is the best available answer
+    from solit2.engines.fds import deck as deck_mod
+    result = reader.read(run_dir, Design.load(BASELINE))
+    named = [w for w in result.warnings if "E_COEFFICIENT" in w]
+    assert named
+    assert f"{deck_mod.E_COEFFICIENT}" in named[0]
+
+
 def test_a_run_that_passes_full_pressure_carries_no_such_caveat(run_dir):
     import shutil
 

@@ -292,6 +292,13 @@ def resume(run_dir: Path, design, t_end_s: float | None = None) -> str:
     deck is checked against the one the checkpoints were written on and a
     changed mesh is refused rather than restarted into -- see
     `_refuse_on_mesh_change`.
+
+    `e_coefficient` is read back from the run's OWN deck.fds, never taken from
+    the module's current default: a calibration run launched at E=0.25 must
+    resume at E=0.25, not silently drift to whatever `deck.E_COEFFICIENT`
+    happens to be today. That is a different E, hence a different deck, and
+    resuming under it would be exactly the silent physics change the mesh
+    check next to this one already exists to catch.
     """
     from solit2.engines.fds import deck as deck_mod
 
@@ -308,8 +315,13 @@ def resume(run_dir: Path, design, t_end_s: float | None = None) -> str:
             f"{run_dir} holds checkpoints but no deck.fds, so the mesh they were "
             f"written on cannot be checked against the one this design generates "
             f"now. Resuming would be a guess; start the run again")
-    regenerated = deck_mod.generate(design, t_end_s=t_end_s, restart=True)
-    _refuse_on_mesh_change(existing.read_text(), regenerated, run_dir)
+    existing_text = existing.read_text()
+    e_coefficient = deck_mod.stored_e_coefficient(run_dir)
+    if e_coefficient is None:
+        e_coefficient = deck_mod.E_COEFFICIENT
+    regenerated = deck_mod.generate(design, t_end_s=t_end_s, restart=True,
+                                    e_coefficient=e_coefficient)
+    _refuse_on_mesh_change(existing_text, regenerated, run_dir)
     # Nothing above this line has changed anything on disk: a refused resume
     # leaves the run exactly as it found it, still stopped and still resumable
     # by whoever fixes the mismatch.
@@ -321,6 +333,25 @@ def resume(run_dir: Path, design, t_end_s: float | None = None) -> str:
         stopped.unlink()
     existing.write_text(regenerated)
     return run(existing, run_dir)
+
+
+def run_or_resume(deck_path: Path, run_dir: Path, design, t_end_s: float | None = None) -> str:
+    """Skip a `done` run, resume one with restart files, or launch fresh --
+    the one entry point every resumable Tier 2 driver (the E-coefficient
+    sweep, the grid-convergence study, the campaign script) launches a run
+    through, so "don't waste hours-long compute a previous pass already
+    paid for" is implemented once rather than three times.
+
+    Assumes it is not called again for a run already `running` under THIS
+    process's own wait loop -- callers poll `status()` themselves after
+    calling this once per run directory; calling it concurrently from two
+    separate campaigns pointed at the same `run_dir` is not guarded against.
+    """
+    if status(run_dir)["state"] == "done":
+        return "done"
+    if has_restart_files(run_dir):
+        return resume(run_dir, design, t_end_s=t_end_s)
+    return run(deck_path, run_dir)
 
 
 def log_path(run_dir: Path) -> Path | None:
