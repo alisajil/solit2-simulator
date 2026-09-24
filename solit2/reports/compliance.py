@@ -16,11 +16,12 @@ def _cell(text: str) -> str:
 def _row(f: Finding) -> str:
     note = f.deviation or f.evidence
     return (f"| {f.rule_id} | {_cell(f.clause)} | {_cell(f.requirement)} | {_cell(f.found)} | "
-            f"{_cell(f.required)} | {MARK[f.verdict]} | {_cell(f.basis)} | {_cell(note)} |")
+            f"{_cell(f.required)} | {MARK[f.verdict]} | {_cell(f.basis)} | {f.basis_kind} | "
+            f"{_cell(note)} |")
 
 
 HEADER = ("| rule | clause | requirement (paraphrased) | found | required | verdict | basis | "
-          "evidence / deviation |\n|---|---|---|---|---|---|---|---|")
+          "basis kind | evidence / deviation |\n|---|---|---|---|---|---|---|---|---|")
 
 
 def by_group(findings: list[Finding]) -> list[tuple[str, list[Finding]]]:
