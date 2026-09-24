@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from solit2.schema.design import Design
 from solit2.engines.reduced.geometry import SectionGeometry, section_geometry, nozzle_positions
@@ -148,9 +150,10 @@ def test_every_shipped_design_seats_its_fuel_load_inside_the_carriageway():
     paths = sorted(Path("examples/designs").glob("*.json")) + sorted(Path("designs").glob("*.json"))
     assert len(paths) > 3
     for path in paths:
-        try:
-            design = Design.load(path)
-        except ValueError:
-            # Skip files that are not Design objects (e.g., rules, specs)
+        raw = json.loads(path.read_text())
+        # Compliance specs and project rule files live beside the designs but are
+        # not designs; skip them by their own markers, never by catching an error.
+        if "spec_version" in raw or {"rules", "source_document"} <= raw.keys():
             continue
+        design = Design.load(path)
         fire_lateral_m(design, section_geometry(design))
