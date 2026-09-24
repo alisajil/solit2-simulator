@@ -1,0 +1,50 @@
+# Template for the CFD run queue as a systemd unit, so a queue started over
+# SSH keeps going after the SSH session -- or the whole machine -- drops.
+# See docs/cloud-compute.md for the full server walkthrough this fits into.
+#
+# Install:
+#   cp deploy/systemd/solit2-cfd.service /etc/systemd/system/
+#   systemctl daemon-reload
+#
+# Adjust WorkingDirectory below if the repo does not live at
+# /opt/solit2-simulator on your server, and PATH if FDS or uv were installed
+# somewhere other than /opt/fds and the default `uv` install location.
+#
+# The queue file this reads (one run directory per line, paths absolute or
+# relative to WorkingDirectory) is deliberately NOT part of this repo -- it
+# names run-specific paths on one server, not something to version. Create
+# it before the first start:
+#
+#   mkdir -p /var/lib/solit2-cfd
+#   printf '%s\n' runs/<study>/dx_1.20 runs/<study>/dx_0.75 runs/<study>/dx_0.60 \
+#     > /var/lib/solit2-cfd/queue.txt
+#
+# Then:
+#   systemctl enable --now solit2-cfd.service
+#
+# `Type=oneshot` with `Restart=on-failure`: the unit runs the queue to
+# completion and exits; if it exits non-zero (a run failed, or the machine
+# rebooted mid-run and systemd brought this unit back up before the run
+# finished) systemd starts it again after RestartSec. `scripts/cfd_queue.sh`
+# is what makes that safe -- it skips whatever `solit2 fds-status` already
+# reads as `done` and resumes the rest from their own restart files, so
+# re-running the same queue file is never wasted work.
+[Unit]
+Description=SOLIT2 FDS CFD run queue
+After=network.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/solit2-simulator
+Environment=TZ=Asia/Kolkata
+Environment=SOLIT2_CFD_PARALLEL=3
+# FDS's own env script (sourced interactively in docs/cloud-compute.md) is
+# not read by systemd -- PATH has to name the installed binaries directly.
+# Adjust if the FDS installer put FDS6/bin somewhere other than /opt/fds.
+Environment=PATH=/opt/fds/FDS6/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/bin/xargs -a /var/lib/solit2-cfd/queue.txt /opt/solit2-simulator/scripts/cfd_queue.sh
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target
