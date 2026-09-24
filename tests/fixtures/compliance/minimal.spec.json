@@ -1,0 +1,10 @@
+{
+  "spec_version": 1,
+  "name": "fixture",
+  "test_designs": {"A": "../../../examples/designs/solit2-test-protocol.json"},
+  "installation_design": "../../../examples/designs/road-tunnel-twin-bore.json",
+  "facts": {
+    "pallet_moisture_pct": {"value": 14.0,
+                            "evidence": {"document": "fixture certificate", "locator": "p. 1"}}
+  }
+}
