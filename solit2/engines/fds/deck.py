@@ -1019,6 +1019,43 @@ def stored_e_coefficient(run_dir: Path) -> float | None:
     return float(match.group(1)) if match else None
 
 
+# The first &MESH line's own IJK/XB: y spans j cells of one dx each, on every
+# mesh in a deck this module writes (only x is split fine/coarse -- see
+# _meshes), so the first mesh's y extent divided by its y cell count is the
+# whole deck's dx, regardless of which x-region that first mesh happens to be.
+_MESH_RE = re.compile(r"&MESH IJK=\d+,(\d+),\d+, XB=[^,]+,[^,]+,([^,]+),([^,]+),")
+
+
+def stored_dx_m(run_dir: Path) -> float | None:
+    """The cell size this run's own deck.fds actually carries, or None when
+    there is no deck.fds to read it from (or it names no &MESH line at all).
+
+    Exactly the same reasoning as `stored_e_coefficient`: a resume must rebuild
+    the deck at the dx it was ORIGINALLY run at, never at this module's
+    current default -- a grid-study point checkpointed at dx=0.75 resumed at
+    the default 0.6 is a different mesh, and `_refuse_on_mesh_change` in
+    runner.py would (correctly) refuse it as one, even though the run dir's
+    OWN dx never changed.
+
+    Rounded to 2 decimal places: `_meshes` writes the y/z extent at 2dp
+    (`XB={-half_width:.2f},{half_width:.2f}`), and `half_width = j * dx_m /
+    2.0` is not always exactly representable at that precision (dx=0.75,
+    j=15 writes half_width as 5.62, not 5.625) -- dividing back out without
+    rounding recovers 0.74933... instead of 0.75, and `generate()` then
+    refuses to tile the window at that dx at all. Every dx this module
+    documents as valid (0.25, 0.5, 0.6, 0.75, 1.0, 1.2) has at most 2
+    decimals, so rounding to 2dp always recovers the intended value.
+    """
+    deck_path = Path(run_dir) / "deck.fds"
+    if not deck_path.exists():
+        return None
+    match = _MESH_RE.search(deck_path.read_text())
+    if not match:
+        return None
+    j, y0, y1 = int(match.group(1)), float(match.group(2)), float(match.group(3))
+    return round((y1 - y0) / j, 2) if j else None
+
+
 def matches_design(run_dir: Path, design: Design) -> bool | None:
     """Whether a run's own deck is still the deck this design generates.
 

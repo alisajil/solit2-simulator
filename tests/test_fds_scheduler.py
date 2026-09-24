@@ -353,6 +353,36 @@ def test_step_refuses_to_resume_without_design_json_and_records_a_failure(tmp_pa
     assert "design.json" in log_text
 
 
+def test_step_resumes_through_the_real_prepare_resume_keeping_dx_and_window(tmp_path, monkeypatch):
+    """The companion above mocks `prepare_resume` to check step()'s own
+    wiring; this one lets it run for real (only `runner.run`, the actual FDS
+    launch, is stubbed), so the scheduler's resume path is exercised against
+    the same generator the live probes found broken -- a grid-study point at
+    a non-default dx and a shortened T_END, exactly as C3 reported."""
+    from solit2.engines.fds import deck as deck_mod
+    from solit2.schema.design import Design
+
+    design = Design.load("designs/og-dbr-rev0.json")
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "deck.fds").write_text(deck_mod.generate(design, dx_m=0.75, t_end_s=600.0))
+    (run_dir / scheduler.DESIGN_NAME).write_text(design.model_dump_json(by_alias=True))
+    (run_dir / "x.restart").write_text("")
+    scheduler.save_queue(tmp_path, [str(run_dir)])
+
+    launched = []
+    monkeypatch.setattr(runner_mod, "run",
+                        lambda deck, out, extra_env=None: launched.append(deck))
+    state = scheduler.step(tmp_path, ("0-9",), {"0-9": None}, {}, set())
+
+    assert state["0-9"] == str(run_dir)
+    assert launched == [run_dir / "deck.fds"]
+    deck_text = (run_dir / "deck.fds").read_text()
+    assert "RESTART=.TRUE." in deck_text
+    assert "T_END=600.0" in deck_text, "must keep the run's own window, not the design's full one"
+    assert deck_mod.stored_dx_m(run_dir) == pytest.approx(0.75), "must keep the run's own dx"
+
+
 def test_step_frees_a_block_whose_run_dir_does_not_exist_on_disk(tmp_path):
     """A `state.json` entry pointing at a directory that no longer exists
     (or never did -- a stale adopted reference) must free the block and log

@@ -692,6 +692,108 @@ def test_resume_refuses_when_the_mesh_moved_under_the_checkpoints(monkeypatch):
     assert "RESTART=.TRUE." not in (d / "deck.fds").read_text(), "deck was rewritten anyway"
 
 
+# --- C3: prepare_resume against the REAL generator, not a mock -----------
+#
+# These reproduce the three live probe findings exactly: a grid-study point
+# at a non-default dx and a shortened T_END, and a free-burn deck -- all
+# resumed with `runner.resume(d, design)`, no override, the way the
+# scheduler's own `_launch` calls it.
+
+def test_resume_keeps_the_dx_a_grid_study_point_was_run_at(monkeypatch):
+    """Live probe: `dx_0.75` was refused as a mesh change because the old
+    prepare_resume always regenerated at this module's default dx (0.6)
+    instead of the 0.75 the run dir was actually checkpointed at."""
+    from solit2.engines.fds import deck as deck_mod
+    from solit2.schema.design import Design
+    design = Design.load("designs/og-dbr-rev0.json")
+    d = _run_dir_on_the_real_deck_at_dx(design, dx_m=0.75, t_end=600.0)
+    runner.pause(d)
+    (d / "x.restart").write_text("")
+    monkeypatch.setattr(runner, "run", lambda deck, out: "launched")
+    assert runner.resume(d, design) == "launched"        # must not raise "different mesh"
+    assert deck_mod.stored_dx_m(d) == pytest.approx(0.75)
+
+
+def test_resume_keeps_the_window_a_run_was_launched_for_by_default(monkeypatch):
+    """Live probe: grid `dx_0.60` with T_END 600 was resumed with T_END 3600
+    -- the old prepare_resume defaulted an omitted t_end_s to the design's
+    FULL discharge duration instead of to the deck's own, already-shortened
+    T_END. The scheduler's own resume call never passes t_end_s."""
+    from solit2.schema.design import Design
+    design = Design.load("designs/og-dbr-rev0.json")
+    assert design.zones.duration_min * 60.0 == pytest.approx(3600.0), \
+        "the bug only shows when the design's full duration differs from the run's own T_END"
+    d = _run_dir_on_the_real_deck(design, t_end=600.0)
+    runner.pause(d)
+    (d / "x.restart").write_text("")
+    monkeypatch.setattr(runner, "run", lambda deck, out: "launched")
+    runner.resume(d, design)                              # no t_end_s override
+    assert "T_END=600.0" in (d / "deck.fds").read_text()
+
+
+def test_resume_keeps_an_explicit_t_end_override(monkeypatch):
+    """The deliberate-extension path (`fds-exec --t-end`, already tested end
+    to end in test_fds_exec.py) must still work: a caller-supplied t_end_s is
+    not "drift", it's a choice, and stays honoured."""
+    from solit2.schema.design import Design
+    design = Design.load("designs/og-dbr-rev0.json")
+    d = _run_dir_on_the_real_deck(design, t_end=600.0)
+    runner.pause(d)
+    (d / "x.restart").write_text("")
+    monkeypatch.setattr(runner, "run", lambda deck, out: "launched")
+    runner.resume(d, design, t_end_s=120.0)
+    assert "T_END=120.0" in (d / "deck.fds").read_text()
+
+
+def test_resume_keeps_a_free_burn_deck_free_burn(monkeypatch):
+    """Live probe: a free-burn deck got the mist deck's CHID plus nozzles on
+    resume, because prepare_resume always regenerated with suppression=True
+    regardless of what the checkpointed deck actually was."""
+    from solit2.engines.fds import deck as deck_mod
+    from solit2.schema.design import Design
+    import tempfile
+    from pathlib import Path
+    design = Design.load("designs/og-dbr-rev0.json")
+    d = Path(tempfile.mkdtemp())
+    (d / "deck.fds").write_text(deck_mod.generate(design, t_end_s=100.0, suppression=False))
+    (d / "run.out").write_text("Total Time:  25.000 s\n")
+    runner.pause(d)
+    (d / "x.restart").write_text("")
+    monkeypatch.setattr(runner, "run", lambda deck, out: "launched")
+    runner.resume(d, design)
+    deck_text = (d / "deck.fds").read_text()
+    assert f"CHID='{deck_mod.chid(design, suppression=False)}'" in deck_text.splitlines()[0]
+    assert "PART_ID='FINE'" not in deck_text and "'NOZ" not in deck_text, \
+        "a free-burn resume must not grow nozzles/particles"
+
+
+def test_resume_refuses_when_the_design_does_not_match_the_checkpoints(monkeypatch):
+    """CHID encodes the whole design; if it does not match what is on disk,
+    `design` is not the one that produced this run, and resuming under it
+    would attribute a different experiment's physics to this run's data."""
+    from solit2.schema.design import Design
+    design = Design.load("designs/og-dbr-rev0.json")
+    other = design.model_copy(update={
+        "fire": design.fire.model_copy(update={"design_hrr_mw": design.fire.design_hrr_mw + 1.0})})
+    d = _run_dir_on_the_real_deck(design)
+    runner.pause(d)
+    (d / "x.restart").write_text("")
+    monkeypatch.setattr(runner, "run", lambda deck, out: "launched")
+    with pytest.raises(ValueError, match="not the design this run was launched from"):
+        runner.resume(d, other)
+    assert runner.is_paused(d), "a refused resume must not touch the run's state"
+
+
+def _run_dir_on_the_real_deck_at_dx(design, dx_m, t_end=100.0, reached=25.0):
+    import tempfile
+    from pathlib import Path
+    from solit2.engines.fds import deck as deck_mod
+    d = Path(tempfile.mkdtemp())
+    (d / "deck.fds").write_text(deck_mod.generate(design, dx_m=dx_m, t_end_s=t_end))
+    (d / "run.out").write_text(f"Total Time:  {reached:.3f} s\n")
+    return d
+
+
 def test_run_or_resume_skips_a_done_run(monkeypatch, tmp_path):
     from solit2.schema.design import Design
     monkeypatch.setattr(runner, "status", lambda d: {"state": "done"})

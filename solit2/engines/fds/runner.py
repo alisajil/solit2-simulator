@@ -302,21 +302,44 @@ def _refuse_on_mesh_change(existing: str, regenerated: str, run_dir: Path) -> No
 
 def prepare_resume(run_dir: Path, design, t_end_s: float | None = None) -> Path:
     """Rewrite `run_dir/deck.fds` with `RESTART=.TRUE.` from `design`, refuse a
-    mesh mismatch against the checkpoints already on disk, and clear the
-    stop/stopped markers so the deck is ready to relaunch. Returns the deck
-    path. Touches nothing else -- launching is the caller's job.
+    mesh or identity mismatch against the checkpoints already on disk, and
+    clear the stop/stopped markers so the deck is ready to relaunch. Returns
+    the deck path. Touches nothing else -- launching is the caller's job.
 
     Split out of `resume` so a caller that must block in the FOREGROUND
     (`fds-exec`, the entry point the CFD server's run queue calls -- see
     exec_run.py) can reuse the exact same regeneration and mesh-change check
     without going through `resume`'s own detached relaunch via `run`.
 
-    `e_coefficient` is read back from the run's OWN deck.fds, never taken from
-    the module's current default: a calibration run launched at E=0.25 must
-    resume at E=0.25, not silently drift to whatever `deck.E_COEFFICIENT`
-    happens to be today. That is a different E, hence a different deck, and
-    resuming under it would be exactly the silent physics change the mesh
-    check next to this one already exists to catch.
+    Every property that decides WHICH deck this is comes from the run's own
+    files, never from a caller-passed default, because the whole point of
+    resuming is continuing the SAME experiment:
+
+    - `suppression` (mist vs free burn) from the existing CHID, the same test
+      `matches_design` already uses. Getting this wrong regenerates the WRONG
+      deck under the RIGHT run dir's name -- caught live: a free-burn run's
+      own deck.fds was overwritten with a mist deck carrying the mist CHID.
+    - `dx_m` from the existing deck's own mesh (`deck.stored_dx_m`), not this
+      module's current default -- caught live: a grid-study point checkpointed
+      at dx=0.75 resumed at the default 0.6 was refused as a mesh change, even
+      though the run dir's own dx never moved.
+    - `e_coefficient` from the run's OWN deck.fds, never taken from the
+      module's current default: a calibration run launched at E=0.25 must
+      resume at E=0.25, not silently drift to whatever `deck.E_COEFFICIENT`
+      happens to be today.
+    - `t_end_s` DEFAULTS to the existing deck's own T_END when the caller
+      passes none -- caught live: the scheduler's own resume call passes none,
+      and used to regenerate at the design's full discharge duration instead
+      of the window the run was actually launched for (600 s resumed as
+      3600 s). A caller that explicitly wants a different window (`fds-exec
+      --t-end`, the app's "resume for longer" picker) still gets it: that is
+      a deliberate choice, not drift.
+
+    After regenerating, the CHID must match what was on disk -- if it does
+    not, `design` is not the one that produced this run at all (a stale or
+    wrong `design.json`), and resuming would attribute one experiment's data
+    to a different one's physics. Checked before the mesh comparison, which
+    catches a narrower case (same design, moved mesh generator).
     """
     from solit2.engines.fds import deck as deck_mod
 
@@ -334,11 +357,32 @@ def prepare_resume(run_dir: Path, design, t_end_s: float | None = None) -> Path:
             f"written on cannot be checked against the one this design generates "
             f"now. Resuming would be a guess; start the run again")
     existing_text = existing.read_text()
+    existing_chid = _chid(run_dir)
+    # Same test `deck.matches_design` uses: the mist CHID is never a substring
+    # of a free-burn deck's own HEAD line, so its absence is the free-burn tell.
+    suppression = f"CHID='{deck_mod.chid(design, suppression=False)}'" not in existing_text.split(
+        "\n", 1)[0]
+    expected_chid = deck_mod.chid(design, suppression=suppression)
+    if existing_chid != expected_chid:
+        raise ValueError(
+            f"{run_dir} was checkpointed under CHID {existing_chid!r}, but the design passed "
+            f"to resume generates {expected_chid!r} "
+            f"({'suppressed' if suppression else 'free burn'}). That is not the design this "
+            f"run was launched from -- resuming would attribute a different experiment's "
+            f"physics to this run's checkpoints")
+    dx_m = deck_mod.stored_dx_m(run_dir)
+    if dx_m is None:
+        raise ValueError(
+            f"{run_dir}'s deck.fds carries no readable &MESH line, so the cell size it "
+            f"actually ran at cannot be recovered to resume at the same one")
     e_coefficient = deck_mod.stored_e_coefficient(run_dir)
     if e_coefficient is None:
         e_coefficient = deck_mod.E_COEFFICIENT
-    regenerated = deck_mod.generate(design, t_end_s=t_end_s, restart=True,
-                                    e_coefficient=e_coefficient)
+    if t_end_s is None:
+        existing_t_end = _T_END.search(existing_text)
+        t_end_s = float(existing_t_end.group(1)) if existing_t_end else None
+    regenerated = deck_mod.generate(design, dx_m=dx_m, t_end_s=t_end_s, restart=True,
+                                    suppression=suppression, e_coefficient=e_coefficient)
     _refuse_on_mesh_change(existing_text, regenerated, run_dir)
     # Nothing above this line has changed anything on disk: a refused resume
     # leaves the run exactly as it found it, still stopped and still resumable

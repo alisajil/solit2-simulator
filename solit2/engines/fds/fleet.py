@@ -34,10 +34,6 @@ ACTIONS_LOG_NAME = "actions.jsonl"
 
 _TITLE_RE = re.compile(r"TITLE='([^']*)'")
 _DX_FROM_NAME_RE = re.compile(r"dx_([\d.]+)")
-# The first &MESH line's own IJK/XB: y spans j cells of one dx each, on every
-# mesh in a deck this package writes (only x is split fine/coarse -- see
-# deck._meshes), so the first mesh's y extent is the whole deck's dx.
-_MESH_RE = re.compile(r"&MESH IJK=\d+,(\d+),\d+, XB=[^,]+,[^,]+,([^,]+),([^,]+),")
 # Anything FDS calls out as ERROR or WARNING, in its own log.
 _ISSUE_RE = re.compile(r"^[ \t]*(?:ERROR|WARNING)\b.*$", re.MULTILINE)
 
@@ -108,26 +104,37 @@ def _title(text: str | None) -> str | None:
 
 def _dx_m(run_dir: Path, text: str | None) -> float | None:
     """From the directory name first (`dx_0.60`, the naming every writer in
-    this package uses), the deck's own first &MESH line otherwise -- a run
-    dir renamed or moved after being written still reports the cell size it
-    actually ran at."""
+    this package uses), the deck's own first &MESH line otherwise (read via
+    `deck.stored_dx_m`, the same reader `runner.prepare_resume` trusts for a
+    resume) -- a run dir renamed or moved after being written still reports
+    the cell size it actually ran at."""
     match = _DX_FROM_NAME_RE.search(Path(run_dir).name)
     if match:
         return float(match.group(1))
     if text is None:
         return None
-    mesh = _MESH_RE.search(text)
-    if not mesh:
-        return None
-    j, y0, y1 = int(mesh.group(1)), float(mesh.group(2)), float(mesh.group(3))
-    return (y1 - y0) / j if j else None
+    return deck_mod.stored_dx_m(run_dir)
 
 
 def _last_issue(run_dir: Path) -> str | None:
-    log = runner_mod.log_path(Path(run_dir))
-    if log is None:
-        return None
-    matches = list(_ISSUE_RE.finditer(log.read_text()))
+    """The last line FDS or mpiexec itself called out as ERROR/WARNING.
+
+    Reads BOTH `run.out` (mpiexec's own stdout/stderr, captured by
+    `runner.run` -- where a launcher-level failure lands: a bad binary, a
+    rank that crashed before FDS ever opened its own output file) and the
+    run's own `<CHID>.out` (`log_path()`'s usual preference) when they
+    differ, so an MPI-level error is never hidden behind a stale FDS log left
+    over from an earlier attempt.
+    """
+    run_dir = Path(run_dir)
+    texts = []
+    captured = run_dir / runner_mod.LOG_NAME
+    if captured.exists():
+        texts.append(captured.read_text())
+    own = runner_mod.log_path(run_dir)
+    if own is not None and own != captured:
+        texts.append(own.read_text())
+    matches = [m for text in texts for m in _ISSUE_RE.finditer(text)]
     return matches[-1].group(0).strip() if matches else None
 
 
