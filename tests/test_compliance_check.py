@@ -1,5 +1,7 @@
+import hashlib
 import json
 import re
+import shutil
 from pathlib import Path
 
 import pytest
@@ -9,6 +11,7 @@ from solit2.compliance.project_rules import ProjectRule, load_project_rules
 from solit2.compliance.rules import REGISTRY
 from solit2.compliance.verdict import Verdict
 from solit2.reports import guidance
+from solit2.schema import presets
 
 SPEC = "tests/fixtures/compliance/minimal.spec.json"
 # guidance.py constants that are not requirements a test can meet, and why.
@@ -61,6 +64,75 @@ def test_a_project_rule_naming_an_unknown_quantity_is_refused():
 def test_a_malformed_project_rule_is_refused(rule, message):
     with pytest.raises(ValueError, match=message):
         ProjectRule.model_validate({"id": "x", "source": "s", "requirement": "r", **rule})
+
+
+@pytest.mark.parametrize("empty_value", ["   ", {}])
+def test_a_fact_only_project_rule_treats_whitespace_and_empty_containers_as_empty(empty_value):
+    """Residual item 3: a whitespace-only string and an empty dict/list/tuple must read
+    as "supplied but empty" (Needs evidence), not as a truthy pass -- a fact carrying no
+    actual content has not been supplied any more than an empty string has."""
+    from dataclasses import replace
+
+    from solit2.compliance import project_rules
+    from solit2.compliance.context import Context
+    from solit2.compliance.spec import Evidence, Fact, Facts
+    from solit2.engines.reduced import envelope
+    from solit2.schema.design import Design
+
+    ev = Evidence(document="d", locator="l")
+    design = Design.load("examples/designs/road-tunnel-twin-bore.json")
+    result = envelope.run(design)
+    base_ctx = Context(tests={}, test_results={}, installation=design, installation_result=result,
+                       facts=Facts(), protocol_text={})
+
+    # `correlation_cfd_report` (str) covers the whitespace case; `velocity_measured_at_m`
+    # (dict) covers the empty-container case -- both are real Facts fields.
+    fact_name = "velocity_measured_at_m" if isinstance(empty_value, dict) else "correlation_cfd_report"
+    rule = ProjectRule(id="x", source="s", requirement="r", requires_fact=fact_name)
+    ctx = replace(base_ctx, facts=Facts(**{fact_name: Fact(value=empty_value, evidence=ev)}))
+
+    outcome = project_rules._check(rule)(ctx)
+    assert outcome.verdict is Verdict.NEEDS_EVIDENCE
+    assert "empty" in outcome.found
+
+
+def test_a_reloaded_calibration_change_is_picked_up_and_the_provenance_hash_matches_it(
+        monkeypatch, tmp_path):
+    """Residual item 1: `load_calibration` is process-cached, so a calibration edited
+    on disk must not be picked up until something calls `reload_calibration()` -- and
+    once it is, the report's provenance hash must describe exactly that content, not a
+    fresh-off-disk read that could disagree with what the Tier 1 runs above actually
+    used."""
+    real_dir = presets.PRESET_DIR
+    tmp_presets = tmp_path / "presets"
+    shutil.copytree(real_dir, tmp_presets)
+    cal_path = tmp_presets / "calibration.json"
+    original = json.loads(cal_path.read_text())
+
+    monkeypatch.setattr(presets, "PRESET_DIR", tmp_presets)
+    presets.reload_calibration()
+    try:
+        before = check.run(SPEC)
+
+        mutated = json.loads(json.dumps(original))
+        mutated["mist"]["flank_reach_factor"]["value"] *= 1.5
+        cal_path.write_text(json.dumps(mutated))
+
+        # Without a reload, the process-cached calibration is still in effect, and the
+        # report must say so honestly -- the hash must not change on its own.
+        stale = check.run(SPEC)
+        assert stale.provenance["calibration"] == before.provenance["calibration"]
+
+        presets.reload_calibration()
+        after = check.run(SPEC)
+        assert after.provenance["calibration"] != before.provenance["calibration"]
+        expected = hashlib.sha256(
+            json.dumps(presets.load_calibration(), sort_keys=True).encode()
+        ).hexdigest()[:check.CALIBRATION_HASH_CHARS]
+        assert after.provenance["calibration"] == expected
+    finally:
+        monkeypatch.setattr(presets, "PRESET_DIR", real_dir)
+        presets.reload_calibration()
 
 
 def test_a_deviation_on_a_clause_solit2_does_not_let_the_authority_waive_is_refused(tmp_path):

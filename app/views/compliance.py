@@ -10,7 +10,7 @@ from solit2.compliance import check
 from solit2.compliance.spec import ComplianceSpec
 from solit2.compliance.verdict import Headline, Verdict
 from solit2.reports import compliance as report_md
-from solit2.schema.presets import PRESET_DIR
+from solit2.schema.presets import PRESET_DIR, reload_calibration
 
 SPEC_ROOTS: tuple[Path, ...] = (Path("designs"), Path("examples/compliance"))
 ICON = {Verdict.COMPLIES: "✅", Verdict.FAILS: "❌", Verdict.DEVIATION_ACCEPTED: "🟦",
@@ -58,6 +58,13 @@ def _mtimes(paths: tuple[Path, ...]) -> tuple[float, ...]:
 
 @st.cache_data(show_spinner="Checking every clause…")
 def _run(path: str, dependency_mtimes: tuple[float, ...]) -> check.ComplianceReport:
+    # This body only runs on a cache miss, i.e. exactly when `dependency_mtimes` says
+    # something the run reads has changed on disk -- including, possibly,
+    # solit2/presets/calibration.json. `load_calibration` is a process-wide cache the
+    # Streamlit app keeps across reruns, so without this the Tier 1 engine below would
+    # keep computing on the calibration that was loaded when this process started, even
+    # though the cache key just decided a recompute was warranted.
+    reload_calibration()
     return check.run(path)
 
 

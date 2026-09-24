@@ -103,11 +103,16 @@ def _required_text(rule: ProjectRule) -> str:
 
 
 def _is_empty(value: object) -> bool:
-    """An empty string, False, or an empty list is "supplied but empty", never
-    a pass: a fact-only project rule with such a value has not actually been
-    given anything to judge. `is False` rather than `== False` so a genuine
-    `0` (a legitimate numeric fact value) is not mistaken for it."""
-    return value == "" or value is False or value == []
+    """A blank string (including one that is only whitespace), False, or an
+    empty list/tuple/dict is "supplied but empty", never a pass: a fact-only
+    project rule with such a value has not actually been given anything to
+    judge. `is False` rather than `== False` so a genuine `0` (a legitimate
+    numeric fact value) is not mistaken for it."""
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (list, tuple, dict)):
+        return len(value) == 0
+    return value is False
 
 
 def _check(rule: ProjectRule) -> Callable[[Context], Outcome]:

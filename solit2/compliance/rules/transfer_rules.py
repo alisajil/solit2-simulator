@@ -128,7 +128,8 @@ def _zones(field: str) -> Callable[[Context, Design, str], Outcome]:
 
 
 # Every transfer rule Annex 7 §3.4 forbids extrapolating: the full set of
-# envelope checks `_no_extrapolation` aggregates, not a subset of them.
+# envelope checks `_no_extrapolation` aggregates, not a subset of them. Not
+# `response` -- that is Annex 7 §3.2's own clause, judged on its own evidence.
 _ENVELOPE_CHECKS: tuple[tuple[str, Callable[[Context, Design, str], Outcome]], ...] = (
     ("k_factor", _k_factor), ("pressure", _pressure), ("positions", _positions),
     ("spacing", _spacing), ("standoff", _standoff), ("ventilation", _ventilation),
@@ -136,14 +137,35 @@ _ENVELOPE_CHECKS: tuple[tuple[str, Callable[[Context, Design, str], Outcome]], .
     ("section_length", _zones("section_length_m")),
     ("sections_simultaneous", _zones("sections_simultaneous")),
 )
+_NO_EXTRAPOLATION_BASIS = ("k_factor, pressure, positions, spacing, standoff, ventilation, "
+                          "fire_at_activation, section_length and sections_simultaneous -- "
+                          "every Annex 3 §3.3 envelope check except response, which Annex 7 "
+                          "§3.2 judges on its own")
+# predicted is the weakest basis kind, evidenced the strongest -- see basis_kind below.
+_BASIS_ORDER = {"predicted": 0, "planned": 1, "evidenced": 2}
 
 
 def _no_extrapolation(ctx: Context, test: Design, cls: str) -> Outcome:
-    outside = [name for name, body in _ENVELOPE_CHECKS
-               if body(ctx, test, cls).verdict.value != "complies"]
-    return judge(not outside, "outside the tested envelope: " + ", ".join(outside) if outside
-                 else "inside the tested envelope", "no parameter outside the tested envelope",
-                 "every Annex 3 §3.3 transfer check", "planned")
+    required = "no parameter outside the tested envelope"
+    outcomes = {name: body(ctx, test, cls) for name, body in _ENVELOPE_CHECKS}
+    # The aggregate is only as firm as its weakest sub-check -- fire_at_activation is a
+    # Tier 1 prediction, so a no-extrapolation finding that folds it in can never be
+    # reported "planned" as if every input were a plain design comparison.
+    basis_kind = min((o.basis_kind for o in outcomes.values()), key=_BASIS_ORDER.__getitem__)
+    fails = sorted(name for name, o in outcomes.items() if o.verdict.value == "fails")
+    if fails:
+        return judge(False, "outside the tested envelope: " + ", ".join(fails), required,
+                     _NO_EXTRAPOLATION_BASIS, basis_kind)
+    unevidenced = {name: o for name, o in outcomes.items() if o.verdict.value == "needs_evidence"}
+    if unevidenced:
+        # A sub-check with no evidence is unknown, not a breach: it must not read as a
+        # parameter that failed to stay inside the tested envelope.
+        fact = ", ".join(sorted({o.fact for o in unevidenced.values() if o.fact}))
+        why = "; ".join(f"{name} needs evidence: {o.found}"
+                        for name, o in sorted(unevidenced.items()))
+        return needs(fact, required, basis_kind, why)
+    return judge(True, "inside the tested envelope", required, _NO_EXTRAPOLATION_BASIS,
+                 basis_kind)
 
 
 def _t(rule_id: str, clause: str, requirement: str, parameter: str | None,

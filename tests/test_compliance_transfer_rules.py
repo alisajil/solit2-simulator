@@ -1,4 +1,6 @@
+import json
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
@@ -88,3 +90,34 @@ def test_an_unknown_test_derived_parameter_is_refused_with_the_valid_names():
     from solit2.compliance.rules import transfer_rules as tr
     with pytest.raises(ValueError, match="use one of"):
         tr._t("x", "Annex 3 §3.3", "req", "Not a parameter", tr._spacing, "req", "planned")
+
+
+def test_no_extrapolation_takes_the_weakest_basis_kind_among_its_sub_checks(same):
+    """Residual item 2: fire_at_activation is "predicted" and every other sub-check
+    here is "planned" -- the aggregate must be the WEAKEST of the two (predicted),
+    computed from what the sub-checks actually returned, not a hard-coded "planned"
+    that stops being true the moment a predicted sub-check joins the set."""
+    finding = evaluate(BY_ID["annex7.3_4.no_extrapolation"], same, {})
+    assert finding.verdict is Verdict.COMPLIES
+    assert finding.basis_kind == "predicted"
+
+
+def test_no_extrapolation_is_needs_evidence_not_fails_on_an_undeclared_test_velocity(same):
+    """Residual item 4: a sub-check with no evidence (here, ventilation on a test
+    design that never declared its tested velocity range) is unknown, not a breach --
+    it must read as Needs evidence, naming that sub-check's fact, never as Fails."""
+    raw = json.loads(Path("examples/designs/road-tunnel-twin-bore.json").read_text())
+    del raw["ventilation"]["velocity_range_ms"]
+    # The installation already declares 3.88-5.08 m/s, the schema's own default, so
+    # this "test" design -- built without declaring the field at all -- ends up
+    # simulated at the SAME actual velocity. Every other sub-check therefore still
+    # compares two physically identical designs and complies; only `_ventilation`'s
+    # check of `model_fields_set` (not of the resolved value) can tell the two apart.
+    installation = Design.load("examples/designs/road-tunnel-twin-bore.json")
+    undeclared_test = Design.from_dict(raw)
+    ctx = Context(tests={"A": undeclared_test}, test_results={"A": envelope.run(undeclared_test)},
+                  installation=installation, installation_result=envelope.run(installation),
+                  facts=Facts(), protocol_text={})
+    finding = evaluate(BY_ID["annex7.3_4.no_extrapolation"], ctx, {})
+    assert finding.verdict is Verdict.NEEDS_EVIDENCE
+    assert finding.fact == "planned_tests"
