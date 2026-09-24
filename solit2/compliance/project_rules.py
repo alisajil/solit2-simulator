@@ -51,7 +51,8 @@ class ProjectRule(BaseModel):
         if self.quantity is None and self.requires_fact is None:
             raise ValueError("a project rule needs a quantity to compare or a fact to require")
         if self.requires_fact is not None and self.requires_fact not in Facts.model_fields:
-            raise ValueError(f"requires_fact {self.requires_fact!r} is not a spec fact")
+            raise ValueError(f"requires_fact {self.requires_fact!r} is not a spec fact; "
+                             f"use one of {sorted(Facts.model_fields)}")
         return self
 
 

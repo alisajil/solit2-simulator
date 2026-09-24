@@ -53,6 +53,16 @@ def test_a_project_rule_naming_an_unknown_quantity_is_refused():
                                     "limit": 1.0})
 
 
+@pytest.mark.parametrize("rule, message", [
+    ({"quantity": "installation.power_kw", "comparator": "<="}, "together"),
+    ({}, "a quantity to compare or a fact to require"),
+    ({"requires_fact": "not_a_fact"}, "use one of"),
+])
+def test_a_malformed_project_rule_is_refused(rule, message):
+    with pytest.raises(ValueError, match=message):
+        ProjectRule.model_validate({"id": "x", "source": "s", "requirement": "r", **rule})
+
+
 def test_a_deviation_on_a_clause_solit2_does_not_let_the_authority_waive_is_refused(tmp_path):
     raw = json.loads(open(SPEC).read())
     # Absolute paths: a spec's relative paths resolve against the spec file's folder.
