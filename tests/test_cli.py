@@ -157,6 +157,61 @@ def test_fds_status_reports_a_missing_run(tmp_path):
     assert "failed" in proc.stdout
 
 
+def test_fds_exec_wires_the_run_dir_and_t_end_through(tmp_path, monkeypatch):
+    from solit2 import cli
+    from solit2.engines.fds import exec_run as fds_exec
+
+    captured = {}
+
+    def fake_run_foreground(run_dir, t_end_s=None):
+        captured["run_dir"] = run_dir
+        captured["t_end_s"] = t_end_s
+        return 0
+
+    monkeypatch.setattr(fds_exec, "run_foreground", fake_run_foreground)
+    run_dir = tmp_path / "run"
+    assert cli.main(["fds-exec", str(run_dir), "--t-end", "300"]) == cli.EXIT_OK
+    assert captured["run_dir"] == run_dir
+    assert captured["t_end_s"] == 300.0
+
+
+def test_fds_exec_exits_engine_code_when_fds_did_not_complete(tmp_path, monkeypatch, capsys):
+    from solit2 import cli
+    from solit2.engines.fds import exec_run as fds_exec
+
+    monkeypatch.setattr(fds_exec, "run_foreground", lambda run_dir, t_end_s=None: 1)
+    run_dir = tmp_path / "run"
+    assert cli.main(["fds-exec", str(run_dir)]) == cli.EXIT_ENGINE
+    err = json.loads(capsys.readouterr().err)
+    assert str(run_dir) in err["error"]
+    assert err["fix"]
+
+
+def test_fds_exec_reports_a_setup_failure_as_a_named_error(tmp_path, monkeypatch, capsys):
+    from solit2 import cli
+    from solit2.engines.fds import exec_run as fds_exec
+
+    def fake_run_foreground(run_dir, t_end_s=None):
+        raise RuntimeError("the fds binary is not on PATH and SOLIT2_FDS_BIN is not set")
+
+    monkeypatch.setattr(fds_exec, "run_foreground", fake_run_foreground)
+    run_dir = tmp_path / "run"
+    assert cli.main(["fds-exec", str(run_dir)]) == cli.EXIT_ENGINE
+    err = json.loads(capsys.readouterr().err)
+    assert "fds binary" in err["error"]
+    assert err["fix"]
+
+
+def test_fds_exec_refuses_without_a_binary_end_to_end(tmp_path):
+    # No FDS/mpiexec on this machine by design -- the real preflight check,
+    # unmocked, must be what fails, exactly like `run --engine fds` already
+    # does.
+    proc = _run(["fds-exec", str(tmp_path / "run")])
+    assert proc.returncode == 3
+    err = json.loads(proc.stderr)
+    assert err["fix"]
+
+
 def test_run_with_engine_fds_refuses_without_a_binary(tmp_path):
     # no FDS on this machine: the pre-flight must say so plainly, not crash
     proc = _run(["run", "examples/designs/road-tunnel-twin-bore.json", "--engine", "fds", "--no-history"])

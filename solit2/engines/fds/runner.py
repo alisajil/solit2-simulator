@@ -280,18 +280,16 @@ def _refuse_on_mesh_change(existing: str, regenerated: str, run_dir: Path) -> No
         f"resume")
 
 
-def resume(run_dir: Path, design, t_end_s: float | None = None) -> str:
-    """Pick a paused run up from where it stopped.
+def prepare_resume(run_dir: Path, design, t_end_s: float | None = None) -> Path:
+    """Rewrite `run_dir/deck.fds` with `RESTART=.TRUE.` from `design`, refuse a
+    mesh mismatch against the checkpoints already on disk, and clear the
+    stop/stopped markers so the deck is ready to relaunch. Returns the deck
+    path. Touches nothing else -- launching is the caller's job.
 
-    Clears the stop file first -- FDS reads it on the first step and would
-    shut straight back down -- then rewrites the deck with `RESTART=.TRUE.`
-    and relaunches. Everything else in the deck is regenerated from the same
-    design, so a resumed run cannot silently continue under different physics.
-
-    Regenerating is also how the mesh can move under a run, so the rebuilt
-    deck is checked against the one the checkpoints were written on and a
-    changed mesh is refused rather than restarted into -- see
-    `_refuse_on_mesh_change`.
+    Split out of `resume` so a caller that must block in the FOREGROUND
+    (`fds-exec`, the entry point the CFD server's run queue calls -- see
+    exec_run.py) can reuse the exact same regeneration and mesh-change check
+    without going through `resume`'s own detached relaunch via `run`.
 
     `e_coefficient` is read back from the run's OWN deck.fds, never taken from
     the module's current default: a calibration run launched at E=0.25 must
@@ -332,7 +330,20 @@ def resume(run_dir: Path, design, t_end_s: float | None = None) -> str:
     if stopped.exists():
         stopped.unlink()
     existing.write_text(regenerated)
-    return run(existing, run_dir)
+    return existing
+
+
+def resume(run_dir: Path, design, t_end_s: float | None = None) -> str:
+    """Pick a paused run up from where it stopped.
+
+    Clears the stop file first -- FDS reads it on the first step and would
+    shut straight back down -- then rewrites the deck with `RESTART=.TRUE.`
+    and relaunches (`prepare_resume`). Everything else in the deck is
+    regenerated from the same design, so a resumed run cannot silently
+    continue under different physics.
+    """
+    deck_path = prepare_resume(run_dir, design, t_end_s=t_end_s)
+    return run(deck_path, run_dir)
 
 
 def run_or_resume(deck_path: Path, run_dir: Path, design, t_end_s: float | None = None) -> str:

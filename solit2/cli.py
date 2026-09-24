@@ -13,6 +13,7 @@ from solit2 import history as history_mod
 from solit2.engines.fds import calibrate as fds_calibrate
 from solit2.engines.fds import campaign as fds_campaign
 from solit2.engines.fds import deck as fds_deck
+from solit2.engines.fds import exec_run as fds_exec
 from solit2.engines.fds import grid as fds_grid
 from solit2.engines.fds import reader as fds_reader
 from solit2.engines.fds import runner as fds_runner
@@ -65,6 +66,25 @@ def _cmd_fds_deck(args: argparse.Namespace) -> int:
 def _cmd_fds_status(args: argparse.Namespace) -> int:
     state = fds_runner.status(Path(args.run_dir))
     print(f"{state['state']}  {state['progress'] * 100:.0f}%  {state.get('detail', '')}".rstrip())
+    return EXIT_OK
+
+
+def _cmd_fds_exec(args: argparse.Namespace) -> int:
+    """Block until FDS finishes for one run directory -- what
+    scripts/cfd_queue.sh and deploy/systemd/solit2-cfd.service call, one run
+    directory at a time, on the dedicated CFD server; see
+    docs/cloud-compute.md."""
+    run_dir = Path(args.run_dir)
+    try:
+        returncode = fds_exec.run_foreground(run_dir, t_end_s=args.t_end)
+    except (RuntimeError, FileNotFoundError, ValueError) as exc:
+        return _fail(str(exc), "run_dir",
+                     "fix the reported problem (missing binary, missing design.json, "
+                     "a moved mesh) and run fds-exec again", EXIT_ENGINE)
+    if returncode != 0:
+        return _fail(f"FDS did not complete in {run_dir}; see {run_dir / 'run.out'} and "
+                     f"{run_dir / fds_exec.LOG_NAME}", "run_dir",
+                     "inspect the FDS log for the reported error", EXIT_ENGINE)
     return EXIT_OK
 
 
@@ -359,6 +379,19 @@ def build_parser() -> argparse.ArgumentParser:
     fstat = sub.add_parser("fds-status", help="progress of an FDS run directory")
     fstat.add_argument("run_dir")
     fstat.set_defaults(func=_cmd_fds_status)
+
+    fexec = sub.add_parser(
+        "fds-exec",
+        help="run FDS for a run directory in the FOREGROUND, blocking until it "
+             "finishes or fails -- what the CFD server's run queue calls "
+             "(see scripts/cfd_queue.sh and docs/cloud-compute.md)")
+    fexec.add_argument("run_dir", help="a directory already holding deck.fds "
+                                       "(and design.json, if it may ever need to resume)")
+    fexec.add_argument("--t-end", type=float,
+                       help="simulated window in seconds, used only when resuming from "
+                            "restart files to regenerate the deck; a fresh run keeps "
+                            "whatever T_END is already in deck.fds")
+    fexec.set_defaults(func=_cmd_fds_exec)
 
     fcal = sub.add_parser(
         "fds-calibrate-e",
