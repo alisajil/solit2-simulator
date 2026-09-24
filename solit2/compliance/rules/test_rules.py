@@ -66,6 +66,19 @@ def _pool_area(d: Design) -> float:
     return pools.length_m * pools.width_m if pools else 0.0
 
 
+def _stricter(label: str) -> float:
+    """The governing minimum where Annex 7 and the main document both set one."""
+    for name, annex7, main, _unit, _ref in g.STRICTER_OF:
+        if name == label:
+            return max(annex7, main)
+    raise KeyError(f"guidance.STRICTER_OF has no row {label!r}")
+
+
+# Annex 7 Table 4: whether its REQUIRED Class A tests use the tarpaulin cover.
+CLASS_A_REQUIRED_COVERED = any(row[4] == "required" and row[1].startswith("Class A")
+                               and "with tarpaulin" in row[2] for row in g.MINIMUM_TESTS)
+
+
 def _activation(event: str) -> Callable[[Context], Outcome]:
     """Annex 7 §5.2.8 option A timing, judged on every test's Tier 1 timetable."""
     def check(ctx: Context) -> Outcome:
@@ -137,9 +150,9 @@ RULES: tuple[Rule, ...] = (
     Rule("main.3_6_2.height", TUNNEL, "Main document §3.6.2",
          "Test tunnel height of at least the main document's minimum, which is the stricter.",
          "design",
-         _every_test(_height, lambda v: v >= g.MAIN_MIN_TEST_TUNNEL["height (m)"],
-                     f">= {g.MAIN_MIN_TEST_TUNNEL['height (m)']:g} m", "test design geometry"),
-         constants=("MAIN_MIN_TEST_TUNNEL", "STRICTER_OF")),
+         _every_test(_height, lambda v: v >= _stricter("Test tunnel height"),
+                     f">= {_stricter('Test tunnel height'):g} m", "test design geometry"),
+         constants=("STRICTER_OF",)),
     Rule("main.3_6_2.width", TUNNEL, "Main document §3.6.2",
          "Test tunnel width of at least the main document's minimum.", "design",
          _every_test(_width, lambda v: v >= g.MAIN_MIN_TEST_TUNNEL["width (m)"],
@@ -148,9 +161,9 @@ RULES: tuple[Rule, ...] = (
     Rule("main.3_6_2.length", TUNNEL, "Main document §3.6.2",
          "Test tunnel length of at least the main document's minimum.", "design",
          _every_test(lambda d: d.tunnel.length_m,
-                     lambda v: v >= g.MAIN_MIN_TEST_TUNNEL["length (m)"],
-                     f">= {g.MAIN_MIN_TEST_TUNNEL['length (m)']:g} m", "test design tunnel"),
-         constants=("MAIN_MIN_TEST_TUNNEL", "STRICTER_OF")),
+                     lambda v: v >= _stricter("Test tunnel length"),
+                     f">= {_stricter('Test tunnel length'):g} m", "test design tunnel"),
+         constants=("STRICTER_OF",)),
     # --- Class A fire load, Annex 7 §5.2.
     Rule("annex7.5_2_1.potential", CLASS_A, "Annex 7 §5.2.1",
          "Class A design fire of at least the minimum unsuppressed potential.", "design",
@@ -208,8 +221,8 @@ RULES: tuple[Rule, ...] = (
          constants=("TARGET_STANDOFF_M",)),
     Rule("annex7.5_4.covered", CLASS_A, "Annex 7 §5.4 Table 4",
          "The required Class A tests use the tarpaulin-covered mock-up.", "design",
-         _on_class("A", lambda d: float(d.fire.covered), lambda v: v == 1.0,
-                   "covered (1)", "test design fire"),
+         _on_class("A", lambda d: float(d.fire.covered), lambda v: v == CLASS_A_REQUIRED_COVERED,
+                   "covered" if CLASS_A_REQUIRED_COVERED else "either", "test design fire"),
          constants=("MINIMUM_TESTS",)),
     # --- Class B fire load, Annex 7 §5.3.
     Rule("annex7.5_3_1.hrr", CLASS_B, "Annex 7 §5.3.1", "Class B pool fire of at least the minimum.",

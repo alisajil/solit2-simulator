@@ -83,3 +83,10 @@ def test_discharge_shorter_than_thirty_minutes_after_activation_fails(ctx):
     shorter = replace(ctx, tests={**ctx.tests, "A": short},
                       test_results={**ctx.test_results, "A": envelope.run(short)})
     assert _verdict("annex7.5_2_8.discharge", shorter) is Verdict.FAILS
+
+
+def test_the_rules_derive_their_limits_from_the_guidance_tables():
+    from solit2.compliance.rules import test_rules
+    assert test_rules._stricter("Test tunnel height") == 5.0
+    assert test_rules._stricter("Test tunnel length") == 400.0
+    assert test_rules.CLASS_A_REQUIRED_COVERED is True
