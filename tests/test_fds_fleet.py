@@ -147,6 +147,67 @@ def test_list_runs_never_invents_a_rate_when_live_has_none(tmp_path, monkeypatch
     assert info.eta_ist is None
 
 
+def test_list_runs_hides_the_rate_and_eta_of_a_paused_run(tmp_path, monkeypatch):
+    """I4: a rate or an ETA is a claim about something advancing right now --
+    showing the last one a paused/failed/done run happened to have read as a
+    forecast of a future that is not going to happen."""
+    _write_deck(tmp_path / "dx_0.60")
+    monkeypatch.setattr(runner_mod, "status", lambda d: {"state": "paused", "progress": 0.3,
+                                                          "detail": ""})
+    monkeypatch.setattr(runner_mod, "live", lambda d, t_end_s=None: {
+        "time_step": 10, "simulated_s": 300.0, "t_end_s": 1000.0, "step_size_s": 0.1,
+        "elapsed_s": 60.0, "rate_s_per_s": 5.0, "eta_s": 140.0, "hrr_mw": 10.0,
+        "detect_s": None, "activate_s": None})
+    info = fleet.list_runs(roots=(tmp_path,), state_dir=tmp_path / "state",
+                           blocks=("0-9",))[0]
+    assert info.rate_s_per_s is None
+    assert info.eta_s is None
+    assert info.eta_ist is None
+    # simulated_s / t_end_s are NOT hidden -- "how far did it get" is a fact
+    # about the past, not a forecast, and stays true after the run stops.
+    assert info.simulated_s == 300.0
+
+
+def test_list_runs_reports_pending_for_an_unlaunched_deck(tmp_path):
+    _write_deck(tmp_path / "dx_0.60")   # deck.fds only -- no run.out, never launched
+    info = fleet.list_runs(roots=(tmp_path,), state_dir=tmp_path / "state",
+                           blocks=("0-9",))[0]
+    assert info.state == "pending"
+
+
+def test_block_width_reads_a_lo_hi_range():
+    assert fleet._block_width("0-9") == 10
+    assert fleet._block_width("10-19") == 10
+    assert fleet._block_width("20-29") == 10
+
+
+def test_summarise_counts_cores_as_block_widths_not_block_counts(tmp_path):
+    state_dir = tmp_path / "state"
+    scheduler_mod.save_state(state_dir, {"0-9": "runs/a", "10-19": None, "20-39": None})
+    summary = fleet.summarise([], state_dir=state_dir, blocks=("0-9", "10-19", "20-39"))
+    assert summary.cores_total == 10 + 10 + 20
+    assert summary.cores_busy == 10
+
+
+def test_summarise_counts_an_unmanaged_running_deck_by_its_mesh_count(tmp_path, monkeypatch):
+    """A run the web app launched unpinned (app/views/cfd.py) occupies real
+    cores that no scheduler block accounts for -- it must still count."""
+    run_dir = _write_deck(tmp_path / "runs" / "unpinned",
+                          extra_mesh="&MESH IJK=1,1,1, XB=0,1,0,1,0,1 /\n"
+                                    "&MESH IJK=1,1,1, XB=1,2,0,1,0,1 /\n"
+                                    "&MESH IJK=1,1,1, XB=2,3,0,1,0,1 /\n")
+    state_dir = tmp_path / "state"
+    monkeypatch.setattr(runner_mod, "status", lambda d: {"state": "running", "progress": 0.1,
+                                                          "detail": ""})
+    monkeypatch.setattr(runner_mod, "live", lambda d, t_end_s=None: {
+        "time_step": 1, "simulated_s": 1.0, "t_end_s": 10.0, "step_size_s": 0.1,
+        "elapsed_s": 1.0, "rate_s_per_s": 1.0, "eta_s": 9.0, "hrr_mw": 1.0,
+        "detect_s": None, "activate_s": None})
+    infos = fleet.list_runs(roots=(tmp_path / "runs",), state_dir=state_dir, blocks=("0-9",))
+    summary = fleet.summarise(infos, state_dir=state_dir, blocks=("0-9",))
+    assert summary.cores_busy == 3, "three &MESH lines -- one rank each"
+
+
 def test_summarise_counts_by_state_and_reports_cores(two_runs, tmp_path):
     running, queued, state_dir = two_runs
     infos = fleet.list_runs(roots=(tmp_path / "runs",), state_dir=state_dir,
@@ -154,8 +215,8 @@ def test_summarise_counts_by_state_and_reports_cores(two_runs, tmp_path):
     summary = fleet.summarise(infos, state_dir=state_dir, blocks=("0-9", "10-19"))
     assert summary.running == 1
     assert summary.failed_or_stopped == 1
-    assert summary.cores_busy == 1
-    assert summary.cores_total == 2
+    assert summary.cores_busy == 10, "block width (0-9 = 10 cores), not a block count"
+    assert summary.cores_total == 20, "0-9 and 10-19 together, 10 cores each"
     assert summary.scheduler_running is False
 
 
@@ -181,7 +242,7 @@ def test_render_status_lists_every_run_and_the_core_summary(two_runs, tmp_path):
                             blocks=("0-9", "10-19"))
     summary = fleet.summarise(infos, state_dir=state_dir, blocks=("0-9", "10-19"))
     text = fleet.render_status(infos, summary)
-    assert "1 of 2 cores busy" in text
+    assert "10 of 20 cores busy" in text
     assert str(running) in text and str(queued) in text
 
 

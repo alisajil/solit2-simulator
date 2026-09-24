@@ -605,6 +605,14 @@ def status(run_dir: Path) -> dict:
     """Progress from FDS's own log, against the deck's T_END."""
     log = log_path(run_dir)
     if log is None:
+        # I4: `run()` creates LOG_NAME the instant it starts, so no log at
+        # all means run() was never called here -- distinct from a run that
+        # was attempted and went wrong. A grid study or an E sweep writes
+        # every deck up front, well before any of them are launched, and
+        # each one used to read as a red FAIL until its own turn came.
+        if (Path(run_dir) / "deck.fds").exists():
+            return {"state": "pending", "progress": 0.0,
+                    "detail": "deck written, not yet launched"}
         return {"state": "failed", "progress": 0.0,
                 "detail": f"no FDS log in {run_dir}"}
     text = log.read_text()

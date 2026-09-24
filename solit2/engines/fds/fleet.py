@@ -157,6 +157,12 @@ def _info(run_dir: Path, scheduler_state: dict[str, str | None], queue: list[str
     status = runner_mod.status(run_dir)
     live = runner_mod.live(run_dir)
     text = _deck_text(run_dir)
+    # I4: a rate or an ETA is only a measurement of something actually
+    # advancing right now. Showing the last-known rate for a paused, failed
+    # or done run reads as a prediction of a future that will not happen,
+    # and a "resumable-in-...-minutes" ETA on a run frozen weeks ago is not
+    # a rare edge case, it is the ordinary look of a halted queue.
+    is_running = status["state"] in runner_mod.RUNNING_STATES
     return RunInfo(
         path=run_dir,
         chid=runner_mod._chid(run_dir),
@@ -168,9 +174,9 @@ def _info(run_dir: Path, scheduler_state: dict[str, str | None], queue: list[str
         detail=status.get("detail", ""),
         simulated_s=live["simulated_s"],
         t_end_s=live["t_end_s"],
-        rate_s_per_s=live["rate_s_per_s"],
-        eta_s=live["eta_s"],
-        eta_ist=scheduler_mod.eta_ist(live["eta_s"]),
+        rate_s_per_s=live["rate_s_per_s"] if is_running else None,
+        eta_s=live["eta_s"] if is_running else None,
+        eta_ist=scheduler_mod.eta_ist(live["eta_s"]) if is_running else None,
         core_block=_core_block(run_dir, scheduler_state),
         queue_position=_queue_position(run_dir, queue),
         last_issue=_last_issue(run_dir),
@@ -187,18 +193,38 @@ def list_runs(roots: tuple[Path, ...] | None = None, state_dir: Path | None = No
     return [_info(run_dir, scheduler_state, queue) for run_dir in discover(roots)]
 
 
+def _block_width(block: str) -> int:
+    """"10-19" -> 10 cores. Every block this scheduler manages is a
+    contiguous inclusive core range, so a plain width, not a block count, is
+    what "cores busy" should ever have meant."""
+    lo, _, hi = block.partition("-")
+    return int(hi) - int(lo) + 1
+
+
 def summarise(infos: list[RunInfo], state_dir: Path | None = None,
              blocks: tuple[str, ...] | None = None) -> FleetSummary:
     state_dir = state_dir if state_dir is not None else scheduler_mod.resolve_state_dir()
     blocks = blocks if blocks is not None else scheduler_mod.resolve_blocks()
     scheduler_state = scheduler_mod.load_state(state_dir, blocks)
+    cores_total = sum(_block_width(b) for b in blocks)
+    cores_busy = sum(_block_width(b) for b, run_dir in scheduler_state.items()
+                     if run_dir is not None)
+    managed = {run_dir for run_dir in scheduler_state.values() if run_dir is not None}
+    for info in infos:
+        if info.state in runner_mod.RUNNING_STATES and str(info.path) not in managed:
+            # Running but not pinned to any block -- the web app's own CFD
+            # step launches unpinned (see app/views/cfd.py), so its cores are
+            # real and busy even though no block accounts for them. One rank
+            # per mesh is what `runner.run` actually asks the OS for.
+            cores_busy += max(runner_mod.mesh_count(info.path / "deck.fds"), 1)
     return FleetSummary(
-        running=sum(1 for i in infos if i.state == "running"),
-        queued=sum(1 for i in infos if i.state != "running" and i.queue_position is not None),
+        running=sum(1 for i in infos if i.state in runner_mod.RUNNING_STATES),
+        queued=sum(1 for i in infos
+                  if i.state not in runner_mod.RUNNING_STATES and i.queue_position is not None),
         done=sum(1 for i in infos if i.state == "done"),
         failed_or_stopped=sum(1 for i in infos if i.state in ("failed", "stopped")),
-        cores_busy=sum(1 for v in scheduler_state.values() if v is not None),
-        cores_total=len(blocks),
+        cores_busy=cores_busy,
+        cores_total=cores_total,
         scheduler_running=scheduler_mod.is_running(state_dir),
     )
 

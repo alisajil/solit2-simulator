@@ -58,6 +58,16 @@ def test_status_reports_failed_when_there_is_no_log(tmp_path):
     assert runner.status(tmp_path)["state"] == "failed"
 
 
+def test_status_reports_pending_for_a_deck_written_but_never_launched(tmp_path):
+    """I4: a grid study or an E sweep writes every deck up front, well
+    before any of them are launched -- each one used to read as a red FAIL
+    (no FDS log) rather than the honest "hasn't started yet"."""
+    (tmp_path / "deck.fds").write_text("&HEAD CHID='x' /\n&TIME T_END=100.0 /\n")
+    state = runner.status(tmp_path)
+    assert state["state"] == "pending"
+    assert state["progress"] == 0.0
+
+
 def test_status_reports_progress_from_the_fds_log(tmp_path):
     (tmp_path / "run.out").write_text(
         "Time Step       100   March 15, 2026  10:00:00\n"

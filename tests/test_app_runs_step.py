@@ -115,6 +115,40 @@ def test_stop_opens_a_confirmation_instead_of_stopping_directly(monkeypatch, tmp
 
     assert not at.exception
     assert calls == [], "clicking Stop must open a confirmation dialog, never stop directly"
+    assert at.session_state[runs._PENDING_KEY] == {"kind": "stop", "run": str(run_dir)}
+    # The dialog's own buttons must actually be reachable -- I5's own
+    # verified fix: they live outside the fragment (_open_pending_dialog is
+    # called from render(), not from inside _live_panel), so they survive
+    # exactly the rerun this .click().run() above already triggered.
+    assert at.button(key="dlg_stop_yes")
+    assert at.button(key="dlg_stop_no")
+
+    at.button(key="dlg_stop_yes").click().run()
+
+    assert not at.exception
+    assert calls == [run_dir], "confirming inside the dialog must call fleet.stop exactly once"
+    assert runs._PENDING_KEY not in at.session_state, "confirming must clear the pending action"
+
+
+def test_stop_confirmation_cancel_clears_the_pending_action_without_stopping(monkeypatch,
+                                                                             tmp_path):
+    run_dir = _write_deck(tmp_path / "runs" / "dx_0.60")
+    monkeypatch.setattr(runner_mod, "status",
+                        lambda d: {"state": "running", "progress": 0.4, "detail": ""})
+    monkeypatch.setattr(runner_mod, "live", lambda d, t_end_s=None: {
+        "time_step": 1, "simulated_s": 400.0, "t_end_s": 1000.0, "step_size_s": 0.1,
+        "elapsed_s": 60.0, "rate_s_per_s": 2.0, "eta_s": 300.0, "hrr_mw": 10.0,
+        "detect_s": None, "activate_s": None})
+    calls = []
+    monkeypatch.setattr(fleet, "stop", lambda run, state_dir: calls.append(run) or True)
+
+    at = _app(monkeypatch, tmp_path, roots=(tmp_path / "runs",))
+    at.button(key=f"stop_{runs._key(run_dir)}").click().run()
+    at.button(key="dlg_stop_no").click().run()
+
+    assert not at.exception
+    assert calls == [], "Cancel must never call fleet.stop"
+    assert runs._PENDING_KEY not in at.session_state
 
 
 def test_pause_opens_a_confirmation_instead_of_pausing_directly(monkeypatch, tmp_path):
@@ -134,6 +168,39 @@ def test_pause_opens_a_confirmation_instead_of_pausing_directly(monkeypatch, tmp
 
     assert not at.exception
     assert calls == [], "clicking Pause must open a confirmation dialog, never pause directly"
+    assert at.button(key="dlg_pause_yes")
+
+    at.button(key="dlg_pause_yes").click().run()
+
+    assert not at.exception
+    assert calls == [run_dir], "confirming inside the dialog must call fleet.pause exactly once"
+
+
+def test_confirmation_dialog_survives_a_fragment_tick(monkeypatch, tmp_path):
+    """I5, the actual browser bug reproduced: a dialog opened INSIDE the
+    fragment loses its buttons on the fragment's own next tick. Simulating a
+    tick here is calling render() again (as the 10s auto-refresh would) with
+    the pending action still in session_state, before ever clicking a dialog
+    button -- the dialog must still be there and still work afterwards."""
+    run_dir = _write_deck(tmp_path / "runs" / "dx_0.60")
+    monkeypatch.setattr(runner_mod, "status",
+                        lambda d: {"state": "running", "progress": 0.4, "detail": ""})
+    monkeypatch.setattr(runner_mod, "live", lambda d, t_end_s=None: {
+        "time_step": 1, "simulated_s": 400.0, "t_end_s": 1000.0, "step_size_s": 0.1,
+        "elapsed_s": 60.0, "rate_s_per_s": 2.0, "eta_s": 300.0, "hrr_mw": 10.0,
+        "detect_s": None, "activate_s": None})
+    calls = []
+    monkeypatch.setattr(fleet, "stop", lambda run, state_dir: calls.append(run) or True)
+
+    at = _app(monkeypatch, tmp_path, roots=(tmp_path / "runs",))
+    at.button(key=f"stop_{runs._key(run_dir)}").click().run()
+    at.run()          # a second, unrelated rerun -- the fragment's own tick
+
+    assert not at.exception
+    assert at.button(key="dlg_stop_yes"), "the dialog must still be open and its buttons live"
+
+    at.button(key="dlg_stop_yes").click().run()
+    assert calls == [run_dir]
 
 
 def test_a_failed_run_shows_its_last_issue_line(monkeypatch, tmp_path):

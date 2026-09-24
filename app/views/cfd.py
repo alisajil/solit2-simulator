@@ -304,14 +304,14 @@ def _live_progress(run_dir: Path) -> None:
         column.metric(label, value, help=help_text)
     st.caption(f"Polled from the run's own output every {POLL}. "
                f"Step {live['time_step'] or 0:,}.")
-    if status["state"] != "running":
+    if status["state"] not in fds_runner.RUNNING_STATES:
         st.rerun(scope="app")
 
 
 def _slice_caption(run_state: str, slice_) -> str:
     """Only a run that actually finished may describe its field as complete."""
     last = float(slice_.t_s[-1])
-    if run_state == "running":
+    if run_state in fds_runner.RUNNING_STATES:
         return f"Preliminary — last complete frame at t = {last:.0f} s; the run is still going."
     if run_state == "done":
         return f"{len(slice_.t_s)} frames to t = {last:.0f} s."
@@ -321,7 +321,7 @@ def _slice_caption(run_state: str, slice_) -> str:
 
 def _missing_slice_note(run_state: str, label: str) -> str:
     """Absence means different things while running, when finished, and when crashed."""
-    if run_state == "running":
+    if run_state in fds_runner.RUNNING_STATES:
         return "FDS has not written this slice yet."
     if run_state == "done":
         return f"This run holds no {label.lower()} slice."
@@ -487,7 +487,7 @@ def render() -> None:
     suppression = dict(SCENARIOS).get(scenario, True)
     run_dir, other_dir = run_dir_for(design, suppression), run_dir_for(design, not suppression)
     status, other_status = _status(run_dir), _status(other_dir)
-    running = status is not None and status["state"] == "running"
+    running = status is not None and status["state"] in fds_runner.RUNNING_STATES
 
     halted = status is not None and status["state"] in ("paused", "stopped")
     if running:
