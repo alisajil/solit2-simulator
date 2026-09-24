@@ -71,3 +71,9 @@ def test_the_transfer_rules_cover_every_test_derived_parameter():
     named = {r.requirement.split("(Annex 3 §3.3: ")[1].rstrip(")") for r in RULES
              if "(Annex 3 §3.3: " in r.requirement}
     assert named == set(g.TEST_DERIVED_PARAMETERS)
+
+
+def test_an_unknown_test_derived_parameter_is_refused_with_the_valid_names():
+    from solit2.compliance.rules import transfer_rules as tr
+    with pytest.raises(ValueError, match="use one of"):
+        tr._t("x", "Annex 3 §3.3", "req", "Not a parameter", tr._spacing, "req")

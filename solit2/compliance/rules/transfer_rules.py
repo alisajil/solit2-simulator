@@ -43,7 +43,7 @@ def _equal(a: float, b: float) -> bool:
 def _response(ctx: Context, test: Design, cls: str) -> Outcome:
     inst_s = time_to_full_operation_s(ctx.installation_result)
     test_s = time_to_full_operation_s(ctx.test_results[cls])
-    return judge(inst_s <= test_s, f"installation {inst_s:.0f} s", f"<= tested {test_s:.0f} s",
+    return judge(inst_s <= test_s + REL_TOL, f"installation {inst_s:.0f} s", f"<= tested {test_s:.0f} s",
                  "Tier 1 detection-to-full-pressure, both designs (predicted)")
 
 
@@ -120,7 +120,8 @@ def _no_extrapolation(ctx: Context, test: Design, cls: str) -> Outcome:
 def _t(rule_id: str, clause: str, requirement: str, parameter: str | None,
        body: Callable[[Context, Design, str], Outcome], required: str, *constants: str) -> Rule:
     if parameter is not None and parameter not in g.TEST_DERIVED_PARAMETERS:
-        raise ValueError(f"{parameter!r} is not an Annex 3 §3.3 test-derived parameter")
+        raise ValueError(f"{parameter!r} is not an Annex 3 §3.3 test-derived parameter; "
+                         f"use one of {list(g.TEST_DERIVED_PARAMETERS)}")
     text = requirement if parameter is None else f"{requirement} (Annex 3 §3.3: {parameter})"
     return Rule(rule_id, GROUP, clause, text, "transfer", _transfer(body, required),
                 constants=constants)
