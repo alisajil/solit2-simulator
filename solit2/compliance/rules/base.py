@@ -7,7 +7,7 @@ from typing import Literal
 
 from solit2.compliance.context import Context
 from solit2.compliance.spec import Deviation
-from solit2.compliance.verdict import Finding, Verdict
+from solit2.compliance.verdict import BasisKind, Finding, Verdict
 
 
 @dataclass(frozen=True)
@@ -16,6 +16,7 @@ class Outcome:
     found: str
     required: str
     basis: str
+    basis_kind: BasisKind
     evidence: str = ""
     fact: str = ""
 
@@ -36,16 +37,18 @@ class Rule:
     constants: tuple[str, ...] = ()
 
 
-def judge(ok: bool, found: str, required: str, basis: str, evidence: str = "") -> Outcome:
-    return Outcome(Verdict.COMPLIES if ok else Verdict.FAILS, found, required, basis, evidence)
+def judge(ok: bool, found: str, required: str, basis: str, basis_kind: BasisKind,
+          evidence: str = "") -> Outcome:
+    return Outcome(Verdict.COMPLIES if ok else Verdict.FAILS, found, required, basis, basis_kind,
+                   evidence)
 
 
-def needs(fact: str, required: str, why: str = "not supplied") -> Outcome:
-    return Outcome(Verdict.NEEDS_EVIDENCE, why, required, "spec fact", fact=fact)
+def needs(fact: str, required: str, basis_kind: BasisKind, why: str = "not supplied") -> Outcome:
+    return Outcome(Verdict.NEEDS_EVIDENCE, why, required, "spec fact", basis_kind, fact=fact)
 
 
-def not_applicable(why: str) -> Outcome:
-    return Outcome(Verdict.NOT_APPLICABLE, why, "—", "—")
+def not_applicable(why: str, basis_kind: BasisKind) -> Outcome:
+    return Outcome(Verdict.NOT_APPLICABLE, why, "—", "—", basis_kind)
 
 
 def evaluate(rule: Rule, ctx: Context, deviations: Mapping[str, Deviation]) -> Finding:
@@ -60,4 +63,5 @@ def evaluate(rule: Rule, ctx: Context, deviations: Mapping[str, Deviation]) -> F
     return Finding(rule_id=rule.id, group=rule.group, clause=rule.clause,
                    requirement=rule.requirement, kind=rule.kind, verdict=verdict,
                    found=out.found, required=out.required, basis=out.basis,
-                   evidence=out.evidence, fact=out.fact, deviation=note)
+                   basis_kind=out.basis_kind, evidence=out.evidence, fact=out.fact,
+                   deviation=note)
