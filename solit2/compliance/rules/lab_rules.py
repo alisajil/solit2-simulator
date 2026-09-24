@@ -30,11 +30,13 @@ def _slug(text: str) -> str:
 
 def _fact(name: str, ok: Callable[[Any], bool], required: str,
           show: Callable[[Any], str] = str) -> Callable[[Context], Outcome]:
+    """Every rule in this module reads one `Facts` field, so its basis kind is
+    "evidenced" throughout -- there is nothing else it could be judged on."""
     def check(ctx: Context) -> Outcome:
         fact = getattr(ctx.facts, name)
         if fact is None:
-            return needs(name, required)
-        return judge(ok(fact.value), show(fact.value), required, "spec fact",
+            return needs(name, required, "evidenced")
+        return judge(ok(fact.value), show(fact.value), required, "spec fact", "evidenced",
                      fact.evidence.cite())
     return check
 
@@ -47,11 +49,11 @@ def _option(ctx: Context) -> Outcome:
     fact = ctx.facts.activation_option
     required = "option A, whose timing Annex 7 states"
     if fact is None:
-        return needs("activation_option", required)
+        return needs("activation_option", required, "evidenced")
     if fact.value == "B":
-        return needs("activation_option", required,
+        return needs("activation_option", required, "evidenced",
                      "option B declared; Annex 7 leaves its content blank, so it cannot be judged")
-    return judge(True, "option A", required, "spec fact", fact.evidence.cite())
+    return judge(True, "option A", required, "spec fact", "evidenced", fact.evidence.cite())
 
 
 def _required_test(row: tuple[str, ...]) -> Callable[[Context], Outcome]:
@@ -66,11 +68,11 @@ def _required_test(row: tuple[str, ...]) -> Callable[[Context], Outcome]:
     def check(ctx: Context) -> Outcome:
         fact = ctx.facts.planned_tests
         if fact is None:
-            return needs("planned_tests", required)
+            return needs("planned_tests", required, "evidenced")
         found = any(t.fire_class == fire_class and t.velocity_ms == velocity
                     and (fire_class == "B" or t.covered == covered) for t in fact.value)
         return judge(found, "planned" if found else "not in the planned tests", required,
-                     "spec fact", fact.evidence.cite())
+                     "spec fact", "evidenced", fact.evidence.cite())
     return check
 
 
@@ -78,22 +80,24 @@ def _authority_limits(ctx: Context) -> Outcome:
     required = "every Annex 7 §7 limit set by a cited authority"
     fact = ctx.facts.authority_limits
     if fact is None:
-        return needs("authority_limits", required)
+        return needs("authority_limits", required, "evidenced")
     unset = [k for k, v in ctx.installation.ahj.model_dump().items()
              if k not in ("note", "structure_temp_threshold_c") and v is None]
     if unset:
-        return needs("authority_limits", required, "limits still unset: " + ", ".join(unset))
-    return judge(True, "all set", required, "installation design ahj block", fact.evidence.cite())
+        return needs("authority_limits", required, "evidenced",
+                     "limits still unset: " + ", ".join(unset))
+    return judge(True, "all set", required, "installation design ahj block", "evidenced",
+                 fact.evidence.cite())
 
 
 def _velocity_station(ctx: Context) -> Outcome:
     required = "; ".join(f"{k}: U{v:g}" for k, v in sorted(g.VELOCITY_STATION_M.items()))
     fact = ctx.facts.velocity_measured_at_m
     if fact is None:
-        return needs("velocity_measured_at_m", required)
+        return needs("velocity_measured_at_m", required, "evidenced")
     ok = all(fact.value.get(cls) == g.VELOCITY_STATION_M[cls] for cls in ctx.tests)
     return judge(ok, "; ".join(f"{k}: U{v:g}" for k, v in sorted(fact.value.items())),
-                 required, "spec fact", fact.evidence.cite())
+                 required, "spec fact", "evidenced", fact.evidence.cite())
 
 
 def _lab(rule_id: str, group: str, clause: str, requirement: str,
