@@ -580,6 +580,38 @@ def test_a_paused_run_is_paused_and_not_failed():
     assert "resumable" in runner.status(d)["detail"]
 
 
+def test_a_paused_run_whose_process_is_still_alive_reads_pausing_not_paused():
+    """C2: FDS checks for the stop file once per time step, not instantly, so
+    there is a real window -- up to one step, tens of seconds on a large deck
+    -- where the marker exists but the ranks have not exited yet. Reporting
+    "paused" for that window let a second launch (Resume, or the scheduler
+    reusing what it thought was a freed block) start a second FDS in the same
+    directory while the first was still writing to it."""
+    import os
+    import tempfile
+    from pathlib import Path
+    d = _run_dir_with_deck(Path(tempfile.mkdtemp()))
+    runner.pause(d)
+    (d / runner.PID_NAME).write_text(str(os.getpid()))     # a real, definitely-alive pid
+    state = runner.status(d)
+    assert state["state"] == "pausing"
+    assert state["progress"] == pytest.approx(0.25)
+    assert "finishing its current step" in state["detail"]
+    assert "pausing" in runner.RUNNING_STATES, \
+        "callers checking 'is this occupying a core' must see it as still-running"
+
+
+def test_a_paused_run_with_no_evidence_of_a_live_process_reads_paused():
+    """No pid file at all (a run launched outside the app) is UNKNOWN, not
+    positive evidence of life -- must not block on it forever, so it still
+    reads as the ordinary terminal "paused"."""
+    import tempfile
+    from pathlib import Path
+    d = _run_dir_with_deck(Path(tempfile.mkdtemp()))
+    runner.pause(d)
+    assert runner.status(d)["state"] == "paused"
+
+
 def test_a_run_stopped_by_user_that_logged_its_own_stop_line_is_paused_not_failed():
     """Real FDS appends "STOP: FDS stopped by user (CHID: ...)" to its own log
     once it notices the `<CHID>.stop` file `pause()` writes and exits. That
@@ -917,7 +949,8 @@ def test_stop_does_not_claim_a_kill_it_was_not_allowed_to_make(monkeypatch):
     d = _run_dir_with_deck(Path(tempfile.mkdtemp()))
     (d / runner.PID_NAME).write_text("4242")
     monkeypatch.setattr(runner, "_pid_alive", lambda pid: True)
-    monkeypatch.setattr(os, "getpgid", lambda pid: 9999)
+    monkeypatch.setattr(runner, "_pid_matches_run_dir", lambda pid, run_dir: True)
+    monkeypatch.setattr(os, "getpgid", lambda pid: pid)
 
     def denied(pgid, sig):
         raise PermissionError("Operation not permitted")
@@ -937,7 +970,8 @@ def test_stop_marks_a_run_whose_group_vanished_mid_signal(monkeypatch):
     d = _run_dir_with_deck(Path(tempfile.mkdtemp()))
     (d / runner.PID_NAME).write_text("4242")
     monkeypatch.setattr(runner, "_pid_alive", lambda pid: True)
-    monkeypatch.setattr(os, "getpgid", lambda pid: 9999)
+    monkeypatch.setattr(runner, "_pid_matches_run_dir", lambda pid, run_dir: True)
+    monkeypatch.setattr(os, "getpgid", lambda pid: pid)
 
     def gone(pgid, sig):
         raise ProcessLookupError("No such process")
@@ -957,9 +991,74 @@ def test_stop_signals_the_process_group_not_the_launcher_alone(monkeypatch):
     d = _run_dir_with_deck(Path(tempfile.mkdtemp()))
     (d / runner.PID_NAME).write_text("4242")
     monkeypatch.setattr(runner, "_pid_alive", lambda pid: True)
-    monkeypatch.setattr(os, "getpgid", lambda pid: 9999)
+    monkeypatch.setattr(runner, "_pid_matches_run_dir", lambda pid, run_dir: True)
+    monkeypatch.setattr(os, "getpgid", lambda pid: pid)
     signalled = []
     monkeypatch.setattr(os, "killpg", lambda pgid, sig: signalled.append((pgid, sig)))
     monkeypatch.setattr(runner.time, "sleep", lambda s: None)
     runner.stop(d)
-    assert signalled and all(pgid == 9999 for pgid, _ in signalled), "the group, not the pid"
+    assert signalled and all(pgid == 4242 for pgid, _ in signalled), "the group, not the pid"
+
+
+def test_stop_refuses_a_stale_or_recycled_pid(monkeypatch):
+    """I3: the pid file can outlive the process it named. `_pid_matches_run_dir`
+    returning False means whatever now holds this pid is not this run's own
+    launcher any more -- signalling it would risk hitting an unrelated
+    process, so stop() must refuse rather than guess."""
+    import tempfile
+    from pathlib import Path
+    d = _run_dir_with_deck(Path(tempfile.mkdtemp()))
+    (d / runner.PID_NAME).write_text("4242")
+    monkeypatch.setattr(runner, "_pid_alive", lambda pid: True)
+    monkeypatch.setattr(runner, "_pid_matches_run_dir", lambda pid, run_dir: False)
+    with pytest.raises(PermissionError, match="stale or recycled"):
+        runner.stop(d)
+    assert not runner.was_stopped(d)
+
+
+def test_pid_matches_run_dir_true_when_getpgid_matches_and_no_procfs(tmp_path, monkeypatch):
+    """On a platform with no procfs at all (macOS/BSD -- this test's own
+    machine), the getpgid check is the whole safety net available, same as
+    before this fix existed anywhere it could not be strengthened further."""
+    import os
+    monkeypatch.setattr(os, "getpgid", lambda pid: pid)
+    no_procfs = tmp_path / "no-such-proc-dir"
+    assert runner._pid_matches_run_dir(4242, tmp_path, proc_dir=no_procfs) is True
+
+
+def test_pid_matches_run_dir_false_when_getpgid_does_not_match(monkeypatch):
+    import os
+    from pathlib import Path
+    monkeypatch.setattr(os, "getpgid", lambda pid: pid + 1)   # never equal to pid
+    assert runner._pid_matches_run_dir(4242, Path("/tmp"), proc_dir=Path("/nonexistent")) is False
+
+
+def test_pid_matches_run_dir_checks_cwd_against_a_fake_procfs(tmp_path, monkeypatch):
+    """A synthetic /proc/<pid>/cwd (this platform has no real one) proves the
+    cwd half of the check without needing an actual Linux box: getpgid is
+    stubbed to match so only the cwd branch is exercised."""
+    import os
+    monkeypatch.setattr(os, "getpgid", lambda pid: pid)
+    real_run_dir = tmp_path / "run"
+    real_run_dir.mkdir()
+    other_dir = tmp_path / "elsewhere"
+    other_dir.mkdir()
+    proc_dir = tmp_path / "proc"
+    pid = 4242
+    cwd_link = proc_dir / str(pid) / "cwd"
+    cwd_link.parent.mkdir(parents=True)
+    cwd_link.symlink_to(real_run_dir)
+
+    assert runner._pid_matches_run_dir(pid, real_run_dir, proc_dir=proc_dir) is True
+    assert runner._pid_matches_run_dir(pid, other_dir, proc_dir=proc_dir) is False
+
+
+def test_pid_matches_run_dir_false_when_procfs_exists_but_the_pid_does_not(tmp_path, monkeypatch):
+    """procfs is mounted (Linux) but this specific pid has no entry under it
+    -- the process named by the pid file is simply gone, which is exactly the
+    stale-pid case this check exists to catch."""
+    import os
+    monkeypatch.setattr(os, "getpgid", lambda pid: pid)
+    proc_dir = tmp_path / "proc"
+    proc_dir.mkdir()
+    assert runner._pid_matches_run_dir(4242, tmp_path, proc_dir=proc_dir) is False

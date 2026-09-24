@@ -312,6 +312,31 @@ def test_resume_enqueues_when_restart_files_and_design_are_present(tmp_path, mon
     assert rows[-1]["action"] == "resume" and rows[-1]["outcome"] == "enqueued"
 
 
+def test_resume_refuses_a_directory_that_already_has_a_live_process(tmp_path, monkeypatch):
+    """C2: even with restart files and design.json both present, resuming a
+    directory that is ALREADY running would launch a second FDS on top of
+    the first."""
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / scheduler_mod.DESIGN_NAME).write_text(
+        Design.load(BASELINE).model_dump_json(by_alias=True))
+    monkeypatch.setattr(runner_mod, "has_restart_files", lambda d: True)
+    monkeypatch.setattr(runner_mod, "_launcher_alive", lambda d: True)
+    with pytest.raises(ValueError, match="already has a live process"):
+        fleet.resume(run_dir, tmp_path / "state")
+    assert scheduler_mod.load_queue(tmp_path / "state") == []
+    rows = [json.loads(ln)
+            for ln in (tmp_path / "state" / fleet.ACTIONS_LOG_NAME).read_text().splitlines()]
+    assert rows[-1]["outcome"] == "failed: already running"
+
+
+def test_enqueue_refuses_a_directory_that_already_has_a_live_process(tmp_path, monkeypatch):
+    monkeypatch.setattr(runner_mod, "_launcher_alive", lambda d: True)
+    with pytest.raises(ValueError, match="already has a live process"):
+        fleet.enqueue(tmp_path / "run", tmp_path / "state")
+    assert scheduler_mod.load_queue(tmp_path / "state") == []
+
+
 # --- adopt_design() ----------------------------------------------------------------
 
 def test_adopt_design_writes_design_json(tmp_path):

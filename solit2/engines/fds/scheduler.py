@@ -30,7 +30,8 @@ import contextlib
 import fcntl
 import json
 import os
-import time
+import signal
+import threading
 from datetime import datetime, timedelta
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -297,21 +298,36 @@ def _launch(run_dir: Path, block: str) -> None:
 
 def _release_finished(state_dir: Path, state: dict[str, str | None],
                       locks: dict[str, object]) -> dict[str, str | None]:
-    """Free every block whose run is no longer `running` -- done, failed,
-    stopped or paused all free the block; only the queue decides what runs
-    next, so a paused run does not hold its core hostage."""
+    """Free every block whose run is no longer occupying its cores -- done
+    always frees it; failed, stopped or paused free it too, UNLESS the
+    run's own process is still actually alive, in which case the block is
+    held rather than freed.
+
+    That exception is C2's fix: `status()` reports "pausing" (in
+    `runner.RUNNING_STATES`, skipped above like "running") for the ordinary
+    case of a just-asked-to-stop run that has not exited yet, but a run can
+    also read "failed" while its processes are alive and well -- wedged
+    (silent past STALL_AFTER_S) rather than gone. Freeing the block there let
+    the scheduler pin a second FDS onto the SAME cores the wedged one was
+    still burning.
+    """
     state = dict(state)
     for block, run_dir in list(state.items()):
         if run_dir is None:
             continue
-        status = runner_mod.status(Path(run_dir))
-        if status["state"] == "running":
+        run_path = Path(run_dir)
+        status = runner_mod.status(run_path)
+        if status["state"] in runner_mod.RUNNING_STATES:
+            continue
+        if status["state"] != "done" and runner_mod._launcher_alive(run_path) is True:
+            _log(state_dir, f"{run_dir}: reported {status['state']} on block {block} but its "
+                             f"process is still alive; held rather than freed")
             continue
         if status["state"] == "done":
-            _clear_failures(Path(run_dir))
+            _clear_failures(run_path)
             _log(state_dir, f"{run_dir}: done on block {block}, freed")
         elif status["state"] == "failed":
-            count = _record_failure(Path(run_dir))
+            count = _record_failure(run_path)
             _log(state_dir, f"{run_dir}: failed on block {block} ({count}/{MAX_FAILURES}) "
                              f"-- {status.get('detail', '')}")
         else:
@@ -385,6 +401,17 @@ def step(state_dir: Path, blocks: tuple[str, ...], state: dict[str, str | None],
                 _log(state_dir, f"{run_dir}: does not exist on disk "
                                  f"({count}/{MAX_FAILURES}), skipped")
                 continue
+            if runner_mod._launcher_alive(Path(run_dir)) is True:
+                # A live process already sits in this directory that this
+                # scheduler instance does not hold the lock for -- an adopted
+                # run not yet re-acquired (see run_forever's startup loop), or
+                # one launched outside the scheduler entirely (the app's own
+                # unpinned CFD step). Never launched into; not a failure of
+                # the run itself, so not counted against it.
+                queue = [run_dir] + queue
+                unavailable.add(run_dir)
+                _log(state_dir, f"{run_dir}: already has a live process, skipped")
+                continue
             lock, unavailable_reason = _try_lock_run(Path(run_dir))
             if lock is None:
                 # `_next_runnable` already popped this entry out of `queue` --
@@ -418,31 +445,88 @@ def step(state_dir: Path, blocks: tuple[str, ...], state: dict[str, str | None],
     return state
 
 
+def _reacquire_locks(state_dir: Path, state: dict[str, str | None],
+                     locks: dict[str, object]) -> None:
+    """Re-acquire the per-run-dir lock for every block `state.json` already
+    says is running, once, right at startup.
+
+    C2: an OS-level `flock` is held by an open file descriptor, and releases
+    the instant the process holding it exits -- so a freshly started (or
+    restarted) scheduler process holds NONE of the locks its own state
+    claims, even though the FDS runs those locks were protecting are still
+    going. Without this, the very first `step()` after a restart could
+    launch a second FDS in a directory the state file itself says is
+    already occupied (`step()`'s own `_launcher_alive` guard before a launch
+    is the OTHER half of this fix -- this one covers "already tracked",
+    that one covers "not yet tracked at all").
+    """
+    for block, run_dir in state.items():
+        if run_dir is None:
+            continue
+        lock, reason = _try_lock_run(Path(run_dir))
+        if lock is not None:
+            locks[run_dir] = lock
+            _log(state_dir, f"{run_dir}: re-acquired the lock for block {block} at startup")
+        else:
+            _log(state_dir, f"{run_dir}: could not re-acquire the lock for block {block} "
+                             f"at startup ({reason})")
+
+
+# Set from the SIGTERM handler `run_forever` installs, checked between
+# iterations of its own loop. A module-level flag rather than an
+# instance/closure variable because `signal.signal` can only install a
+# plain callable, and `run_forever` clears it on every call so one call's
+# shutdown request (a test, in practice -- the systemd unit calls this once)
+# can never leak into a later one.
+_shutdown_event = threading.Event()
+
+
+def _handle_sigterm(signum, frame) -> None:
+    _shutdown_event.set()
+
+
 def run_forever(state_dir: Path, blocks: tuple[str, ...], poll_s: float = POLL_S,
                 stop_after: int | None = None) -> None:
     """The daemon loop `solit2 fds-scheduler` runs in the foreground.
 
     `stop_after` bounds the number of iterations; production callers never
-    pass it and the loop runs until the process is killed (systemd's
-    `Restart=always` brings it back). Writes and then removes `PID_NAME`
-    around the loop so `is_running()` can tell whether a scheduler is
-    actually alive.
+    pass it and the loop runs until SIGTERM (systemd's normal stop signal)
+    or the process is killed outright (`Restart=always` brings it back
+    either way). Writes and then removes `PID_NAME` around the loop so
+    `is_running()` can tell whether a scheduler is actually alive.
+
+    C1: SIGTERM sets `_shutdown_event` rather than being left to Python's
+    default handling (which raises `KeyboardInterrupt` at an arbitrary
+    bytecode boundary -- possibly mid-`step()`, between a launch and the
+    `state.json` write that records it). The loop checks the event between
+    iterations and blocks its own poll interval on `_shutdown_event.wait`
+    instead of `time.sleep`, so a stop is noticed WITHIN the wait rather than
+    only after it, and always lands between iterations, never inside one.
     """
     state_dir = Path(state_dir)
     state_dir.mkdir(parents=True, exist_ok=True)
     _write_pid(state_dir)
+    _shutdown_event.clear()
+    previous_handler = signal.signal(signal.SIGTERM, _handle_sigterm)
     try:
         state = load_state(state_dir, blocks)
         locks: dict[str, object] = {}
+        _reacquire_locks(state_dir, state, locks)
         logged_skips: set[str] = set()
         iterations = 0
         while stop_after is None or iterations < stop_after:
+            if _shutdown_event.is_set():
+                _log(state_dir, "SIGTERM received; exiting between iterations")
+                break
             state = step(state_dir, blocks, state, locks, logged_skips)
             save_state(state_dir, state)
             iterations += 1
             if stop_after is None or iterations < stop_after:
-                time.sleep(poll_s)
+                if _shutdown_event.wait(poll_s):
+                    _log(state_dir, "SIGTERM received; exiting between iterations")
+                    break
     finally:
+        signal.signal(signal.SIGTERM, previous_handler)
         (state_dir / PID_NAME).unlink(missing_ok=True)
 
 

@@ -569,9 +569,14 @@ def test_a_running_run_offers_both_a_pause_and_a_hard_stop(run_view, monkeypatch
     monkeypatch.setattr(cfd, "_load_slice", lambda *a, **kw: None)
     monkeypatch.setattr(cfd.fds_runner, "series", lambda *a, **kw: {})
     # Alive, with the kill itself stubbed: the button's job is to ask, and
-    # stop()'s own tests cover what the asking does.
+    # stop()'s own tests cover what the asking does. getpgid matches pid --
+    # the real invariant `run()`'s start_new_session=True gives every launch
+    # -- so the new I3 pid/cwd check (runner._pid_matches_run_dir) passes;
+    # /proc does not exist on the machine these tests run on, so that check
+    # is getpgid-only here regardless (see test_fds_runner.py for the parts
+    # of it that need a synthetic /proc to exercise).
     monkeypatch.setattr(cfd.fds_runner, "_pid_alive", lambda pid: True)
-    monkeypatch.setattr(os, "getpgid", lambda pid: 9999)
+    monkeypatch.setattr(os, "getpgid", lambda pid: pid)
     monkeypatch.setattr(os, "killpg", lambda pgid, sig: None)
     monkeypatch.setattr(cfd.fds_runner.time, "sleep", lambda s: None)
     at = run_view("cfd")

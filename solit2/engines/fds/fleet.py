@@ -273,6 +273,19 @@ def stop(run_dir: Path, state_dir: Path) -> bool:
     return killed
 
 
+def _refuse_if_alive(action: str, run_dir: Path, state_dir: Path) -> None:
+    """C2: never queue a directory that already has a live process -- the
+    scheduler would eventually pick it up and launch a SECOND FDS on top of
+    it. Not a scheduler-running check (that's a different question, see
+    `enqueue`'s own docstring): this is "is anything actually running here
+    right now", true or not regardless of whether a scheduler is watching."""
+    if runner_mod._launcher_alive(Path(run_dir)) is True:
+        _log_action(state_dir, action, run_dir, "failed: already running")
+        raise ValueError(
+            f"{run_dir} already has a live process; {action}ing it would risk launching a "
+            f"second FDS in the same directory")
+
+
 def enqueue(run_dir: Path, state_dir: Path, position: int | None = None) -> None:
     """Add `run_dir` to the scheduler's queue -- appended at the end by
     default, or inserted at `position`. Writing the queue file is all this
@@ -281,6 +294,7 @@ def enqueue(run_dir: Path, state_dir: Path, position: int | None = None) -> None
     scheduler running" -- the action is still recorded and still correct,
     just not yet acted on."""
     run_dir = Path(run_dir)
+    _refuse_if_alive("enqueue", run_dir, state_dir)
     entry = str(run_dir)
     with scheduler_mod.queue_lock(state_dir):
         queue = [q for q in scheduler_mod.load_queue(state_dir) if q != entry]
@@ -328,6 +342,7 @@ def resume(run_dir: Path, state_dir: Path) -> None:
     absent physics.
     """
     run_dir = Path(run_dir)
+    _refuse_if_alive("resume", run_dir, state_dir)
     if not runner_mod.has_restart_files(run_dir):
         _log_action(state_dir, "resume", run_dir, "failed: no restart files")
         raise FileNotFoundError(

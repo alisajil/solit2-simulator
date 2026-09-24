@@ -48,6 +48,14 @@ REMOTE_ENV = "SOLIT2_FDS_HOST"
 SMV_ENV = "SOLIT2_SMV_BIN"
 MIN_FREE_BYTES = 10 * 1024**3          # parent spec: 10 GB floor
 LOG_NAME = "run.out"
+# Every `status()` state where the run's own processes are (or may still be)
+# actively computing -- "running" itself, and "pausing" (asked to stop, not
+# yet gone: see status()). A caller deciding whether a core is occupied, a
+# rate/ETA is meaningful, or a second launch would double up on one directory
+# should treat both the same; a bare `== "running"` string check misses
+# "pausing" and is exactly the C2 bug (freeing a block, or launching into a
+# directory, while the previous run had not actually exited yet).
+RUNNING_STATES = frozenset({"running", "pausing"})
 _TOTAL_TIME = re.compile(r"Total Time:\s+([\d.]+)\s*s")
 _T_END = re.compile(r"T_END\s*=\s*([\d.]+)")
 _DONE = "STOP: FDS completed successfully"
@@ -248,6 +256,18 @@ def stop(run_dir: Path) -> bool:
                        capture_output=True, check=False)
         (run_dir / STOPPED_NAME).write_text("")
         return True
+    if not _pid_matches_run_dir(pid, run_dir):
+        # I3: `fds.pid` can outlive the process it named -- killed some other
+        # way, or the OS has since reused that number for an unrelated
+        # process. Signalling it then would not be stopping THIS run; it
+        # would be signalling whatever now holds pid, which `_pid_alive`
+        # alone cannot tell apart from the real thing.
+        raise PermissionError(
+            f"{run_dir}'s {PID_NAME} names pid {pid}, but that process no longer looks like "
+            f"this run's own launcher (it is not its own process group leader, or its "
+            f"working directory is not {run_dir} any more) -- it may be a stale or recycled "
+            f"pid. Stopping it here would risk signalling the wrong process; confirm by hand "
+            f"(`ps -o pid,pgid,args -p {pid}` and `readlink /proc/{pid}/cwd`) before ending it")
     for signal_number in (signal.SIGTERM, signal.SIGKILL):
         try:
             os.killpg(os.getpgid(pid), signal_number)
@@ -520,6 +540,40 @@ def _pid_alive(pid: int) -> bool:
         kernel32.CloseHandle(handle)
 
 
+def _pid_matches_run_dir(pid: int, run_dir: Path, *, proc_dir: Path = Path("/proc")) -> bool:
+    """I3: is `pid` actually the launcher THIS run dir's own `fds.pid` should
+    name, not a stale or recycled number that happens to still exist?
+
+    Two checks, both POSIX-only (callers gate this on `os.name != 'nt'`):
+
+    - `getpgid(pid) == pid`: `run()` launches with `start_new_session=True`,
+      which makes the launched process the leader of a brand new session AND
+      process group -- so for the real thing this is always true. A pid that
+      is no longer its own group leader is not what was launched here.
+    - on a system with procfs (Linux -- the deployment target), `/proc/<pid>
+      /cwd` must resolve to `run_dir`: FDS is launched with `cwd=run_dir` (see
+      `run()`), so the real process's working directory never moves away from
+      it. Skipped where there is no procfs at all (macOS/BSD): the getpgid
+      check is the only signal available there, same as always.
+    """
+    try:
+        if os.getpgid(pid) != pid:
+            return False
+    except ProcessLookupError:
+        return False
+    except OSError:
+        pass                                  # not ours to ask; fall through to what we CAN check
+    cwd_link = proc_dir / str(pid) / "cwd"
+    if not proc_dir.is_dir():
+        return True                           # no procfs on this platform; getpgid is the whole check
+    if not cwd_link.exists():
+        return False                          # procfs exists but this pid does not -- it is gone
+    try:
+        return cwd_link.resolve() == Path(run_dir).resolve()
+    except OSError:
+        return False
+
+
 def _launcher_alive(run_dir: Path) -> bool | None:
     """Whether the process `run()` launched is still there; None if unknown.
 
@@ -582,7 +636,19 @@ def status(run_dir: Path) -> dict:
                               else "; it wrote no restart files, so it cannot resume"))}
     if is_paused(run_dir):
         # Asked to stop, so silence is the point rather than a symptom, and
-        # neither the pid check nor the stall clock below has anything to say.
+        # neither the stall clock below has anything to say. The pid check
+        # DOES still matter here, though: FDS checks for the stop file once
+        # per time step, not instantly, so there is a real window -- up to
+        # one step, which can be tens of seconds on a large deck -- where the
+        # marker exists but the ranks are still finishing. Reporting "paused"
+        # for that window made a second launch (Resume, or the scheduler
+        # reusing the freed block) start a second FDS in the same directory
+        # while the first was still writing to it.
+        if _launcher_alive(run_dir) is True:
+            return {"state": "pausing", "progress": progress,
+                    "detail": ("finishing its current step before stopping at "
+                               + (f"{float(elapsed[-1]):.0f} s of {float(end.group(1)):.0f} s"
+                                  if elapsed else "the start"))}
         return {"state": "paused", "progress": progress,
                 "detail": ("stopped gracefully at "
                            + (f"{float(elapsed[-1]):.0f} s of {float(end.group(1)):.0f} s"

@@ -205,6 +205,35 @@ def test_run_forever_writes_and_removes_its_pid_file(tmp_path):
     assert seen_during["after"] is False
 
 
+def test_run_forever_exits_between_iterations_on_sigterm(tmp_path, monkeypatch):
+    """C1: the loop's default `stop_after=None` never returns on its own --
+    only a real SIGTERM (systemd's normal stop signal) should end it, caught
+    by the handler `run_forever` installs and checked between iterations via
+    `_shutdown_event`, never left to Python's default (a `KeyboardInterrupt`
+    that could land mid-step, after a launch but before the state.json write
+    that records it)."""
+    import os
+    import signal
+    import threading
+    import time
+
+    monkeypatch.setattr(runner_mod, "status", lambda d: {"state": "done", "progress": 1.0})
+    pid = os.getpid()
+
+    def _send_sigterm_shortly():
+        time.sleep(0.1)
+        os.kill(pid, signal.SIGTERM)
+
+    threading.Thread(target=_send_sigterm_shortly, daemon=True).start()
+    started = time.monotonic()
+    scheduler.run_forever(tmp_path, ("0-9",), poll_s=0.05, stop_after=None)
+    elapsed = time.monotonic() - started
+
+    assert elapsed < 5.0, "must not have hung waiting for stop_after to bound it"
+    assert "SIGTERM received" in (tmp_path / scheduler.LOG_NAME).read_text()
+    assert not (tmp_path / scheduler.PID_NAME).exists()
+
+
 def test_log_lines_are_ist_stamped(tmp_path):
     scheduler._log(tmp_path, "hello")
     line = (tmp_path / scheduler.LOG_NAME).read_text().splitlines()[0]
@@ -293,6 +322,86 @@ def test_step_records_a_failure_and_leaves_the_block_free(tmp_path, fake_run_dir
     state = scheduler.step(tmp_path, ("0-9",), {"0-9": str(fake_run_dir)}, {}, set())
     assert state == {"0-9": None}
     assert scheduler._failure_count(fake_run_dir) == 1
+
+
+def test_step_holds_a_pausing_block_it_never_frees_it_as_running(tmp_path, fake_run_dir,
+                                                                  monkeypatch):
+    """"pausing" is in runner.RUNNING_STATES, so it is skipped exactly like
+    "running" -- never reaches the free/log/failure-count logic at all."""
+    monkeypatch.setattr(runner_mod, "status",
+                        lambda d: {"state": "pausing", "detail": "finishing its step"})
+    monkeypatch.setattr(runner_mod, "_launcher_alive", lambda d: pytest.fail(
+        "must not even be asked -- 'pausing' is already a RUNNING_STATE"))
+    state = scheduler.step(tmp_path, ("0-9",), {"0-9": str(fake_run_dir)}, {}, set())
+    assert state == {"0-9": str(fake_run_dir)}
+
+
+def test_step_holds_a_wedged_failed_block_whose_process_is_still_alive(tmp_path, fake_run_dir,
+                                                                       monkeypatch):
+    """C2: a run marked "failed" because it went quiet (STALL_AFTER_S) can
+    still have live processes -- freeing its block there pins the NEXT run
+    onto the same cores the wedged one is still burning."""
+    monkeypatch.setattr(runner_mod, "status",
+                        lambda d: {"state": "failed", "detail": "no output for 20 minutes"})
+    monkeypatch.setattr(runner_mod, "_launcher_alive", lambda d: True)
+    state = scheduler.step(tmp_path, ("0-9",), {"0-9": str(fake_run_dir)}, {}, set())
+    assert state == {"0-9": str(fake_run_dir)}, "held, not freed"
+    assert scheduler._failure_count(fake_run_dir) == 0, "not charged as a failure either"
+    assert "still alive" in (tmp_path / scheduler.LOG_NAME).read_text()
+
+
+def test_step_frees_a_done_block_even_if_the_launcher_somehow_still_reports_alive(
+        tmp_path, fake_run_dir, monkeypatch):
+    """"done" always frees, unconditionally -- FDS printing its own success
+    line is the authority, not a pid check that could lag behind it by a
+    moment while the process finishes exiting."""
+    monkeypatch.setattr(runner_mod, "status", lambda d: {"state": "done", "progress": 1.0})
+    monkeypatch.setattr(runner_mod, "_launcher_alive", lambda d: True)
+    state = scheduler.step(tmp_path, ("0-9",), {"0-9": str(fake_run_dir)}, {}, set())
+    assert state == {"0-9": None}
+
+
+def test_step_never_launches_into_a_directory_with_an_unlocked_live_process(tmp_path,
+                                                                            fake_run_dir,
+                                                                            monkeypatch):
+    """C2: a live process with no lock this scheduler instance holds -- an
+    adopted run not yet re-acquired, or one launched outside the scheduler
+    entirely (the web app's own unpinned CFD step). The run-dir lock alone
+    cannot catch this: nothing else was ever holding it."""
+    scheduler.save_queue(tmp_path, [str(fake_run_dir)])
+    monkeypatch.setattr(runner_mod, "status", lambda d: {"state": "failed", "detail": ""})
+    monkeypatch.setattr(runner_mod, "has_restart_files", lambda d: False)
+    monkeypatch.setattr(runner_mod, "_launcher_alive", lambda d: True)
+    monkeypatch.setattr(runner_mod, "run", lambda *a, **k: pytest.fail("must not launch"))
+
+    state = scheduler.step(tmp_path, ("0-9",), {"0-9": None}, {}, set())
+
+    assert state == {"0-9": None}
+    assert scheduler.load_queue(tmp_path) == [str(fake_run_dir)], "left queued, not lost"
+    assert "already has a live process" in (tmp_path / scheduler.LOG_NAME).read_text()
+
+
+def test_reacquire_locks_takes_the_lock_for_every_running_entry_at_startup(tmp_path,
+                                                                           fake_run_dir):
+    state = {"0-9": str(fake_run_dir), "10-19": None}
+    locks: dict[str, object] = {}
+    scheduler._reacquire_locks(tmp_path, state, locks)
+    assert str(fake_run_dir) in locks
+    # and it actually holds the OS lock now -- a second attempt must fail
+    second, reason = scheduler._try_lock_run(fake_run_dir)
+    assert second is None
+    locks[str(fake_run_dir)].close()
+
+
+def test_reacquire_locks_logs_when_it_cannot_get_one(tmp_path, fake_run_dir):
+    held, _ = scheduler._try_lock_run(fake_run_dir)     # something else already has it
+    try:
+        locks: dict[str, object] = {}
+        scheduler._reacquire_locks(tmp_path, {"0-9": str(fake_run_dir)}, locks)
+        assert str(fake_run_dir) not in locks
+        assert "could not re-acquire" in (tmp_path / scheduler.LOG_NAME).read_text()
+    finally:
+        held.close()
 
 
 def test_step_skips_a_run_that_has_failed_too_many_times_and_logs_once(tmp_path, fake_run_dir,
