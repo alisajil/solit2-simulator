@@ -41,6 +41,18 @@ class PlannedTest(_Strict):
     velocity_ms: float = Field(gt=0)
 
 
+class DropletSize(_Strict):
+    """A measured droplet size, with which distribution measure it is.
+
+    Vendors and lab reports do not all quote the same statistic (D32/Sauter
+    mean, or a volume percentile), and a bare micron figure without the
+    measure cannot be judged against a limit that assumes one -- so the
+    measure travels with the number rather than being assumed.
+    """
+    value_um: float = Field(gt=0)
+    measure: Literal["D32", "Dv0.5", "Dv0.9", "Dv0.99"]
+
+
 class Facts(_Strict):
     pallet_dims_mm: Fact[tuple[float, float, float]] | None = None
     pallet_mass_kg: Fact[tuple[float, float]] | None = None  # lightest, heaviest weighed
@@ -70,8 +82,13 @@ class Facts(_Strict):
     authority_limits: Fact[str] | None = None
     activation_option: Fact[Literal["A", "B"]] | None = None
     tested_pressure_bar: Fact[tuple[float, float]] | None = None  # lowest, highest tested
-    droplet_size_measure: Fact[str] | None = None
+    droplet_size: Fact[DropletSize] | None = None
     correlation_cfd_report: Fact[str] | None = None
+    # The installation's own detection-to-full-pressure time, from the main
+    # contractor's LHDS and pump data -- not the Tier 1 prediction, which is
+    # what Annex 7 3.2's transfer clause exists to check the installation
+    # against (see annex7.3_2.response).
+    installation_response_s: Fact[float] | None = None
 
 
 class Deviation(_Strict):
@@ -108,6 +125,20 @@ class LoadedSpec:
     tests: dict[str, Design]
     installation: Design
     project_rules_path: Path | None
+
+
+def is_design_payload(raw: dict) -> bool:
+    """Whether `raw` looks like a design file rather than a compliance spec or
+    a project rules file that happens to sit beside them in `designs/`.
+
+    Narrow by construction rather than by validating `raw` as a `Design`: a
+    compliance spec always carries `spec_version` (`ComplianceSpec`), and a
+    project rules file always carries both `source_document` and `rules`
+    (`ProjectRuleFile`). Neither marker exists on a design, so checking their
+    absence is enough to keep a spec or a rules file from being offered as a
+    design to build from.
+    """
+    return not ("spec_version" in raw or {"rules", "source_document"} <= raw.keys())
 
 
 def _resolve(base: Path, relative: str, field: str) -> Path:
