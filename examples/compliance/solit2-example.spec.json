@@ -1,0 +1,12 @@
+{
+  "spec_version": 1,
+  "name": "SOLIT2 example test programme",
+  "test_designs": {"A": "../designs/solit2-test-protocol.json",
+                   "B": "../designs/solit2-test-protocol-class-b.json"},
+  "installation_design": "../designs/road-tunnel-twin-bore.json",
+  "facts": {
+    "hrr_method": {"value": "oxygen consumption",
+                   "evidence": {"document": "EXAMPLE ONLY - not a real laboratory document",
+                                "locator": "illustrates how a fact is evidenced"}}
+  }
+}

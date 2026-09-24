@@ -1,0 +1,9 @@
+{
+  "spec_version": 1,
+  "name": "Orange Gate full-scale fire test (DS-01 REV00)",
+  "test_designs": {"A": "og-test-design-a.json", "B": "og-test-design-b.json"},
+  "installation_design": "og-ds01-rev00-cd-meas.json",
+  "project_rules": "og-tender-r2.rules.json",
+  "facts": {},
+  "deviations": {}
+}

@@ -17,6 +17,7 @@ import streamlit as st
 
 from app import state
 from app.components import overview
+from solit2.compliance.spec import is_design_payload
 from solit2.engines.reduced.geometry import section_geometry
 from solit2.engines.reduced.hydraulics import size_system
 from solit2.schema.design import Design
@@ -214,10 +215,21 @@ def _design_files() -> list[str]:
 
     `designs/` is the user's, and neither independence scan touches it by design —
     so it is where real project values belong, with their provenance beside them.
+    A compliance spec or a project rules file can live in the same folder
+    (`designs/*.rules.json`, `designs/*-spec.json`) but is not a design, and
+    offering one here would build a `Design` out of the wrong JSON shape.
     """
     if not DESIGNS_DIR.is_dir():
         return []
-    return sorted(p.name for p in DESIGNS_DIR.glob("*.json"))
+    names = []
+    for path in sorted(DESIGNS_DIR.glob("*.json")):
+        try:
+            raw = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if is_design_payload(raw):
+            names.append(path.name)
+    return names
 
 
 def _dig(raw: dict, *path):

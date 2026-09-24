@@ -1,0 +1,71 @@
+{
+  "meta": {
+    "name": "og-test-design-b",
+    "notes": "The DS-01 REV00 installation moved into the SOLIT2 test tunnel preset for the fire test. Nozzle, zones, detection and hydraulics are copied from og-ds01-rev00-cd-meas.json; only the tunnel, fire, mounting height (5.0 m under the 5.2 m crown), discharge duration and SOLIT2's 1.5-3.0 m/s test velocities differ. The booked laboratory's real tunnel replaces the preset when the laboratory supplies it."
+  },
+  "tunnel": {
+    "preset": "solit2_test",
+    "section": "test",
+    "ambient_temp_c": 20.0
+  },
+  "fire": {
+    "preset": "pool_60mw"
+  },
+  "nozzles": {
+    "preset": "single_mode_fine_example",
+    "k_factor_lpm_bar05": 5.572,
+    "pressure_bar": 65.0,
+    "modes": [
+      {
+        "id": "fine",
+        "fraction": 1.0,
+        "smd_um": 61.0,
+        "cone_half_angle_deg": 45.0,
+        "launch_velocity_ms": 113.0
+      }
+    ],
+    "mounting": {
+      "height_above_carriageway_m": 5.0,
+      "row_lateral_offsets_m": [
+        -2.75,
+        2.75
+      ]
+    }
+  },
+  "zones": {
+    "section_length_m": 30.0,
+    "sections_simultaneous": 3,
+    "heads_per_zone": 25,
+    "activation_delay_s": 180.0,
+    "pump_ramp_s": 30.0,
+    "duration_min": 45.0
+  },
+  "ventilation": {
+    "mode": "longitudinal",
+    "velocity_range_ms": [
+      1.5,
+      3.0
+    ]
+  },
+  "detection": {
+    "type": "linear_heat",
+    "threshold_c": 60.0,
+    "sensor_spacing_m": 25.0
+  },
+  "hydraulics": {
+    "preset": "example",
+    "pump_efficiency": 0.68,
+    "motor_efficiency": 0.93,
+    "loop_factor": 0.25,
+    "main_dn_mm": 150.0,
+    "zone_header_dn_mm": 65.0
+  },
+  "constraints": {
+    "note": "Site and procurement limits. NOT from SOLIT2 and not acceptance criteria."
+  },
+  "ahj": {
+    "note": "Only one acceptance limit is set, because only one is stated by an authority. HPWM-TECHNICAL SPEC_R2 section 6 requires a 150 MW minimum design fire load reduced to <= 50 MW. Every other Annex 7 criterion stays null and is reported 'unset': the tender defers tenability to 'SOLIT2 or NFPA 502 test protocols' without naming numbers, and Annex 7 7.1 leaves those to the authority having jurisdiction. Do not fill them from a vendor's test report -- see INDEPENDENCE.md rule 2.",
+    "tvs_design_fire_mw": 50.0
+  },
+  "criteria": {}
+}
