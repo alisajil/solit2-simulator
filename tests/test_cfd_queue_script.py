@@ -12,12 +12,16 @@ called for in CALL_LOG, so "was fds-exec skipped for a done run" and "was
 fds-exec called for an incomplete one" are both directly observable.
 """
 import os
+import shutil
 import stat
 import subprocess
 import time
 from pathlib import Path
 
+import pytest
+
 SCRIPT = Path("scripts/cfd_queue.sh").resolve()
+_HAS_FLOCK = shutil.which("flock") is not None
 
 _FAKE_UV = """#!/usr/bin/env bash
 # args: run solit2 <subcommand> <run_dir>
@@ -171,3 +175,53 @@ def test_at_most_parallel_runs_execute_concurrently(tmp_path):
     assert proc.returncode == 0, proc.stderr
     assert len(call_log.read_text().splitlines()) == 4
     assert elapsed < 1.0, f"took {elapsed:.2f}s, looks serial rather than parallel"
+
+
+@pytest.mark.skipif(not _HAS_FLOCK, reason="flock is not installed on this machine "
+                    "(util-linux ships it standard on the Ubuntu deployment target)")
+def test_a_run_dir_already_locked_is_skipped_not_retried(tmp_path):
+    # The scenario the lock exists for: two invocations of this script both
+    # naming the same run dir (a hand-run one overlapping the systemd
+    # unit's). Holding the lock here stands in for that second invocation.
+    run_dir = tmp_path / "r1"
+    run_dir.mkdir()
+    lock_path = run_dir / ".fds-exec.lock"
+    holder = subprocess.Popen(["flock", str(lock_path), "sleep", "2"])
+    try:
+        time.sleep(0.3)  # give the holder time to actually acquire it
+        proc, call_log = _run(tmp_path, [run_dir])
+        assert proc.returncode == 0, proc.stderr
+        assert not call_log.exists(), "fds-exec must never run while the lock is held"
+        assert "already running, skipped" in (run_dir / "queue.log").read_text()
+    finally:
+        holder.wait()
+
+
+def test_repeated_failures_stop_retrying_after_the_limit(tmp_path):
+    run_dir = tmp_path / "r1"
+    run_dir.mkdir()
+    (run_dir / "FAIL_MARKER").write_text("")
+    for attempt in range(1, 4):
+        proc, call_log = _run(tmp_path, [run_dir])
+        assert proc.returncode != 0
+        assert call_log.read_text().strip() == str(run_dir)
+        assert (run_dir / ".fds-exec.failures").read_text().strip() == str(attempt)
+    # a 4th attempt must not call fds-exec at all -- the limit was already reached
+    proc, call_log = _run(tmp_path, [run_dir])
+    assert proc.returncode == 0, "a skipped run must not fail the queue itself"
+    assert not call_log.exists()
+    assert "failed 3 times, skipped; inspect run.out" in (run_dir / "queue.log").read_text()
+
+
+def test_a_success_clears_the_failure_counter(tmp_path):
+    run_dir = tmp_path / "r1"
+    run_dir.mkdir()
+    (run_dir / "FAIL_MARKER").write_text("")
+    _run(tmp_path, [run_dir])
+    _run(tmp_path, [run_dir])
+    assert (run_dir / ".fds-exec.failures").read_text().strip() == "2"
+    (run_dir / "FAIL_MARKER").unlink()  # simulate: whatever was wrong got fixed
+    proc, _ = _run(tmp_path, [run_dir])
+    assert proc.returncode == 0, proc.stderr
+    assert not (run_dir / ".fds-exec.failures").exists()
+    assert (run_dir / "DONE_MARKER").exists()

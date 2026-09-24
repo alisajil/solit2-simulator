@@ -53,27 +53,30 @@ at:
 https://github.com/firemodels/fds/releases/download/FDS-6.11.1/FDS-6.11.1_SMV-6.11.2_lnx.sh
 ```
 
-Download and run it:
+Download it, check it against the sha256 digest GitHub's own Releases API
+reports for this asset (`gh api repos/firemodels/fds/releases/tags/FDS-6.11.1`
+-- also independently reproduced when this doc was written), then run it:
 
 ```
 curl -fsSL -o FDS-6.11.1_SMV-6.11.2_lnx.sh \
   https://github.com/firemodels/fds/releases/download/FDS-6.11.1/FDS-6.11.1_SMV-6.11.2_lnx.sh
-bash FDS-6.11.1_SMV-6.11.2_lnx.sh
+echo "ba8793b974150fdb778b3db0b69ab8db4e4668d5c52987a317e7f5ed58102ea0  FDS-6.11.1_SMV-6.11.2_lnx.sh" \
+  | sha256sum -c -
+printf "\n2\nyes\nyes\nyes\n" | bash FDS-6.11.1_SMV-6.11.2_lnx.sh
 ```
 
-This installer is interactive -- a license page, then an install-directory
-prompt -- and the firemodels/fds wiki's own Linux install notes do not
-document a silent/unattended flag for it, so this step was not automated
-here and needs a human at the prompts the one time it runs. Answer `/opt/fds`
-when it asks for an install directory, so every command below can find it
-there without guessing. It also prints which MPI implementation it was
-built against (Intel MPI or Open MPI) and the vars script to source for it
-(typically `FDS6/bin/FDS6VARS.sh` under the install directory) -- read that
-report rather than assuming: it names the exact package this server needs
-for `mpiexec`. Source it once to confirm `fds` resolves on `PATH`:
+The installer is interactive by default (a license page, then a small menu),
+which is what the `printf` sequence above answers on its behalf -- verified
+against a real install on the target server, where it installs to
+`/opt/FDS/FDS6` and `fds` afterwards reports
+`FDS-6.11.1-0-gff928db-release` with Intel MPI 2021.17 bundled underneath it
+at `/opt/FDS/FDS6/bin/intelmpi/bin/mpiexec`. If a future release changes the
+menu's wording or step count, that `printf` sequence needs re-checking
+against it rather than assumed to still match. Source the vars script once
+to confirm `fds` resolves on `PATH`:
 
 ```
-source /opt/fds/FDS6/bin/FDS6VARS.sh
+source /opt/FDS/FDS6/bin/FDS6VARS.sh
 fds
 ```
 
@@ -85,7 +88,7 @@ A `source` line in `.bashrc` only helps an interactive shell -- the systemd
 unit in step 8 does not read it, which is why that unit sets `PATH`
 explicitly instead.
 
-## 5. Install `uv` and the MPI runtime
+## 5. Install `uv`
 
 ```
 curl -LsSf https://astral.sh/uv/install.sh | sh
@@ -93,21 +96,19 @@ curl -LsSf https://astral.sh/uv/install.sh | sh
 
 This is Astral's own documented installer, non-interactive by default
 (confirmed against `docs.astral.sh/uv/reference/installer/`); it installs to
-`~/.local/bin` and does not need `UV_INSTALL_DIR` pointed anywhere unusual
-for a single-purpose server like this one.
+`/root/.local/bin` (running as root) and does not need `UV_INSTALL_DIR`
+pointed anywhere unusual for a single-purpose server like this one.
 
-For `mpiexec`: install whichever MPI package matches what step 4's installer
-reported linking against. If it named Open MPI:
-
-```
-apt-get update && apt-get install -y openmpi-bin
-```
+No separate MPI package install is needed: step 4's installer bundles Intel
+MPI at `/opt/FDS/FDS6/bin/intelmpi/bin/mpiexec`, and that is the binary
+`solit2 fds-exec` finds once `PATH` includes it (the systemd unit in step 8
+sets this explicitly; an interactive shell gets it from `FDS6VARS.sh`).
 
 ## 6. Bring the repo over -- rsync from your Mac, not GitHub credentials on the server
 
 ```
 rsync -az --exclude .venv --exclude runs -e ssh \
-  /Users/sajil/Solit2_simulator/ root@<server-ip>:/opt/solit2-simulator/
+  /Users/sajil/Solit2_simulator/ root@<server-ip>:/opt/solit2/
 ```
 
 The server never needs your GitHub SSH key or a personal access token --
@@ -133,7 +134,7 @@ finds restart files but no other way to know what design produced them (see
 `solit2/engines/fds/exec_run.py`):
 
 ```
-rsync -az runs/<study> root@<server-ip>:/opt/solit2-simulator/runs/
+rsync -az runs/<study> root@<server-ip>:/opt/solit2/runs/
 cp designs/<design>.json runs/<study>/<run-name>/design.json   # per run dir, before the rsync above
 ```
 
@@ -141,7 +142,7 @@ cp designs/<design>.json runs/<study>/<run-name>/design.json   # per run dir, be
 
 ```
 ssh root@<server-ip>
-cd /opt/solit2-simulator
+cd /opt/solit2
 mkdir -p /var/lib/solit2-cfd
 printf '%s\n' \
   runs/<study>/dx_1.20 \
@@ -162,6 +163,30 @@ run and lower `SOLIT2_CFD_PARALLEL` in the unit if runs are memory-starved
 rather than CPU-bound, since nothing here enforces a per-run memory ceiling
 the way a container scheduler would.
 
+Three concurrent `mpiexec`s is also why the unit sets `I_MPI_PIN=0`: Intel
+MPI's default pins each run's ranks to cores 0..9, so without this every
+concurrent run would pile onto the SAME first ten cores instead of spreading
+across the 32 available. `I_MPI_PIN=0` leaves placement to the OS scheduler
+instead. A hand-launched parallel set outside the queue (not going through
+`cfd_queue.sh`) can do better than "off" -- give each `mpiexec` its own
+`I_MPI_PIN_PROCESSOR_LIST`, e.g. `0-9`, `10-19`, `20-29` for three ten-rank
+runs, which reserves disjoint cores per run rather than leaving it to the
+scheduler; the queue itself does not do this because it does not know in
+advance which of its `SOLIT2_CFD_PARALLEL` slots a given run dir will land
+in.
+
+Two more guards worth knowing about before the first run: `cfd_queue.sh`
+takes an `flock` on each run dir before calling `fds-exec`, so a hand-run
+invocation that happens to overlap the unit's never double-runs the same
+directory: the losing side logs "already running, skipped" and moves on.
+And a run dir that fails three times in a row is skipped rather than
+retried forever -- "failed 3 times, skipped; inspect run.out" in its
+`queue.log` -- because `Restart=on-failure` alone would otherwise have the
+unit relaunch a genuinely broken run (a bad deck, a full disk) on an
+infinite loop; `StartLimitBurst=3` within `StartLimitIntervalSec=3600` is
+the matching, coarser guard one level up, for when the whole unit itself is
+what keeps failing to start.
+
 ## 9. Watch it
 
 ```
@@ -179,7 +204,7 @@ so a re-run of the same queue file never repeats finished work.
 ## 10. Bring results back
 
 ```
-rsync -az root@<server-ip>:/opt/solit2-simulator/runs/<study> runs/
+rsync -az root@<server-ip>:/opt/solit2/runs/<study> runs/
 ```
 
 ## 11. Read the reports locally
@@ -215,10 +240,17 @@ not estimate it.
   `--oversubscribe`), read fresh at every launch; unset by default.
 - `scripts/cfd_queue.sh RUN_DIR [RUN_DIR ...]` -- runs several run
   directories through `fds-exec`, `SOLIT2_CFD_PARALLEL` (default 3) at a
-  time, skipping ones `fds-status` already reads as done. Each run dir gets
-  its own `queue.log` with an IST-stamped line per start, finish and exit
-  code.
+  time, skipping ones `fds-status` already reads as done, skipping (not
+  double-running) ones an overlapping invocation already holds the
+  `.fds-exec.lock` on, and skipping ones that have failed
+  `MAX_FAILURES` (3) times in a row until someone looks at them. Each run
+  dir gets its own `queue.log` with an IST-stamped line per start, finish
+  (or skip) and exit code.
 - `deploy/systemd/solit2-cfd.service` -- the unit template step 8 installs;
-  read the comments at its top before changing paths.
+  read the comments at its top before changing paths. Sets
+  `TimeoutStartSec=infinity` (a oneshot unit's default start timeout would
+  otherwise kill an hours-long run), `StartLimitIntervalSec`/
+  `StartLimitBurst` to bound the unit's own restarts, and `I_MPI_PIN=0` so
+  concurrent runs do not all pin to the same cores.
 - This server exposes SSH only. Nothing in this deployment opens another
   port, and nothing here needs one.

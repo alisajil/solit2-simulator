@@ -1,14 +1,13 @@
 # Template for the CFD run queue as a systemd unit, so a queue started over
 # SSH keeps going after the SSH session -- or the whole machine -- drops.
 # See docs/cloud-compute.md for the full server walkthrough this fits into.
+# Paths below match that doc's install layout: repo at /opt/solit2, FDS at
+# /opt/FDS/FDS6, uv at the default /root/.local/bin -- adjust every one of
+# them together if your server differs.
 #
 # Install:
 #   cp deploy/systemd/solit2-cfd.service /etc/systemd/system/
 #   systemctl daemon-reload
-#
-# Adjust WorkingDirectory below if the repo does not live at
-# /opt/solit2-simulator on your server, and PATH if FDS or uv were installed
-# somewhere other than /opt/fds and the default `uv` install location.
 #
 # The queue file this reads (one run directory per line, paths absolute or
 # relative to WorkingDirectory) is deliberately NOT part of this repo -- it
@@ -27,22 +26,56 @@
 # rebooted mid-run and systemd brought this unit back up before the run
 # finished) systemd starts it again after RestartSec. `scripts/cfd_queue.sh`
 # is what makes that safe -- it skips whatever `solit2 fds-status` already
-# reads as `done` and resumes the rest from their own restart files, so
-# re-running the same queue file is never wasted work.
+# reads as `done`, resumes the rest from their own restart files, and gives
+# up on a run dir after MAX_FAILURES attempts rather than retrying forever,
+# so re-running the same queue file is never wasted work and a genuinely
+# broken run does not burn the server's time on repeat.
+#
+# `StartLimitIntervalSec`/`StartLimitBurst` in [Unit] bound systemd's OWN
+# restarts of the whole unit (protects against a config-level problem --
+# not a single run dir's -- causing a fast restart loop); the queue
+# script's own per-run-dir failure counter is the independent, finer-grained
+# guard for one run dir failing repeatedly while the rest of the queue is
+# healthy.
 [Unit]
 Description=SOLIT2 FDS CFD run queue
 After=network.target
+StartLimitIntervalSec=3600
+StartLimitBurst=3
 
 [Service]
 Type=oneshot
-WorkingDirectory=/opt/solit2-simulator
+# A oneshot unit's default start timeout is systemd's DefaultTimeoutStartSec
+# (commonly 90s): without overriding it, systemd would kill this unit mid
+# CFD-run for taking "too long" to reach the started state, and
+# Restart=on-failure would then relaunch it into the same wall -- a run that
+# is hours long needs no ceiling here at all. TimeoutStopSec bounds the
+# OTHER direction: how long systemd waits for a clean shutdown (SIGTERM
+# reaching cfd_queue.sh's children, mpiexec tearing down its ranks) before
+# it gives up and sends SIGKILL.
+TimeoutStartSec=infinity
+TimeoutStopSec=900
+WorkingDirectory=/opt/solit2
 Environment=TZ=Asia/Kolkata
 Environment=SOLIT2_CFD_PARALLEL=3
+# Intel MPI's own default pins each rank to cores 0..N-1 -- correct for ONE
+# mpiexec alone on the box, wrong for three concurrent ones (this unit's
+# default SOLIT2_CFD_PARALLEL=3): all three would pile their ranks onto the
+# same first 10 cores instead of spreading across the 32 available. I_MPI_PIN=0
+# turns pinning off so the OS scheduler spreads every rank across whatever
+# cores are free instead. A hand-launched parallel set outside this queue
+# can do better than "off": give each mpiexec its own
+# I_MPI_PIN_PROCESSOR_LIST (e.g. 0-9, 10-19, 20-29 for three ten-rank runs),
+# which reserves disjoint cores per run rather than leaving it to the
+# scheduler -- not done here because the queue does not know in advance
+# which slot a given run dir will land in.
+Environment=I_MPI_PIN=0
 # FDS's own env script (sourced interactively in docs/cloud-compute.md) is
-# not read by systemd -- PATH has to name the installed binaries directly.
-# Adjust if the FDS installer put FDS6/bin somewhere other than /opt/fds.
-Environment=PATH=/opt/fds/FDS6/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
-ExecStart=/usr/bin/xargs -a /var/lib/solit2-cfd/queue.txt /opt/solit2-simulator/scripts/cfd_queue.sh
+# not read by systemd -- PATH has to name the installed binaries directly:
+# /opt/FDS/FDS6/bin for `fds`, its intelmpi subdirectory for `mpiexec`, and
+# uv's default install location (root's, since this unit runs as root).
+Environment=PATH=/opt/FDS/FDS6/bin:/opt/FDS/FDS6/bin/intelmpi/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/usr/bin/xargs -a /var/lib/solit2-cfd/queue.txt /opt/solit2/scripts/cfd_queue.sh
 Restart=on-failure
 RestartSec=30
 

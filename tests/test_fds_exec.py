@@ -7,7 +7,7 @@ exercised by monkeypatching `subprocess.run` away entirely.
 The fake `fds` never simulates anything: it reads the CHID this test set in
 `FAKE_FDS_CHID` and writes the two log lines `runner.status` parses,
 standing in for an FDS run that either completed or errored. The fake
-`mpiexec` logs its own argv and environment, strips `-n <count>` and any
+`mpiexec` logs its own argv and environment, strips `-np <count>` and any
 further flags, and execs what is left -- exactly the shape both `runner.run`
 and `run_foreground` invoke it in.
 """
@@ -93,7 +93,7 @@ def test_a_fresh_run_launches_mpiexec_with_the_deck_mesh_count(ready, monkeypatc
     assert (run_dir / "c1.out").exists()
     assert "STOP: FDS completed successfully" in (run_dir / "c1.out").read_text()
     argv_line = next(ln for ln in mlog.read_text().splitlines() if ln.startswith("argv:"))
-    assert "-n 2" in argv_line
+    assert "-np 2" in argv_line
     assert argv_line.rstrip().endswith("deck.fds")
     assert "OMP_NUM_THREADS=1" in mlog.read_text()
 
@@ -190,6 +190,23 @@ def test_no_deck_and_no_restart_files_raises(ready, monkeypatch, tmp_path):
         exec_run.run_foreground(run_dir)
 
 
+def test_a_fresh_run_truncates_a_stale_run_out(ready, monkeypatch, tmp_path):
+    # Like runner.run's own log: a first attempt starts from a clean file,
+    # not one still carrying an unrelated previous attempt's output.
+    bindir, mlog = _fake_bin(tmp_path)
+    _on_path(monkeypatch, bindir)
+    monkeypatch.setenv("FAKE_LOG", str(mlog))
+    monkeypatch.setenv("FAKE_FDS_CHID", "c1")
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    _fresh_deck(run_dir)
+    (run_dir / runner_mod.LOG_NAME).write_text("stale content from an unrelated run\n")
+
+    exec_run.run_foreground(run_dir)
+
+    assert "stale content" not in (run_dir / runner_mod.LOG_NAME).read_text()
+
+
 def test_resume_regenerates_the_deck_from_design_json_and_logs_it(ready, monkeypatch, tmp_path):
     from solit2.engines.fds import deck as deck_mod
 
@@ -204,6 +221,7 @@ def test_resume_regenerates_the_deck_from_design_json_and_logs_it(ready, monkeyp
     (run_dir / "deck.fds").write_text(deck_mod.generate(design, t_end_s=300.0))
     (run_dir / "design.json").write_text(Path(DESIGN_PATH).read_text())
     (run_dir / "x.restart").write_text("")
+    (run_dir / runner_mod.LOG_NAME).write_text("output from the attempt before the restart\n")
 
     returncode = exec_run.run_foreground(run_dir, t_end_s=50.0)
 
@@ -214,6 +232,10 @@ def test_resume_regenerates_the_deck_from_design_json_and_logs_it(ready, monkeyp
     log_text = (run_dir / exec_run.LOG_NAME).read_text()
     assert "resume:" in log_text
     assert "design.json" in log_text
+    # a resume APPENDS: the prior attempt's output is evidence, not noise to
+    # overwrite.
+    assert "output from the attempt before the restart" in (
+        run_dir / runner_mod.LOG_NAME).read_text()
 
 
 def test_resume_without_design_json_refuses_before_touching_mpiexec(ready, monkeypatch, tmp_path):

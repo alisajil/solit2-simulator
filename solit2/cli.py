@@ -82,8 +82,8 @@ def _cmd_fds_exec(args: argparse.Namespace) -> int:
                      "fix the reported problem (missing binary, missing design.json, "
                      "a moved mesh) and run fds-exec again", EXIT_ENGINE)
     if returncode != 0:
-        return _fail(f"FDS did not complete in {run_dir}; see {run_dir / 'run.out'} and "
-                     f"{run_dir / fds_exec.LOG_NAME}", "run_dir",
+        return _fail(f"FDS did not complete in {run_dir}; see {run_dir / fds_runner.LOG_NAME} "
+                     f"and {run_dir / fds_exec.LOG_NAME}", "run_dir",
                      "inspect the FDS log for the reported error", EXIT_ENGINE)
     return EXIT_OK
 

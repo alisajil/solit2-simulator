@@ -109,14 +109,19 @@ def run_foreground(run_dir: Path, t_end_s: float | None = None) -> int:
     ranks = max(runner_mod.mesh_count(deck_path), 1)
     env = {**os.environ}
     env.setdefault("OMP_NUM_THREADS", runner_mod.OMP_THREADS_PER_RANK)
-    # `-n` rather than `runner.run`'s `-np`: both select the rank count on
-    # every MPI implementation FDS ships against (Open MPI, MPICH, Intel MPI)
-    # -- spelled out here because docs/cloud-compute.md names this flag
-    # explicitly for whoever is reading a server's process list.
-    argv = [shutil.which("mpiexec"), "-n", str(ranks), *_mpiexec_extra_args(),
+    # `-np`, the same flag `runner.run` launches with -- one spelling for
+    # "how many ranks" across this whole package, rather than two that
+    # happen to mean the same thing on every MPI implementation FDS ships
+    # against (Open MPI, MPICH, Intel MPI).
+    argv = [shutil.which("mpiexec"), "-np", str(ranks), *_mpiexec_extra_args(),
             runner_mod._binary(), deck_path.name]
     _log(run_dir, f"launch: {shlex.join(str(a) for a in argv)}")
-    with (run_dir / runner_mod.LOG_NAME).open("a") as log:
+    # "w" on a fresh launch, exactly like runner.run's own log -- a first
+    # attempt starts from a clean run.out. "a" on a resume: the whole point
+    # of resuming is picking up after an earlier attempt, so that attempt's
+    # own output stays on disk instead of being overwritten by this one.
+    log_mode = "a" if resuming else "w"
+    with (run_dir / runner_mod.LOG_NAME).open(log_mode) as log:
         completed = subprocess.run(argv, cwd=run_dir, stdout=log,
                                    stderr=subprocess.STDOUT, env=env)
     state = runner_mod.status(run_dir)["state"]
