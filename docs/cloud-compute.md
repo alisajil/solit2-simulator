@@ -55,14 +55,16 @@ https://github.com/firemodels/fds/releases/download/FDS-6.11.1/FDS-6.11.1_SMV-6.
 
 Download it, check it against the sha256 digest GitHub's own Releases API
 reports for this asset (`gh api repos/firemodels/fds/releases/tags/FDS-6.11.1`
--- also independently reproduced when this doc was written), then run it:
+-- also independently reproduced when this doc was written), then run it.
+Chained with `&&` rather than run as three separate lines, so a checksum
+mismatch stops the sequence right there instead of the installer running
+anyway on a corrupted or tampered download:
 
 ```
 curl -fsSL -o FDS-6.11.1_SMV-6.11.2_lnx.sh \
-  https://github.com/firemodels/fds/releases/download/FDS-6.11.1/FDS-6.11.1_SMV-6.11.2_lnx.sh
-echo "ba8793b974150fdb778b3db0b69ab8db4e4668d5c52987a317e7f5ed58102ea0  FDS-6.11.1_SMV-6.11.2_lnx.sh" \
-  | sha256sum -c -
-printf "\n2\nyes\nyes\nyes\n" | bash FDS-6.11.1_SMV-6.11.2_lnx.sh
+  https://github.com/firemodels/fds/releases/download/FDS-6.11.1/FDS-6.11.1_SMV-6.11.2_lnx.sh \
+  && echo "ba8793b974150fdb778b3db0b69ab8db4e4668d5c52987a317e7f5ed58102ea0  FDS-6.11.1_SMV-6.11.2_lnx.sh" | sha256sum -c - \
+  && printf "\n2\nyes\nyes\nyes\n" | bash FDS-6.11.1_SMV-6.11.2_lnx.sh
 ```
 
 The installer is interactive by default (a license page, then a small menu),
