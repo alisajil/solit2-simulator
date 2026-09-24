@@ -58,6 +58,9 @@ def _required_test(row: tuple[str, ...]) -> Callable[[Context], Outcome]:
     fire_class = "A" if row[1].startswith("Class A") else "B"
     covered = "with tarpaulin" in row[2]
     velocity = float(row[3].split()[0])
+    if velocity not in g.TEST_VELOCITIES_MS:
+        raise ValueError(f"Annex 7 Table 4 row {row[0]} names {velocity:g} m/s, which is not "
+                         f"one of the §5.2.7 test velocities {g.TEST_VELOCITIES_MS}")
     required = f"{row[1]}, {row[2]}, {row[3]}"
 
     def check(ctx: Context) -> Outcome:

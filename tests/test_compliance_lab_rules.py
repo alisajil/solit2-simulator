@@ -72,3 +72,8 @@ def test_spray_deviation_must_cover_every_listed_velocity(ctx):
               _facts(ctx, spray_deviation_tested_ms=[1.0, 3.0])) is Verdict.FAILS
     assert _v("main.3_6_2.spray_deviation",
               _facts(ctx, spray_deviation_tested_ms=[1.0, 3.0, 5.0])) is Verdict.COMPLIES
+
+
+def test_every_required_table_4_velocity_is_a_section_5_2_7_test_velocity():
+    required = [r for r in g.MINIMUM_TESTS if r[4] == "required"]
+    assert {float(r[3].split()[0]) for r in required} <= set(g.TEST_VELOCITIES_MS)
