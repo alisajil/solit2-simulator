@@ -1,4 +1,4 @@
-"""The wizard's navigation: five step pills on top, Back / Next underneath.
+"""The wizard's navigation: six step pills on top, Back / Next underneath.
 
 Reachability is deliberately simple: step 1 is always open and every other
 step opens once a design exists, because each of them auto-computes what it
@@ -10,7 +10,7 @@ import streamlit as st
 
 from app import state
 
-STEPS = ("Design", "Result", "Fire test", "CFD verify", "Reports")
+STEPS = ("Design", "Result", "Fire test", "CFD verify", "Compliance", "Reports")
 
 
 def reachable(step: int) -> bool:

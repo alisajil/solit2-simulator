@@ -18,7 +18,7 @@ _RESULT_KEY = "result"
 _TWIN_KEY = "twin_result"
 _TIER2_KEY = "tier2_result"
 _STEP_KEY = "step"
-STEP_MIN, STEP_MAX = 1, 5
+STEP_MIN, STEP_MAX = 1, 6
 _DERIVED_KEYS = (_RESULT_KEY, _TWIN_KEY, _TIER2_KEY)
 
 
