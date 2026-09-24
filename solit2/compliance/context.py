@@ -48,13 +48,20 @@ def target_ignited(result: Result) -> bool:
 
 
 def tested_velocities_ms(ctx: Context, fire_class: str) -> tuple[list[float], str]:
-    """The velocities the test programme runs this class at, and where that came from."""
+    """The velocities the test programme runs this class at, and where that came from.
+
+    A design's `velocity_range_ms` defaults to (3.88, 5.08) -- an installation
+    figure, not a test condition -- when the field is left unset, so that
+    default may never stand in as "what this test ran at". Only a design that
+    DECLARES the field, or a `planned_tests` fact, counts as evidence of the
+    velocities actually tested.
+    """
     planned = ctx.facts.planned_tests
     if planned is not None:
         values = [t.velocity_ms for t in planned.value if t.fire_class == fire_class]
         if values:
             return values, f"planned tests ({planned.evidence.cite()})"
     design = ctx.tests.get(fire_class)
-    if design is None:
-        return [], "no test design of this class"
-    return list(design.ventilation.velocity_range_ms), "the test design's velocity range"
+    if design is not None and "velocity_range_ms" in design.ventilation.model_fields_set:
+        return list(design.ventilation.velocity_range_ms), "the test design's velocity range"
+    return [], "no tested velocity declared"

@@ -2,15 +2,16 @@ from dataclasses import replace
 
 import pytest
 
-from solit2.compliance.context import Context
+from solit2.compliance.context import Context, time_to_full_operation_s
 from solit2.compliance.rules.base import evaluate
 from solit2.compliance.rules.transfer_rules import RULES
-from solit2.compliance.spec import Facts
+from solit2.compliance.spec import Evidence, Fact, Facts
 from solit2.compliance.verdict import Verdict
 from solit2.engines.reduced import envelope
 from solit2.schema.design import Design
 
 BY_ID = {r.id: r for r in RULES}
+EV = Evidence(document="LHDS and pump data", locator="§1")
 
 
 def _ctx(test: Design, installation: Design) -> Context:
@@ -21,8 +22,18 @@ def _ctx(test: Design, installation: Design) -> Context:
 
 @pytest.fixture(scope="module")
 def same() -> Context:
+    """Test and installation are the SAME design -- exactly the "placeholder
+    timings copied into both designs" case I2 describes. `annex7.3_2.response`
+    now needs an evidenced `installation_response_s` fact rather than the
+    installation's own Tier 1 prediction, so this fixture supplies one equal
+    to the test's Tier 1 time -- the installation genuinely IS the test here,
+    so a fact that says so is not fabricated evidence, just the fixture's
+    stand-in for "the site is evidenced to match its own test"."""
     a = Design.load("examples/designs/solit2-test-protocol.json")
-    return _ctx(a, a)
+    ctx = _ctx(a, a)
+    response_s = time_to_full_operation_s(ctx.test_results["A"])
+    facts = Facts(installation_response_s=Fact(value=response_s, evidence=EV))
+    return replace(ctx, facts=facts)
 
 
 def _v(rule_id: str, ctx: Context) -> Verdict:
@@ -76,4 +87,4 @@ def test_the_transfer_rules_cover_every_test_derived_parameter():
 def test_an_unknown_test_derived_parameter_is_refused_with_the_valid_names():
     from solit2.compliance.rules import transfer_rules as tr
     with pytest.raises(ValueError, match="use one of"):
-        tr._t("x", "Annex 3 §3.3", "req", "Not a parameter", tr._spacing, "req")
+        tr._t("x", "Annex 3 §3.3", "req", "Not a parameter", tr._spacing, "req", "planned")
