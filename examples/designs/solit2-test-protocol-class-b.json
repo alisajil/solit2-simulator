@@ -3,18 +3,9 @@
     "name": "solit2-test-protocol-class-b",
     "notes": "Annex 7 Table 4 (section 5.4, p.14) rows 3 and 4, both mandatory: the Class B liquid fire at minimum 50 MW, at 1.5 m/s and at 3.0 m/s. Section 5.3.1 sets that minimum -- 'The minimum size should be 50MW representing very serious scenario having diesel spread over a large surface' -- and the `pool_60mw` preset's seven 4.0 m2 pools produce 60.1 MW free burning, above it. Section 5.3.6 mandates BOTH 1.5 and 3.0 m/s, measured 20 m upstream of the fuel for Class B (45 m for Class A, section 5.2.7), so both are carried in `ventilation.velocity_range_ms` and the envelope runs the pair. Section 5.3.7 governs activation and duration for Class B, and differs from Class A: 'Triggering of FFFS shall happen within 2 minutes after ignition', which is why activation is pinned manually at 100 s rather than left to detection plus a delay; and 'System shall discharge continuously until the fire is extinguished or the fuel is consumed completely', with no 30-minute floor -- that floor is section 5.2.8 and is Class A only. Section 5.3.4 puts at least 7 minutes of unsuppressed burning time in the pools, so duration_min 30 covers the fuel comfortably. Section 5.3.7 also requires the activation area to be at least 3x the mock-up length: 3 x 11.2 = 33.6 m minimum against the 3 x 20 = 60 m here. Replace the `nozzles` and `hydraulics` blocks with the system actually under test; everything else is the standard's own test condition."
   },
-  "tunnel": {
-    "preset": "solit2_test",
-    "section": "test",
-    "width_m": 7.692307692307692,
-    "area_m2": 40.0
-  },
-  "fire": {
-    "preset": "pool_60mw"
-  },
-  "nozzles": {
-    "preset": "template"
-  },
+  "tunnel": {"preset": "solit2_test", "section": "test"},
+  "fire": {"preset": "pool_60mw"},
+  "nozzles": {"preset": "template"},
   "zones": {
     "section_length_m": 20.0,
     "sections_simultaneous": 3,
@@ -23,21 +14,9 @@
     "pump_ramp_s": 30.0,
     "duration_min": 30.0
   },
-  "ventilation": {
-    "mode": "longitudinal",
-    "velocity_range_ms": [
-      1.5,
-      3.0
-    ]
-  },
-  "detection": {
-    "type": "linear_heat",
-    "threshold_c": 60.0,
-    "sensor_spacing_m": 12.0
-  },
-  "hydraulics": {
-    "preset": "template"
-  },
+  "ventilation": {"mode": "longitudinal", "velocity_range_ms": [1.5, 3.0]},
+  "detection": {"type": "linear_heat", "threshold_c": 60.0, "sensor_spacing_m": 12.0},
+  "hydraulics": {"preset": "template"},
   "ahj": {},
   "constraints": {},
   "criteria": {}

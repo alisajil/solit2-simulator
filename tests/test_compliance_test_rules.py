@@ -26,9 +26,10 @@ def ctx() -> Context:
 
 
 def _with_tunnel(ctx: Context, **tunnel) -> Context:
-    a = ctx.tests["A"]
-    moved = a.model_copy(update={"tunnel": a.tunnel.model_copy(update=tunnel)})
-    return replace(ctx, tests={**ctx.tests, "A": moved})
+    updated_tests = {}
+    for cls, design in ctx.tests.items():
+        updated_tests[cls] = design.model_copy(update={"tunnel": design.tunnel.model_copy(update=tunnel)})
+    return replace(ctx, tests=updated_tests)
 
 
 def _verdict(rule_id: str, ctx: Context, deviations=None) -> Verdict:
