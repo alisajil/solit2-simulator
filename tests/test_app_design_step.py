@@ -25,6 +25,18 @@ def test_design_step_has_no_download_or_upload(run_view):
     assert not at.get("download_button") and not at.get("file_uploader")
 
 
+def test_the_file_list_excludes_the_compliance_spec_and_the_project_rules_file(run_view):
+    """designs/ holds the project's real design files alongside its compliance
+    spec and its project-rules file (I5); only the designs belong in this
+    picker, or choosing one of the other two would build a `Design` out of
+    the wrong JSON shape."""
+    at = run_view("design", seed_design=False)
+    options = at.selectbox(key="design_source").options
+    assert "og-test-spec.json" not in options
+    assert "og-tender-r2.rules.json" not in options
+    assert "og-dbr-rev0.json" in options
+
+
 def test_changing_pressure_changes_the_summary(run_view):
     at = run_view("design", seed_design=False)
     before = at.metric[1].value
