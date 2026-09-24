@@ -51,10 +51,21 @@ LOG_NAME = "run.out"
 _TOTAL_TIME = re.compile(r"Total Time:\s+([\d.]+)\s*s")
 _T_END = re.compile(r"T_END\s*=\s*([\d.]+)")
 _DONE = "STOP: FDS completed successfully"
-# Anything FDS says that is not the success STOP means the run is over and did
-# not finish. Without this, "no progress line yet" and "dead" look identical.
-_ERROR = re.compile(r"^[ \t]*(?:ERROR|STOP: (?!FDS completed successfully))",
-                    re.MULTILINE)
+# What FDS writes when it exits because it found `<CHID>.stop` -- exactly the
+# marker `pause()` leaves. Not a failure: it is the graceful stop pause() asks
+# for, working as intended. Seen live: "STOP: FDS stopped by user
+# (CHID: eaea401330e8)", so this is a prefix match, not the whole line.
+_STOPPED_BY_USER = "STOP: FDS stopped by user"
+# Anything FDS says that is not one of the two STOPs above means the run is
+# over and did not finish cleanly. Without this, "no progress line yet" and
+# "dead" look identical -- and without excluding _STOPPED_BY_USER too, a
+# cleanly paused run (is_paused() true, restart files on disk) was reported
+# as failed at 0%, because this check runs before the is_paused() branch
+# below ever gets a look. A genuine "STOP: Numerical instability..." or any
+# other STOP/ERROR line still matches and is still reported failed.
+_ERROR = re.compile(
+    r"^[ \t]*(?:ERROR|STOP: (?!FDS completed successfully|FDS stopped by user))",
+    re.MULTILINE)
 # FDS banners its build as "Revision : FDS6.9.1-0-g..." or "Version : FDS 6.7.0".
 _VERSION = re.compile(r"(?:FDS|Version\s*:)\s*v?(\d+\.\d+(?:\.\d+)?)")
 # A build from source often stamps no release number at all -- one on this
@@ -100,7 +111,7 @@ def mesh_count(deck_path: Path) -> int:
                if ln.startswith("&MESH"))
 
 
-def run(deck_path: Path, out_dir: Path) -> str:
+def run(deck_path: Path, out_dir: Path, *, extra_env: dict[str, str] | None = None) -> str:
     """Launch FDS detached, one MPI rank per mesh, and return immediately.
 
     A run is hours long; the CFD step polls `status()` rather than blocking
@@ -112,6 +123,13 @@ def run(deck_path: Path, out_dir: Path) -> str:
     than three ranks on a three-mesh deck on the machine this was built on.
 
     Each rank gets one OpenMP thread; see OMP_THREADS_PER_RANK for why.
+
+    `extra_env` merges additional variables over the inherited process
+    environment -- e.g. `I_MPI_PIN_PROCESSOR_LIST`, which the fleet scheduler
+    sets to one run's own core block (see scheduler.py) so several runs
+    launched this way pin to disjoint cores instead of fighting over the
+    same ones. Applied after the `OMP_NUM_THREADS` default below, so a caller
+    can override that too if it needs to.
     """
     problems = preflight()
     if problems:
@@ -123,6 +141,8 @@ def run(deck_path: Path, out_dir: Path) -> str:
     ranks = max(mesh_count(local_deck), 1)
     env = {**os.environ}
     env.setdefault("OMP_NUM_THREADS", OMP_THREADS_PER_RANK)
+    if extra_env:
+        env.update(extra_env)
     with (out_dir / LOG_NAME).open("w") as log:
         process = subprocess.Popen([shutil.which("mpiexec"), "-np", str(ranks),
                                     _binary(), local_deck.name],

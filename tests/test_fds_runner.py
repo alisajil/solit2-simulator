@@ -220,6 +220,42 @@ def test_an_openmp_thread_count_the_caller_set_is_left_alone(ready, monkeypatch,
     assert captured["env"]["OMP_NUM_THREADS"] == "4"
 
 
+def test_extra_env_is_merged_into_the_launch_environment(ready, monkeypatch, tmp_path):
+    # The fleet scheduler pins concurrent runs to disjoint cores via
+    # I_MPI_PIN_PROCESSOR_LIST, set per launch rather than globally -- see
+    # scheduler.py.
+    captured = {}
+
+    class FakePopen:
+        pid = 1
+
+        def __init__(self, argv, **kwargs):
+            captured["env"] = kwargs.get("env")
+
+    monkeypatch.setattr(runner.subprocess, "Popen", FakePopen)
+    deck = tmp_path / "deck.fds"
+    deck.write_text("&MESH IJK=1,1,1, XB=0,1,0,1,0,1 /\n&TAIL /\n")
+    runner.run(deck, tmp_path, extra_env={"I_MPI_PIN_PROCESSOR_LIST": "10-19"})
+    assert captured["env"]["I_MPI_PIN_PROCESSOR_LIST"] == "10-19"
+
+
+def test_extra_env_can_override_the_omp_thread_default(ready, monkeypatch, tmp_path):
+    captured = {}
+
+    class FakePopen:
+        pid = 1
+
+        def __init__(self, argv, **kwargs):
+            captured["env"] = kwargs.get("env")
+
+    monkeypatch.setattr(runner.subprocess, "Popen", FakePopen)
+    monkeypatch.delenv("OMP_NUM_THREADS", raising=False)
+    deck = tmp_path / "deck.fds"
+    deck.write_text("&MESH IJK=1,1,1, XB=0,1,0,1,0,1 /\n&TAIL /\n")
+    runner.run(deck, tmp_path, extra_env={"OMP_NUM_THREADS": "2"})
+    assert captured["env"]["OMP_NUM_THREADS"] == "2"
+
+
 def test_mesh_count_reads_the_deck(tmp_path):
     deck = tmp_path / "d.fds"
     deck.write_text("&HEAD /\n&MESH a /\n&MESH b /\n&MESH c /\n&TAIL /\n")
@@ -542,6 +578,57 @@ def test_a_paused_run_is_paused_and_not_failed():
     assert "cannot resume" in state["detail"], "no restart files were written"
     (d / "abc.restart").write_text("")
     assert "resumable" in runner.status(d)["detail"]
+
+
+def test_a_run_stopped_by_user_that_logged_its_own_stop_line_is_paused_not_failed():
+    """Real FDS appends "STOP: FDS stopped by user (CHID: ...)" to its own log
+    once it notices the `<CHID>.stop` file `pause()` writes and exits. That
+    line used to match the generic `_ERROR` pattern (any "STOP:" that is not
+    the success one), and the error check ran BEFORE the is_paused() branch
+    ever got a look -- so a cleanly paused run with restart files already on
+    disk was reported {'state': 'failed', 'progress': 0.0}. Verified live:
+    is_paused() True, has_restart_files() True, status() said failed at 0%.
+    """
+    import tempfile
+    from pathlib import Path
+    d = _run_dir_with_deck(Path(tempfile.mkdtemp()), chid="eaea401330e8")
+    runner.pause(d)
+    with (d / "run.out").open("a") as f:
+        f.write("STOP: FDS stopped by user (CHID: eaea401330e8)\n")
+    (d / "eaea401330e8.restart").write_text("")
+    state = runner.status(d)
+    assert state["state"] == "paused"
+    assert state["progress"] == pytest.approx(0.25), "real progress, not 0%"
+    assert "resumable" in state["detail"]
+
+
+def test_stopped_by_user_with_no_restart_files_is_still_paused_not_stopped():
+    """`is_paused()` (the pause() marker) and `was_stopped()` (the stop()
+    marker) are different actions with different states; a pause that never
+    reached a checkpoint is still `paused`, just not resumable -- it must not
+    be misread as `failed` (the bug) or as `stopped` (stop()'s own state)."""
+    import tempfile
+    from pathlib import Path
+    d = _run_dir_with_deck(Path(tempfile.mkdtemp()), chid="c1")
+    runner.pause(d)
+    with (d / "run.out").open("a") as f:
+        f.write("STOP: FDS stopped by user (CHID: c1)\n")
+    state = runner.status(d)
+    assert state["state"] == "paused"
+    assert "cannot resume" in state["detail"]
+
+
+def test_a_genuine_stop_reason_is_still_reported_failed():
+    """The fix narrows _ERROR to exclude exactly the success STOP and the
+    user-requested STOP -- every other STOP (a numerical instability, a setup
+    problem) must still fail, or the fix would have gone too far."""
+    import tempfile
+    from pathlib import Path
+    d = _run_dir_with_deck(Path(tempfile.mkdtemp()), chid="c2")
+    with (d / "run.out").open("a") as f:
+        f.write("STOP: Numerical instability discovered\n")
+    state = runner.status(d)
+    assert state["state"] == "failed"
 
 
 def test_resume_refuses_when_there_is_nothing_to_resume_from():
