@@ -266,6 +266,10 @@ def _cmd_report_compliance(args: argparse.Namespace) -> int:
     except (ValidationError, ValueError, FileNotFoundError, KeyError) as exc:
         return _fail(str(exc), "spec", "correct the compliance spec and try again",
                      EXIT_BAD_INPUT)
+    except (ArithmeticError, RuntimeError) as exc:
+        return _fail(str(exc), "engine",
+                     "the spec validated but a design or rule could not be evaluated",
+                     EXIT_ENGINE)
     return _emit_report(compliance_report.render(report), args.out)
 
 

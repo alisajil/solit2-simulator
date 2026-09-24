@@ -1,8 +1,6 @@
 """The compliance matrix as a document for the main contractor and the authority."""
 from __future__ import annotations
 
-from itertools import groupby
-
 from solit2.compliance.check import ComplianceReport
 from solit2.compliance.verdict import Finding, Verdict
 
@@ -25,6 +23,15 @@ HEADER = ("| rule | clause | requirement (paraphrased) | found | required | verd
           "evidence / deviation |\n|---|---|---|---|---|---|---|---|")
 
 
+def by_group(findings: list[Finding]) -> list[tuple[str, list[Finding]]]:
+    """Findings bucketed by group, groups in first-seen order, findings in registry order.
+    `itertools.groupby` would split a group whose rules come from two rule modules."""
+    buckets: dict[str, list[Finding]] = {}
+    for f in findings:
+        buckets.setdefault(f.group, []).append(f)
+    return list(buckets.items())
+
+
 def render(report: ComplianceReport) -> str:
     h = report.headline
     lines = [f"# SOLIT² compliance — {report.spec_name}", "",
@@ -35,7 +42,7 @@ def render(report: ComplianceReport) -> str:
              "", "## Blockers", ""]
     lines += ([HEADER] + [_row(f) for f in report.blockers]) if report.blockers else ["None."]
     lines += ["", "## Clause matrix"]
-    for group, items in groupby(report.findings, key=lambda f: f.group):
+    for group, items in by_group(report.findings):
         lines += ["", f"### {group}", "", HEADER] + [_row(f) for f in items]
     lines += ["", "## What the laboratory and the authority must supply", "", lab_checklist(report)]
     return "\n".join(lines) + "\n"

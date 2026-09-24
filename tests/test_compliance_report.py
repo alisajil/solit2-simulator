@@ -1,5 +1,6 @@
 import subprocess
 
+from solit2 import cli
 from solit2.compliance import check
 from solit2.reports import compliance
 
@@ -32,3 +33,17 @@ def test_the_cli_writes_the_report(tmp_path):
                           capture_output=True, text=True)
     assert done.returncode == 0, done.stderr
     assert out.read_text().startswith("# SOLIT² compliance")
+
+
+def test_every_group_heading_appears_once():
+    report = check.run(SPEC)
+    text = compliance.render(report)
+    for group, _ in compliance.by_group(report.findings):
+        assert text.count(f"### {group}\n") == 1, group
+
+
+def test_cli_engine_failure_exits_with_engine_code(monkeypatch, tmp_path):
+    out = tmp_path / "c.md"
+    monkeypatch.setattr("solit2.compliance.check.run", lambda spec: (_ for _ in ()).throw(RuntimeError("boom")))
+    result = cli.main(["report", "compliance", SPEC, "--out", str(out)])
+    assert result == cli.EXIT_ENGINE
