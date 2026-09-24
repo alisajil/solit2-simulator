@@ -1,0 +1,64 @@
+# The CFD run scheduler as a systemd unit: `solit2 fds-scheduler` in the
+# foreground, forever, keeping every core block busy from the queue. See
+# docs/cloud-compute.md for the walkthrough this fits into, including the
+# takeover from the interim `/opt/cfd-sched.py` script this supersedes.
+#
+# Paths below match that doc's install layout: repo at /opt/solit2, FDS at
+# /opt/FDS/FDS6, uv at the default /root/.local/bin -- adjust every one of
+# them together if your server differs.
+#
+# Install (fresh, no interim scheduler to take over from):
+#   cp deploy/systemd/solit2-scheduler.service /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable --now solit2-scheduler.service
+#
+# Install (taking over from a running interim scheduler): see
+# docs/cloud-compute.md's "Taking over from the interim scheduler" section --
+# the short version is stop the old nohup process (the FDS runs it launched
+# keep going; they are detached from it), then start this unit with
+# --adopt-state/--adopt-queue pointed at the interim script's own files, once.
+#
+# `Type=simple` (the default) with `Restart=always`: unlike
+# solit2-cfd.service's queue-to-completion oneshot, this process is meant to
+# run forever -- a clean exit is as much a reason to restart it as a crash,
+# because "the scheduler stopped" should never be a silent, permanent state
+# on a server whose whole job is running this queue.
+[Unit]
+Description=SOLIT2 FDS CFD run scheduler
+After=network.target
+StartLimitIntervalSec=3600
+StartLimitBurst=10
+
+[Service]
+Type=simple
+# The daemon loop has no natural "started" moment for systemd to wait for
+# beyond the process existing -- and it must never be killed for merely
+# looping for hours, which is the whole point of it. TimeoutStopSec bounds
+# the OTHER direction: how long systemd waits for SIGTERM to reach the loop
+# (it exits between iterations, at most POLL_S later) before SIGKILL.
+TimeoutStartSec=infinity
+TimeoutStopSec=60
+WorkingDirectory=/opt/solit2
+Environment=TZ=Asia/Kolkata
+# Where solit2 fds-fleet and the web app look for run directories -- this
+# unit's own scheduler loop does not read it (it only ever touches the run
+# dirs already named in its queue), but setting it here keeps every tool run
+# on this host, including a hand-run `solit2 fds-fleet status`, looking at
+# the same roots without each needing its own copy of this line.
+Environment=SOLIT2_RUN_ROOTS=/opt/solit2/runs:/opt/solit2-app/runs
+# state.json / queue.txt / scheduler.log / actions.jsonl all live here --
+# see scheduler.py's own STATE_DIR_ENV default, restated explicitly rather
+# than left to it so this file stays the single source of truth for where
+# they are on THIS server.
+Environment=SOLIT2_CFD_STATE_DIR=/var/lib/solit2-cfd
+# FDS's own env script (sourced interactively in docs/cloud-compute.md) is
+# not read by systemd -- PATH has to name the installed binaries directly:
+# /opt/FDS/FDS6/bin for `fds`, its intelmpi subdirectory for `mpiexec`, and
+# uv's default install location (root's, since this unit runs as root).
+Environment=PATH=/opt/FDS/FDS6/bin:/opt/FDS/FDS6/bin/intelmpi/bin:/root/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/root/.local/bin/uv run solit2 fds-scheduler
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

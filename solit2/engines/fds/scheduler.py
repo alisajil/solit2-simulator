@@ -1,0 +1,454 @@
+"""The CFD run queue as a proper foreground daemon -- what `/opt/cfd-sched.py`,
+a plain nohup Python script on the CFD server, has been doing by hand: keep a
+fixed set of core blocks busy, one FDS run per block, pinned so concurrent
+runs never fight over the same cores.
+
+`solit2 fds-scheduler` is meant to run under systemd
+(`deploy/systemd/solit2-scheduler.service`), in the foreground, forever. It
+owns three files under `SOLIT2_CFD_STATE_DIR` (default `/var/lib/solit2-cfd`):
+
+    state.json      {"0-9": "<run dir>|null", "10-19": ..., "20-29": ...}
+    queue.txt       one run directory per line, next-to-run first
+    scheduler.log   one IST-stamped line per state change
+
+`state.json`'s shape is deliberately the interim script's own -- see `adopt()`
+-- so this scheduler can take over a live deployment's already-running FDS
+processes without stopping them: importing the interim's state and queue
+once is enough, because both launch through the same `runner.run()` and
+write the same pid/log files underneath.
+
+Every run in the queue is either a fresh launch (`deck.fds` already written,
+no restart files yet) or a resume (restart files on disk; the deck is
+regenerated with `RESTART=.TRUE.` from the run's own `design.json`, exactly
+as `exec_run.run_foreground` does it for the older, blocking queue). A run
+whose `design.json` is missing when it needs to resume fails loudly rather
+than silently staying a fresh run of stale physics.
+"""
+from __future__ import annotations
+
+import contextlib
+import fcntl
+import json
+import os
+import time
+from datetime import datetime, timedelta
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+from solit2.engines.fds import runner as runner_mod
+from solit2.schema.design import Design
+
+IST = ZoneInfo("Asia/Kolkata")
+BLOCKS_ENV = "SOLIT2_CFD_BLOCKS"
+STATE_DIR_ENV = "SOLIT2_CFD_STATE_DIR"
+DEFAULT_BLOCKS = "0-9,10-19,20-29"
+DEFAULT_STATE_DIR = Path("/var/lib/solit2-cfd")
+
+STATE_NAME = "state.json"
+QUEUE_NAME = "queue.txt"
+LOG_NAME = "scheduler.log"
+# The design a queued run's deck was generated from -- same name and same
+# convention `exec_run.py` already established for the older, blocking
+# queue, so a run dir works with either one.
+DESIGN_NAME = "design.json"
+RUN_LOCK_NAME = ".fds-scheduler.lock"
+QUEUE_LOCK_NAME = ".queue.lock"
+FAILURES_NAME = ".fds-scheduler.failures"
+PID_NAME = "scheduler.pid"
+
+# A run dir gets this many launch attempts before the scheduler stops
+# retrying it automatically and logs it as skipped -- the same cap and the
+# same reasoning as `scripts/cfd_queue.sh`'s MAX_FAILURES: a run that keeps
+# failing for a reason relaunching cannot fix (a bad deck, a dead disk) must
+# not burn a whole core block forever.
+MAX_FAILURES = 3
+# How often the loop looks for a free block and reaps a finished run. FDS
+# itself reports progress far less often than this (every 100 time steps),
+# so polling this often costs only a few cheap file reads per block; the
+# payoff is a freed block being reused within POLL_S of freeing up, not up
+# to a whole run's length later.
+POLL_S = 15.0
+
+
+def parse_blocks(spec: str) -> tuple[str, ...]:
+    """"0-9,10-19,20-29" -> ("0-9", "10-19", "20-29").
+
+    Each label doubles as its own `I_MPI_PIN_PROCESSOR_LIST` value -- Intel
+    MPI accepts exactly this "lo-hi" syntax, so no second representation of
+    a block is needed anywhere in this module.
+    """
+    blocks = tuple(b.strip() for b in spec.split(",") if b.strip())
+    if not blocks:
+        raise ValueError(f"{spec!r} names no core blocks")
+    for b in blocks:
+        lo, _, hi = b.partition("-")
+        if not (lo.isdigit() and hi.isdigit() and int(lo) <= int(hi)):
+            raise ValueError(f"block {b!r} is not a 'lo-hi' core range, e.g. '0-9'")
+    return blocks
+
+
+def resolve_state_dir(explicit: str | Path | None = None) -> Path:
+    if explicit is not None:
+        return Path(explicit)
+    return Path(os.environ.get(STATE_DIR_ENV, str(DEFAULT_STATE_DIR)))
+
+
+def resolve_blocks(explicit: str | None = None) -> tuple[str, ...]:
+    return parse_blocks(explicit if explicit is not None
+                        else os.environ.get(BLOCKS_ENV, DEFAULT_BLOCKS))
+
+
+# --- state.json / queue.txt: atomic writes (temp + rename), IST logging -----
+
+def _write_atomic(path: Path, text: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text(text)
+    os.replace(tmp, path)          # atomic on POSIX: a reader never sees a half-written file
+
+
+def load_state(state_dir: Path, blocks: tuple[str, ...]) -> dict[str, str | None]:
+    """Every block in `blocks`, `None` if state.json has no run for it (or
+    does not exist yet -- a scheduler that has never run reports every block
+    free, which is the correct starting state)."""
+    path = Path(state_dir) / STATE_NAME
+    raw: dict = json.loads(path.read_text()) if path.exists() else {}
+    return {b: raw.get(b) for b in blocks}
+
+
+def save_state(state_dir: Path, state: dict[str, str | None]) -> None:
+    _write_atomic(Path(state_dir) / STATE_NAME, json.dumps(state, indent=2))
+
+
+def load_queue(state_dir: Path) -> list[str]:
+    path = Path(state_dir) / QUEUE_NAME
+    if not path.exists():
+        return []
+    return [ln.strip() for ln in path.read_text().splitlines() if ln.strip()]
+
+
+def save_queue(state_dir: Path, queue: list[str]) -> None:
+    text = "".join(f"{ln}\n" for ln in queue)
+    _write_atomic(Path(state_dir) / QUEUE_NAME, text)
+
+
+@contextlib.contextmanager
+def queue_lock(state_dir: Path):
+    """Exclusive lock held for one read-modify-write of queue.txt.
+
+    The scheduler's own loop and every `fleet` action that edits the queue
+    (enqueue/dequeue/move) take this same lock, so a queue reorder landing
+    between the scheduler reading the file and writing it back can never be
+    silently overwritten by either side.
+    """
+    state_dir = Path(state_dir)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    handle = (state_dir / QUEUE_LOCK_NAME).open("w")
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(handle, fcntl.LOCK_UN)
+        handle.close()
+
+
+def _stamp() -> str:
+    return datetime.now(IST).isoformat(timespec="seconds")
+
+
+def _log(state_dir: Path, message: str) -> None:
+    state_dir = Path(state_dir)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    with (state_dir / LOG_NAME).open("a") as f:
+        f.write(f"{_stamp()}  {message}\n")
+
+
+# --- per-run-dir lock (never start two runs on one directory) ---------------
+
+def _try_lock_run(run_dir: Path) -> tuple[object | None, str | None]:
+    """A non-blocking exclusive lock on `<run_dir>/RUN_LOCK_NAME`.
+
+    Returns `(handle, None)` on success -- keep the handle open for as long
+    as the run is considered "this scheduler's own"; closing it releases the
+    lock -- or `(None, reason)` when something else already holds it (a
+    hand-run `fds-exec` on the same directory, or a second scheduler process
+    started by mistake). Guards exactly the case the brief calls out: this
+    scheduler must never start two runs on one directory. Callers check
+    `run_dir` exists before calling this -- see `step()` -- so the `OSError`
+    guard around opening the lock file is defensive only, for a directory
+    removed in the gap between that check and this call.
+    """
+    try:
+        handle = (Path(run_dir) / RUN_LOCK_NAME).open("w")
+    except OSError as exc:
+        return None, f"could not open a lock file in {run_dir}: {exc}"
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        handle.close()
+        return None, "already locked by another process"
+    return handle, None
+
+
+# --- per-run-dir failure count (skip after MAX_FAILURES) --------------------
+
+def _failure_count(run_dir: Path) -> int:
+    path = Path(run_dir) / FAILURES_NAME
+    if not path.exists():
+        return 0
+    try:
+        return int(path.read_text().strip())
+    except ValueError:
+        return 0
+
+
+def _record_failure(run_dir: Path) -> int:
+    count = _failure_count(run_dir) + 1
+    try:
+        (Path(run_dir) / FAILURES_NAME).write_text(str(count))
+    except OSError:
+        # A run directory named in state.json/queue.txt (by hand, or via
+        # adopt() from a stale interim file) that does not actually exist on
+        # disk has nowhere to persist this. One bad entry must not take the
+        # whole loop down -- the caller still logs the failure itself, this
+        # just means the count resets to 1 every poll instead of climbing to
+        # MAX_FAILURES, so it keeps showing up rather than crashing silently.
+        pass
+    return count
+
+
+def _clear_failures(run_dir: Path) -> None:
+    (Path(run_dir) / FAILURES_NAME).unlink(missing_ok=True)
+
+
+# --- adoption: take over the interim script's state without stopping it ----
+
+def adopt(state_dir: Path, blocks: tuple[str, ...], adopt_state: Path, adopt_queue: Path) -> None:
+    """Import an interim scheduler's `state.json` and `queue.txt` ONCE.
+
+    Called before the loop starts, never from inside it. The FDS processes
+    the interim script already launched keep running exactly where they
+    are -- this only starts THIS process polling and managing them, via the
+    same `runner.status()`/`runner.run()` every other run in this deployment
+    goes through.
+    """
+    raw_state = json.loads(Path(adopt_state).read_text())
+    state = {b: raw_state.get(b) for b in blocks}
+    save_state(state_dir, state)
+    raw_queue = [ln.strip() for ln in Path(adopt_queue).read_text().splitlines() if ln.strip()]
+    with queue_lock(state_dir):
+        save_queue(state_dir, raw_queue)
+    running = sum(1 for v in state.values() if v)
+    _log(state_dir, f"adopted state from {adopt_state} ({running} block(s) already running) "
+                     f"and queue from {adopt_queue} ({len(raw_queue)} queued)")
+
+
+# --- scheduler pid (so fleet/UI can tell whether a scheduler is alive) ------
+
+def _write_pid(state_dir: Path) -> None:
+    (Path(state_dir) / PID_NAME).write_text(str(os.getpid()))
+
+
+def is_running(state_dir: Path) -> bool:
+    """Whether a scheduler that wrote `PID_NAME` is still alive.
+
+    Unlike `runner._launcher_alive`, this has no "unknown" case: a missing
+    pid file always reads as "not running", which is the right default for
+    fleet's "does anything work the queue right now?" question -- a
+    scheduler that never wrote the file cannot be assumed alive.
+    """
+    pid_file = Path(state_dir) / PID_NAME
+    if not pid_file.exists():
+        return False
+    try:
+        pid = int(pid_file.read_text().strip())
+    except ValueError:
+        return False
+    return runner_mod._pid_alive(pid)
+
+
+# --- launching a queued run, resume-aware -----------------------------------
+
+def _load_design(run_dir: Path) -> Design:
+    design_path = Path(run_dir) / DESIGN_NAME
+    if not design_path.exists():
+        raise FileNotFoundError(
+            f"{run_dir} holds restart files but no {DESIGN_NAME}, so the scheduler cannot "
+            f"regenerate its RESTART=.TRUE. deck. Write it beside deck.fds first -- "
+            f"`solit2 fds-adopt {run_dir} --design <design.json>` -- then re-enqueue")
+    return Design.load(design_path)
+
+
+def _launch(run_dir: Path, block: str) -> None:
+    """Launch (fresh) or resume `run_dir`, pinned to `block`'s cores."""
+    run_dir = Path(run_dir)
+    extra_env = {"I_MPI_PIN_PROCESSOR_LIST": block}
+    if runner_mod.has_restart_files(run_dir):
+        design = _load_design(run_dir)
+        deck_path = runner_mod.prepare_resume(run_dir, design)
+    else:
+        deck_path = run_dir / "deck.fds"
+        if not deck_path.exists():
+            raise FileNotFoundError(f"{run_dir} holds no deck.fds to run")
+    runner_mod.run(deck_path, run_dir, extra_env=extra_env)
+
+
+# --- the loop ----------------------------------------------------------------
+
+def _release_finished(state_dir: Path, state: dict[str, str | None],
+                      locks: dict[str, object]) -> dict[str, str | None]:
+    """Free every block whose run is no longer `running` -- done, failed,
+    stopped or paused all free the block; only the queue decides what runs
+    next, so a paused run does not hold its core hostage."""
+    state = dict(state)
+    for block, run_dir in list(state.items()):
+        if run_dir is None:
+            continue
+        status = runner_mod.status(Path(run_dir))
+        if status["state"] == "running":
+            continue
+        if status["state"] == "done":
+            _clear_failures(Path(run_dir))
+            _log(state_dir, f"{run_dir}: done on block {block}, freed")
+        elif status["state"] == "failed":
+            count = _record_failure(Path(run_dir))
+            _log(state_dir, f"{run_dir}: failed on block {block} ({count}/{MAX_FAILURES}) "
+                             f"-- {status.get('detail', '')}")
+        else:
+            _log(state_dir, f"{run_dir}: {status['state']} on block {block}, freed")
+        lock = locks.pop(run_dir, None)
+        if lock is not None:
+            lock.close()
+        state[block] = None
+    return state
+
+
+def _next_runnable(state_dir: Path, queue: list[str], logged_skips: set[str],
+                   exclude: frozenset[str] = frozenset()) -> tuple[str | None, list[str]]:
+    """The first queue entry that has not failed MAX_FAILURES times and is
+    not in `exclude`, popped out (the caller decides whether to save the
+    result). A run past the cap is skipped in place -- still in the queue,
+    still visible to `fds-fleet`, so a human can dequeue or fix it -- and
+    logged once per scheduler run rather than once per poll. `exclude` is
+    the set of entries this same `step()` call has already tried and put
+    back (locked elsewhere, or failed to launch): without it, several free
+    blocks in one call would retry -- and re-fail -- the same entry once per
+    free block instead of once per poll.
+    """
+    for i, run_dir in enumerate(queue):
+        if run_dir in exclude:
+            continue
+        if _failure_count(Path(run_dir)) >= MAX_FAILURES:
+            if run_dir not in logged_skips:
+                count = _failure_count(Path(run_dir))
+                _log(state_dir, f"{run_dir}: failed {count} times, skipped; inspect "
+                                 f"{Path(run_dir) / runner_mod.LOG_NAME}")
+                logged_skips.add(run_dir)
+            continue
+        return run_dir, queue[:i] + queue[i + 1:]
+    return None, queue
+
+
+def step(state_dir: Path, blocks: tuple[str, ...], state: dict[str, str | None],
+         locks: dict[str, object], logged_skips: set[str]) -> dict[str, str | None]:
+    """One iteration: free finished blocks, then fill every free block from
+    the queue. Returns the new state; the caller persists it and sleeps --
+    neither happens in here, which is what makes this directly testable
+    without a real clock or a real FDS process.
+    """
+    state = _release_finished(state_dir, state, locks)
+    free_blocks = [b for b in blocks if state[b] is None]
+    if not free_blocks:
+        return state
+    with queue_lock(state_dir):
+        queue = load_queue(state_dir)
+        # Entries this call has already tried and put back -- a lock held
+        # elsewhere, or a launch that failed -- so a second (or third) free
+        # block in the SAME call does not immediately retry, and re-fail,
+        # the same entry once per free block instead of once per poll.
+        unavailable: set[str] = set()
+        for block in free_blocks:
+            run_dir, queue = _next_runnable(state_dir, queue, logged_skips,
+                                            frozenset(unavailable))
+            if run_dir is None:
+                break
+            if not Path(run_dir).is_dir():
+                # A state.json/queue.txt entry naming a directory that is not
+                # actually on disk (a stale adopted reference, a typo) --
+                # counts toward MAX_FAILURES like any other launch problem
+                # (see the `except` below), so a permanently bad entry gets
+                # skipped in place instead of being retried, and re-logged,
+                # forever.
+                queue = [run_dir] + queue
+                unavailable.add(run_dir)
+                count = _record_failure(Path(run_dir))
+                _log(state_dir, f"{run_dir}: does not exist on disk "
+                                 f"({count}/{MAX_FAILURES}), skipped")
+                continue
+            lock, unavailable_reason = _try_lock_run(Path(run_dir))
+            if lock is None:
+                # `_next_runnable` already popped this entry out of `queue` --
+                # put it back (at the front: it was the earliest runnable one
+                # found) so a lock held by someone else does not silently
+                # drop it from the queue. Not counted as a failure: another
+                # process holding this run dir is not this run's own fault.
+                queue = [run_dir] + queue
+                unavailable.add(run_dir)
+                _log(state_dir, f"{run_dir}: {unavailable_reason}, skipped")
+                continue
+            try:
+                _launch(Path(run_dir), block)
+            except (FileNotFoundError, ValueError, RuntimeError) as exc:
+                lock.close()
+                count = _record_failure(Path(run_dir))
+                # Stays in the queue (see above) -- a run below MAX_FAILURES
+                # gets retried next poll; at the cap, `_next_runnable` starts
+                # skipping it in place, which is only visible to a human
+                # inspecting the queue if it is actually still in it.
+                queue = [run_dir] + queue
+                unavailable.add(run_dir)
+                _log(state_dir, f"{run_dir}: could not launch on block {block} "
+                                 f"({count}/{MAX_FAILURES}) -- {exc}")
+                continue
+            locks[run_dir] = lock
+            state[block] = run_dir
+            _log(state_dir, f"{run_dir}: launched on block {block} "
+                             f"(I_MPI_PIN_PROCESSOR_LIST={block})")
+        save_queue(state_dir, queue)
+    return state
+
+
+def run_forever(state_dir: Path, blocks: tuple[str, ...], poll_s: float = POLL_S,
+                stop_after: int | None = None) -> None:
+    """The daemon loop `solit2 fds-scheduler` runs in the foreground.
+
+    `stop_after` bounds the number of iterations; production callers never
+    pass it and the loop runs until the process is killed (systemd's
+    `Restart=always` brings it back). Writes and then removes `PID_NAME`
+    around the loop so `is_running()` can tell whether a scheduler is
+    actually alive.
+    """
+    state_dir = Path(state_dir)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    _write_pid(state_dir)
+    try:
+        state = load_state(state_dir, blocks)
+        locks: dict[str, object] = {}
+        logged_skips: set[str] = set()
+        iterations = 0
+        while stop_after is None or iterations < stop_after:
+            state = step(state_dir, blocks, state, locks, logged_skips)
+            save_state(state_dir, state)
+            iterations += 1
+            if stop_after is None or iterations < stop_after:
+                time.sleep(poll_s)
+    finally:
+        (state_dir / PID_NAME).unlink(missing_ok=True)
+
+
+def eta_ist(eta_s: float | None) -> str | None:
+    """A run's `live()['eta_s']` as an IST clock time, for a reader who wants
+    to know when a run will finish rather than how many seconds are left."""
+    if eta_s is None:
+        return None
+    return (datetime.now(IST) + timedelta(seconds=eta_s)).isoformat(timespec="minutes")

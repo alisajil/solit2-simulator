@@ -26,6 +26,17 @@ def test_write_decks_writes_one_deck_per_anchor_per_e(tmp_path, anchors):
         assert path.name == "deck.fds"
 
 
+def test_write_decks_writes_design_json_beside_every_deck(tmp_path, anchors):
+    from solit2.engines.fds.exec_run import DESIGN_NAME
+    from solit2.schema.design import Design
+
+    calibrate.write_decks(anchors, (0.2,), 0.6, tmp_path)
+    for anchor in anchors:
+        design_path = calibrate.run_dir_for(tmp_path, anchor.id, 0.2, 0.6) / DESIGN_NAME
+        assert design_path.exists()
+        assert Design.load(design_path) == anchor.design
+
+
 def test_write_decks_carries_the_swept_e_into_the_deck(tmp_path, anchors):
     calibrate.write_decks(anchors, (0.2,), 0.6, tmp_path)
     for anchor in anchors:

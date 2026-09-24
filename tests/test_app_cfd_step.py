@@ -58,6 +58,22 @@ def test_start_writes_the_shortened_deck_and_launches(run_view, monkeypatch, tmp
     assert "T_END=300.0" in (run_dir / "deck.fds").read_text()
 
 
+def test_start_writes_design_json_beside_the_deck(run_view, monkeypatch, tmp_path):
+    """The run manager's resume path (runner.prepare_resume, via
+    fleet.resume/scheduler._launch) needs design.json beside deck.fds -- a
+    deck alone does not carry the design that generated it back out."""
+    from solit2.engines.fds.exec_run import DESIGN_NAME
+    from solit2.schema.design import Design
+
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    monkeypatch.setattr(fds_runner, "run", lambda deck, out: out.name)
+    at = run_view("cfd")
+    at.button(key="fds_start").click().run()
+    design_path = run_dir / DESIGN_NAME
+    assert design_path.exists()
+    assert Design.load(design_path) == Design.load(EXAMPLE)
+
+
 def test_a_running_run_shows_progress_and_hides_start(run_view, monkeypatch, tmp_path):
     run_dir = _isolate(monkeypatch, tmp_path, [])
     _fake_run(run_dir, "Time Step 10\n Total Time:  120.0 s\n")

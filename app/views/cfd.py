@@ -25,6 +25,7 @@ from solit2.engines.fds import deck as fds_deck
 from solit2.engines.fds import reader as fds_reader
 from solit2.engines.fds import runner as fds_runner
 from solit2.engines.fds import slices
+from solit2.engines.fds.exec_run import DESIGN_NAME
 from solit2.engines.reduced.criteria import FLAME_CONTACT_FLUX_KWM2
 from solit2.engines.reduced.state import RunTrace
 from solit2.schema.design import Design
@@ -146,6 +147,11 @@ def _start_controls(design: Design, run_dir: Path, verb: str, suppression: bool)
         deck_path.write_text(fds_deck.generate(
             design, t_end_s=None if minutes is None else minutes * 60.0,
             suppression=suppression))
+        # Beside the deck, so a paused or interrupted run can resume later --
+        # `runner.prepare_resume` needs the design that generated the deck it
+        # is rewriting, and a deck alone does not carry it back out.
+        # by_alias=True -- see fleet.adopt_design for why (Fire.fire_class's alias).
+        (run_dir / DESIGN_NAME).write_text(design.model_dump_json(indent=2, by_alias=True))
         # The previous Tier 2 result describes a pair of runs that no longer exists here.
         state.set_tier2_result(None)
         fds_runner.run(deck_path, run_dir)
