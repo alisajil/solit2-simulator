@@ -21,23 +21,31 @@ ACCEPTANCE = "Acceptance"
 
 def _every_test(value: Callable[[Design], float], ok: Callable[[float], bool],
                 required: str, basis: str) -> Callable[[Context], Outcome]:
-    """Judge one quantity on every test design; all must pass."""
+    """Judge one quantity on every test design; all must pass.
+
+    Every use of this helper reads a plain design field, never a Tier 1
+    result, so its basis kind is "planned" throughout.
+    """
     def check(ctx: Context) -> Outcome:
         values = {cls: value(d) for cls, d in sorted(ctx.tests.items())}
         found = "; ".join(f"{cls}: {v:g}" for cls, v in values.items())
-        return judge(all(ok(v) for v in values.values()), found, required, basis)
+        return judge(all(ok(v) for v in values.values()), found, required, basis, "planned")
     return check
 
 
 def _on_class(fire_class: str, value: Callable[[Design], float], ok: Callable[[float], bool],
               required: str, basis: str) -> Callable[[Context], Outcome]:
-    """Judge one quantity on the test design of one fire class."""
+    """Judge one quantity on the test design of one fire class.
+
+    Every use of this helper reads a plain design field, never a Tier 1
+    result, so its basis kind is "planned" throughout.
+    """
     def check(ctx: Context) -> Outcome:
         design = ctx.tests.get(fire_class)
         if design is None:
-            return needs(f"test_designs.{fire_class}", required,
+            return needs(f"test_designs.{fire_class}", required, "planned",
                          f"no Class {fire_class} test design in the spec")
-        return judge(ok(value(design)), f"{value(design):g}", required, basis)
+        return judge(ok(value(design)), f"{value(design):g}", required, basis, "planned")
     return check
 
 
@@ -80,28 +88,52 @@ CLASS_A_REQUIRED_COVERED = any(row[4] == "required" and row[1].startswith("Class
 
 
 def _activation(event: str) -> Callable[[Context], Outcome]:
-    """Annex 7 §5.2.8 option A timing, judged on every test's Tier 1 timetable."""
+    """Annex 7 §5.2.8 option A timing, judged on the Class A test's Tier 1 timetable.
+
+    §5.2.8 sits inside §5.2, Class A fire load -- Class B's own trigger timing
+    is §5.3.7, a different rule with a different (and looser) bound, judged by
+    `_class_b_trigger_planned` below. Applying THIS rule's bounds to the Class
+    B test as well (as a prior version did, by looping over every test class)
+    judged Class B against a requirement that is not its own.
+    """
+    required = {"after_ignition": f">= {g.ACTIVATION_MIN_AFTER_IGNITION_S:g} s after ignition",
+                "after_detection": "after detection",
+                "discharge": f">= {g.MIN_DISCHARGE_MIN:g} min after activation"}[event]
+
     def check(ctx: Context) -> Outcome:
-        rows = []
-        ok = True
-        for cls, res in sorted(ctx.test_results.items()):
-            t_act, t_det = res.events["t_activate_s"], res.events["t_detect_s"]
-            if event == "after_ignition":
-                ok &= t_act >= g.ACTIVATION_MIN_AFTER_IGNITION_S
-                rows.append(f"{cls}: {t_act:.0f} s after ignition")
-            elif event == "after_detection":
-                ok &= t_act > t_det
-                rows.append(f"{cls}: detection {t_det:.0f} s, activation {t_act:.0f} s")
-            else:  # discharge
-                design = ctx.tests[cls]
-                discharge_min = (design.zones.duration_min * 60.0 - t_act) / 60.0
-                ok &= discharge_min >= g.MIN_DISCHARGE_MIN
-                rows.append(f"{cls}: {discharge_min:.1f} min after activation")
-        required = {"after_ignition": f">= {g.ACTIVATION_MIN_AFTER_IGNITION_S:g} s after ignition",
-                    "after_detection": "after detection",
-                    "discharge": f">= {g.MIN_DISCHARGE_MIN:g} min after activation"}[event]
-        return judge(ok, "; ".join(rows), required, "Tier 1 activation timetable")
+        design, res = ctx.tests.get("A"), ctx.test_results.get("A")
+        # Defensive: the spec model requires a Class A test design, so this
+        # branch should be unreachable in practice.
+        if design is None or res is None:
+            return needs("test_designs.A", required, "predicted",
+                         "no Class A test design in the spec")
+        t_act, t_det = res.events["t_activate_s"], res.events["t_detect_s"]
+        if event == "after_ignition":
+            ok, found = t_act >= g.ACTIVATION_MIN_AFTER_IGNITION_S, f"{t_act:.0f} s after ignition"
+        elif event == "after_detection":
+            ok = t_act > t_det
+            found = f"detection {t_det:.0f} s, activation {t_act:.0f} s"
+        else:  # discharge
+            discharge_min = (design.zones.duration_min * 60.0 - t_act) / 60.0
+            ok, found = discharge_min >= g.MIN_DISCHARGE_MIN, f"{discharge_min:.1f} min after activation"
+        return judge(ok, found, required, "Tier 1 activation timetable (Class A)", "predicted")
     return check
+
+
+def _class_b_trigger_planned(ctx: Context) -> Outcome:
+    """Annex 7 §5.3.7 trigger timing, judged on the Class B test's Tier 1 timetable.
+
+    The lab-evidenced counterpart is `annex7.5_3_7.trigger` (lab_rules.py),
+    which judges the MEASURED trigger time once the test has run. Before that,
+    this is the Tier 1 prediction the same clause reduces to.
+    """
+    required = f"<= {g.CLASS_B_TRIGGER_WITHIN_S:g} s after ignition"
+    design, res = ctx.tests.get("B"), ctx.test_results.get("B")
+    if design is None or res is None:
+        return needs("test_designs.B", required, "predicted", "no Class B test design in the spec")
+    t_act = res.events["t_activate_s"]
+    return judge(t_act <= g.CLASS_B_TRIGGER_WITHIN_S, f"{t_act:.0f} s", required,
+                 "Tier 1 activation timetable (Class B)", "predicted")
 
 
 def _pressure_spread(ctx: Context) -> Outcome:
@@ -111,7 +143,7 @@ def _pressure_spread(ctx: Context) -> Outcome:
         ok &= spread <= g.NOZZLE_SPREAD_MAX_PCT
         rows.append(f"{cls}: {spread:.1f} %")
     return judge(ok, "; ".join(rows), f"<= {g.NOZZLE_SPREAD_MAX_PCT:g} % first to last nozzle",
-                 "Tier 1 hydraulics: zone pipe loss against the design pressure")
+                 "Tier 1 hydraulics: zone pipe loss against the design pressure", "predicted")
 
 
 def _protocol(ctx: Context) -> Outcome:
@@ -120,14 +152,14 @@ def _protocol(ctx: Context) -> Outcome:
     return judge(not missing and bool(ctx.protocol_text),
                  "all present" if not missing else "missing: " + ", ".join(missing),
                  f"all {len(g.PROTOCOL_CONTENTS)} Annex 7 §8.2 contents",
-                 "the generated fire test protocol")
+                 "the generated fire test protocol", "planned")
 
 
 def _target(ctx: Context) -> Outcome:
     ignited = {cls: target_ignited(res) for cls, res in sorted(ctx.test_results.items())}
     found = "; ".join(f"{cls}: {'ignited' if v else 'not ignited'}" for cls, v in ignited.items())
     return judge(not any(ignited.values()), found, "target not ignited",
-                 "Tier 1 prediction (replaced by the measurement after the test)")
+                 "Tier 1 prediction (replaced by the measurement after the test)", "predicted")
 
 
 RULES: tuple[Rule, ...] = (
@@ -253,6 +285,10 @@ RULES: tuple[Rule, ...] = (
          _on_class("B", _pool_area, lambda v: v >= g.CLASS_B_SINGLE_POOL_MIN_M2,
                    f">= {g.CLASS_B_SINGLE_POOL_MIN_M2:g} m²", "test design pools"),
          constants=("CLASS_B_SINGLE_POOL_MIN_M2",)),
+    Rule("annex7.5_3_7.trigger_planned", CLASS_B, "Annex 7 §5.3.7",
+         "The system triggers within the maximum after ignition (Tier 1 prediction, "
+         "ahead of the lab's measured trigger time).", "design", _class_b_trigger_planned,
+         constants=("CLASS_B_TRIGGER_WITHIN_S",)),
     # --- Activation, Annex 7 §5.2.8 option A.
     Rule("annex7.5_2_8.after_ignition", ACTIVATION, "Annex 7 §5.2.8",
          "Option A: the system is activated no earlier than the minimum after ignition.",

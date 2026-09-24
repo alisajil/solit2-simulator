@@ -78,11 +78,35 @@ def test_the_example_class_a_mock_up_meets_its_geometry_clauses(ctx):
 
 
 def test_discharge_shorter_than_thirty_minutes_after_activation_fails(ctx):
+    """I1: §5.2.8's discharge floor is Class A only, so this must fail because
+    of A alone -- B stays in the fixture, untouched and passing, to prove B's
+    own state cannot be what is driving the verdict."""
+    assert _verdict("annex7.5_2_8.discharge", ctx) is Verdict.COMPLIES  # sanity: baseline passes
     a = ctx.tests["A"]
     short = a.model_copy(update={"zones": a.zones.model_copy(update={"duration_min": 20.0})})
-    shorter = replace(ctx, tests={**ctx.tests, "A": short},
-                      test_results={**ctx.test_results, "A": envelope.run(short)})
-    assert _verdict("annex7.5_2_8.discharge", shorter) is Verdict.FAILS
+    with_b_passing = replace(ctx, tests={**ctx.tests, "A": short},
+                             test_results={**ctx.test_results, "A": envelope.run(short)})
+    assert _verdict("annex7.5_2_8.discharge", with_b_passing) is Verdict.FAILS
+    # And with B removed from the spec entirely, the verdict is unchanged --
+    # B was never part of this judgment.
+    without_b = replace(with_b_passing, tests={"A": short},
+                        test_results={"A": with_b_passing.test_results["A"]})
+    assert _verdict("annex7.5_2_8.discharge", without_b) is Verdict.FAILS
+
+
+def test_class_b_trigger_planned_reads_the_class_b_tier1_activation_time(ctx):
+    """The new `annex7.5_3_7.trigger_planned` rule (I1) is Class B's own §5.3.7
+    activation timing, Tier 1-predicted -- both ways, plus Needs evidence
+    without a Class B design."""
+    assert _verdict("annex7.5_3_7.trigger_planned", ctx) is Verdict.COMPLIES
+    b = ctx.tests["B"]
+    late = b.model_copy(update={"zones": b.zones.model_copy(update={"manual_activation_s": 150.0})})
+    later = replace(ctx, tests={**ctx.tests, "B": late},
+                    test_results={**ctx.test_results, "B": envelope.run(late)})
+    assert _verdict("annex7.5_3_7.trigger_planned", later) is Verdict.FAILS
+
+    only_a = replace(ctx, tests={"A": ctx.tests["A"]}, test_results={"A": ctx.test_results["A"]})
+    assert _verdict("annex7.5_3_7.trigger_planned", only_a) is Verdict.NEEDS_EVIDENCE
 
 
 def test_the_rules_derive_their_limits_from_the_guidance_tables():
