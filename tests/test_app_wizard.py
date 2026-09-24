@@ -1,4 +1,4 @@
-"""The real app, headless: five steps, automatic hand-off, no file movement."""
+"""The real app, headless: six steps, automatic hand-off, no file movement."""
 from streamlit.testing.v1 import AppTest
 
 from app.views import cfd
@@ -20,7 +20,7 @@ def test_landing_is_the_design_step_with_later_steps_locked(monkeypatch, tmp_pat
     assert not at.exception
     assert at.session_state.get("step", 1) == 1
     assert not at.button(key="step_1").disabled
-    assert all(at.button(key=f"step_{i}").disabled for i in range(2, 6))
+    assert all(at.button(key=f"step_{i}").disabled for i in range(2, 7))
     assert not at.sidebar.radio
 
 
@@ -36,7 +36,7 @@ def test_build_and_continue_runs_tier_one_without_another_click(monkeypatch, tmp
 def test_every_step_renders_and_none_asks_for_a_file(monkeypatch, tmp_path):
     at = _app(monkeypatch, tmp_path)
     at.button(key="build_design").click().run()
-    for i in range(2, 6):
+    for i in range(2, 7):
         at.button(key=f"step_{i}").click().run()
         assert not at.exception, i
         assert at.session_state["step"] == i

@@ -281,6 +281,21 @@ def _cmd_report_test_plan(args: argparse.Namespace) -> int:
     return _emit_report(test_plan.render(design, result), args.out)
 
 
+def _cmd_report_compliance(args: argparse.Namespace) -> int:
+    from solit2.compliance import check as compliance_check
+    from solit2.reports import compliance as compliance_report
+    try:
+        report = compliance_check.run(args.spec)
+    except (ValidationError, ValueError, FileNotFoundError, KeyError) as exc:
+        return _fail(str(exc), "spec", "correct the compliance spec and try again",
+                     EXIT_BAD_INPUT)
+    except (ArithmeticError, RuntimeError) as exc:
+        return _fail(str(exc), "engine",
+                     "the spec validated but a design or rule could not be evaluated",
+                     EXIT_ENGINE)
+    return _emit_report(compliance_report.render(report), args.out)
+
+
 def _cmd_report_correlation(args: argparse.Namespace) -> int:
     try:
         test_result = _load_result(args.test)
@@ -588,6 +603,12 @@ def build_parser() -> argparse.ArgumentParser:
     rtp.add_argument("design")
     rtp.add_argument("--out")
     rtp.set_defaults(func=_cmd_report_test_plan)
+
+    rcomp = report_sub.add_parser("compliance",
+                                  help="clause-by-clause SOLIT2 compliance of a planned test")
+    rcomp.add_argument("spec")
+    rcomp.add_argument("--out")
+    rcomp.set_defaults(func=_cmd_report_compliance)
 
     rc = report_sub.add_parser("correlation",
                                help="one design's criteria across two runs, side by side")

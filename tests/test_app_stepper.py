@@ -25,7 +25,7 @@ def test_without_a_design_only_step_one_is_enabled_and_there_is_no_back_button()
     at.run()
     assert not at.exception
     assert not at.button(key="step_1").disabled
-    for i in range(2, 6):
+    for i in range(2, 7):
         assert at.button(key=f"step_{i}").disabled, i
     assert "nav_back" not in _keys(at)
     assert at.button(key="nav_next").disabled
@@ -35,13 +35,13 @@ def test_with_a_design_next_back_and_jump_move_the_step():
     at = AppTest.from_string(SCRIPT)
     at.session_state["_seed"] = True
     at.run()
-    assert all(not at.button(key=f"step_{i}").disabled for i in range(1, 6))
+    assert all(not at.button(key=f"step_{i}").disabled for i in range(1, 7))
     at.button(key="nav_next").click().run()
     assert at.session_state["step"] == 2
     at.button(key="nav_back").click().run()
     assert at.session_state["step"] == 1
-    at.button(key="step_5").click().run()
-    assert at.session_state["step"] == 5
+    at.button(key="step_6").click().run()
+    assert at.session_state["step"] == 6
     assert "nav_next" not in _keys(at)
 
 

@@ -1,0 +1,23 @@
+{
+  "source_document": "HPWM-TECHNICAL SPEC_R2",
+  "rules": [
+    {"id": "r2.6.reduced_hrr", "source": "§6",
+     "requirement": "The 150 MW design fire is reduced to 50 MW or less.",
+     "quantity": "installation.peak_hrr_mw", "comparator": "<=", "limit": 50.0},
+    {"id": "r2.5a.pump_power", "source": "§5a",
+     "requirement": "Pumping power, booster pumps included, at most 650 kW.",
+     "quantity": "installation.power_kw", "comparator": "<=", "limit": 650.0},
+    {"id": "r2.5d.droplet", "source": "§5d",
+     "requirement": "Droplet size below 100 microns; the tender does not name the measure, so the measure the manufacturer declares is shown alongside the value.",
+     "quantity": "fact.droplet_size_um", "comparator": "<", "limit": 100.0},
+    {"id": "r2.8.test_velocity_high", "source": "§8",
+     "requirement": "Tested up to the tunnel's 5.08 m/s.",
+     "quantity": "test.max_velocity_ms", "comparator": ">=", "limit": 5.08},
+    {"id": "r2.8.test_velocity_low", "source": "§8",
+     "requirement": "Tested down to the tunnel's 3.88 m/s.",
+     "quantity": "test.min_velocity_ms", "comparator": "<=", "limit": 3.88},
+    {"id": "r2.9.correlation_cfd", "source": "§9",
+     "requirement": "A CFD analysis correlating the tested tunnel with this one.",
+     "requires_fact": "correlation_cfd_report"}
+  ]
+}
