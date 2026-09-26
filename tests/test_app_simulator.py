@@ -7,6 +7,7 @@ from app.views import cfd, simulator
 from solit2 import history
 from solit2.engines.fds import deck
 from solit2.schema.design import Design
+from tests.conftest import sign_in
 
 APP = "../app/streamlit_app.py"
 
@@ -15,6 +16,7 @@ def _app(monkeypatch, tmp_path) -> AppTest:
     monkeypatch.setattr(history, "DEFAULT_PATH", tmp_path / "h.jsonl")
     monkeypatch.setattr(cfd, "RUNS_DIR", tmp_path / "runs")
     at = AppTest.from_file(APP, default_timeout=180)
+    sign_in(at)
     at.run()
     return at
 
@@ -63,6 +65,7 @@ def test_judged_elsewhere_is_absent_when_the_envelope_has_only_one_case(monkeypa
     monkeypatch.setattr(history, "DEFAULT_PATH", tmp_path / "h.jsonl")
     monkeypatch.setattr(cfd, "RUNS_DIR", tmp_path / "runs")
     at = AppTest.from_file(APP, default_timeout=180)
+    sign_in(at)
     at.session_state["design"] = Design.from_dict(raw)
     at.run()
     assert not at.exception
@@ -99,6 +102,7 @@ def test_a_velocity_range_wider_than_the_sliders_default_does_not_crash(monkeypa
     raw["ventilation"]["velocity_range_ms"] = [9.0, 10.5]
     wide = Design.from_dict(raw)
     at = AppTest.from_file(APP, default_timeout=180)
+    sign_in(at)
     at.session_state["design"] = wide
     at.run()
     assert not at.exception

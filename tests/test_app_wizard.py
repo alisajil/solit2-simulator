@@ -3,6 +3,7 @@ from streamlit.testing.v1 import AppTest
 
 from app.views import cfd
 from solit2 import history
+from tests.conftest import sign_in
 
 APP = "../app/streamlit_app.py"
 
@@ -11,6 +12,7 @@ def _app(monkeypatch, tmp_path) -> AppTest:
     monkeypatch.setattr(history, "DEFAULT_PATH", tmp_path / "h.jsonl")
     monkeypatch.setattr(cfd, "RUNS_DIR", tmp_path / "runs")
     at = AppTest.from_file(APP, default_timeout=180)
+    sign_in(at)
     at.session_state["view"] = "wizard"
     at.run()
     return at

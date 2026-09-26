@@ -22,10 +22,30 @@ STEP_MIN, STEP_MAX = 1, 6
 _DERIVED_KEYS = (_RESULT_KEY, _TWIN_KEY, _TIER2_KEY)
 
 _VIEW_KEY = "view"
-# The app's three top-level screens: the live simulator is the landing screen,
-# the wizard carries the formal record, the runs manager watches the FDS fleet.
-VIEWS = ("simulator", "wizard", "runs")
+# The app's top-level screens: the live simulator is the landing screen, the wizard
+# carries the formal record, the runs manager watches the FDS fleet, and Admin (admins
+# only) manages the accounts.
+VIEWS = ("simulator", "wizard", "runs", "admin")
+PROJECT_VIEWS = ("simulator", "wizard", "runs")
 DEFAULT_VIEW = "simulator"
+# Which screens each role may open. A customer opens none of the project's screens
+# until customer workspaces exist (Phase 2 of the accounts spec): until then the shared
+# designs, runs and history are the team's alone.
+ROLE_VIEWS = {"admin": VIEWS, "team": PROJECT_VIEWS, "customer": ()}
+
+
+def views_for(role: str | None) -> tuple[str, ...]:
+    return ROLE_VIEWS.get(role or "", ())
+
+
+def current_view(role: str | None) -> str | None:
+    """The screen to show an account of this role: the chosen one when the role may open
+    it, else the first it may open; None when it may open none."""
+    allowed = views_for(role)
+    if not allowed:
+        return None
+    view = get_view()
+    return view if view in allowed else allowed[0]
 
 
 def get_view() -> str:

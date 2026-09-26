@@ -15,7 +15,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from app import plot_theme, state
+from app import auth, plot_theme, state
 from app.components import cfd_live, live_figure, readings, run_states, twin_canvas
 from app.components.design_files import design_files
 from app.views.fire_test import ensure_trace
@@ -224,6 +224,8 @@ def _header(design: Design, result) -> None:
 
 @st.fragment(run_every=cfd_live.REFRESH_S)
 def _cfd_panel(design: Design) -> None:
+    if not auth.guard_fragment():
+        return
     st.markdown('<div class="sim-label">CFD · LIVE</div>', unsafe_allow_html=True)
     found = cfd_live.panel(design)
     if found is None:
