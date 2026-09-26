@@ -144,7 +144,12 @@ recommendations, and safe to ignore.
 
     uv run streamlit run app/streamlit_app.py
 
-The app opens on the **Simulator**: presets and design knobs in the sidebar, the run's peaks in
+Everyone logs in first. A visitor signs up with a name, organisation, email and a password of
+at least 12 characters, then waits until an admin approves the account (see
+[Accounts](#accounts)). A browser refresh asks for the login again, and a session left idle for
+eight hours ends.
+
+Once you are in, the app opens on the **Simulator**: presets and design knobs in the sidebar, the run's peaks in
 tiles, and one figure that replays the Tier 1 virtual fire test — press ▶ Play and six gauges,
 a 3D tunnel and three charts move together. Every value is the engine's own; a gauge has a red
 band only where the design's `ahj` block sets that criterion's limit. The **Wizard** keeps the

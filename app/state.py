@@ -27,6 +27,25 @@ _VIEW_KEY = "view"
 VIEWS = ("simulator", "wizard", "runs")
 DEFAULT_VIEW = "simulator"
 
+# Which screens each role may open. A customer opens none of the project's screens
+# until customer workspaces exist (Phase 2 of the accounts spec): until then the shared
+# designs, runs and history are the team's alone.
+ROLE_VIEWS = {"admin": VIEWS, "team": VIEWS, "customer": ()}
+
+
+def views_for(role: str | None) -> tuple[str, ...]:
+    return ROLE_VIEWS.get(role or "", ())
+
+
+def current_view(role: str | None) -> str | None:
+    """The screen to show an account of this role: the chosen one when the role may open
+    it, else the first it may open; None when it may open none."""
+    allowed = views_for(role)
+    if not allowed:
+        return None
+    view = get_view()
+    return view if view in allowed else allowed[0]
+
 
 def get_view() -> str:
     view = st.session_state.get(_VIEW_KEY, DEFAULT_VIEW)

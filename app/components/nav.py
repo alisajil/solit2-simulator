@@ -1,19 +1,29 @@
-"""The top-level nav: one button per screen, the current one highlighted."""
+"""The top-level nav: one button per screen the account may open, the current one
+highlighted, and on the right who is signed in with a Log out button."""
 from __future__ import annotations
 
 import streamlit as st
 
-from app import state
+from app import auth, state
+from app.accounts.store import User
 
 LABELS = {"simulator": "Simulator", "wizard": "Wizard", "runs": "CFD runs"}
-# Three narrow buttons on the left, the rest of the row left empty.
-NAV_COLUMNS = (1, 1, 1, 5)
+# One narrow column per screen, a spacer, then the account's email and Log out.
+VIEW_COLUMN, SPACER_COLUMN, EMAIL_COLUMN, LOGOUT_COLUMN = 1, 3, 2, 1
 
 
-def render() -> None:
-    current = state.get_view()
-    for col, (view, label) in zip(st.columns(NAV_COLUMNS), LABELS.items()):
+def render(user: User) -> None:
+    views = state.views_for(user.role)
+    current = state.current_view(user.role)
+    widths = [VIEW_COLUMN] * len(views) + [SPACER_COLUMN, EMAIL_COLUMN, LOGOUT_COLUMN]
+    *view_columns, _, email_column, logout_column = st.columns(widths,
+                                                               vertical_alignment="center")
+    for column, view in zip(view_columns, views):
         kind = "primary" if view == current else "secondary"
-        if col.button(label, key=f"nav_{view}", type=kind, width="stretch"):
+        if column.button(LABELS[view], key=f"nav_{view}", type=kind, width="stretch"):
             state.set_view(view)
             st.rerun()
+    email_column.caption(f"Signed in as {user.email}")
+    if logout_column.button("Log out", key="nav_logout", width="stretch"):
+        auth.sign_out(auth.LOGGED_OUT_NOTICE)
+        st.rerun()

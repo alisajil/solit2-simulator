@@ -56,3 +56,13 @@ def test_set_view_refuses_an_unknown_view():
     at.run()
     assert at.exception
     assert "unknown view" in at.exception[0].value
+
+
+def test_a_role_lands_only_on_a_screen_it_may_open():
+    script = ("import streamlit as st\nfrom app import state\n"
+              "st.write(' '.join(f'{r}={state.current_view(r)}' "
+              "for r in ('admin', 'team', 'customer', None)))\n")
+    at = AppTest.from_string(script)
+    at.session_state["view"] = "wizard"
+    at.run()
+    assert at.markdown[0].value == "admin=wizard team=wizard customer=None None=None"

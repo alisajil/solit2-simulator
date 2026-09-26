@@ -51,6 +51,17 @@ def sign_in(at: AppTest, role: str = "team", email: str | None = None) -> store.
     return user
 
 
+SCREEN_ELEMENTS = ("title", "header", "subheader", "markdown", "caption", "text", "code",
+                   "error", "warning", "info", "success")
+
+
+def screen_text(at: AppTest) -> str:
+    """Everything an AppTest's page shows as text, tables included."""
+    parts = [str(element.value) for kind in SCREEN_ELEMENTS for element in getattr(at, kind)]
+    parts += [table.value.to_csv() for table in at.dataframe]
+    return "\n".join(parts)
+
+
 def view_script(view: str, seed_design: bool) -> str:
     seed = (f'if state.get_design() is None:\n'
             f'    state.set_design(Design.load("{EXAMPLE_DESIGN}"))\n') if seed_design else ""
