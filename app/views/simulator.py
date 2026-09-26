@@ -15,7 +15,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from app import state
+from app import plot_theme, state
 from app.components import cfd_live, live_figure, readings, twin_canvas
 from app.components.design_files import design_files
 from app.views.fire_test import ensure_trace
@@ -238,7 +238,8 @@ def render() -> None:
     main, side = st.columns([5, 1])
     with main:
         fig = live_figure.figure(design, result, trace,
-                                 window_m=twin_canvas.core_window_m(design))
+                                 window_m=twin_canvas.core_window_m(design),
+                                 template=plot_theme.current())
         st.plotly_chart(fig, key="sim_figure", theme=None, config={"scrollZoom": False})
         st.caption(CAPTION)
     with side:

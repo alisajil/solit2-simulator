@@ -15,7 +15,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from app import state
+from app import plot_theme, state
 from app.components import overview
 from app.components.design_files import design_files
 from solit2.engines.reduced.geometry import section_geometry
@@ -42,7 +42,9 @@ def _render_summary(raw: dict) -> None:
     cols[3].metric("Pump power", f"{hyd.power_kw:.0f} kW")
     cols[4].metric("Tank", f"{hyd.tank_m3:.1f} m³")
     cols[5].metric("Density", f"{hyd.density_mm_min:.2f} mm/min")
-    st.plotly_chart(overview.figure(design, geom), key="design_overview", theme=None)
+    fig = overview.figure(design, geom)
+    fig.update_layout(template=plot_theme.current())
+    st.plotly_chart(fig, key="design_overview", theme=None)
 
 
 def render() -> None:

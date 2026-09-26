@@ -41,6 +41,25 @@ CSS = f"""
 .lamp {{ display: inline-block; width: 0.8rem; height: 0.8rem; border-radius: 2px;
         margin-right: 0.4rem; vertical-align: middle; background: {GREY}; opacity: 0.4; }}
 .lamp.on {{ background: {PASS}; opacity: 1; box-shadow: 0 0 6px {PASS}; }}
+.sim-head {{ font-family: "IBM Plex Mono", monospace; font-size: 0.85rem; letter-spacing: 0.18em;
+            text-transform: uppercase; opacity: 0.9; margin: 0.2rem 0 0.8rem; }}
+.sim-label {{ font-family: "IBM Plex Mono", monospace; font-size: 0.72rem; letter-spacing: 0.14em;
+             text-transform: uppercase; opacity: 0.75; margin: 0.9rem 0 0.3rem; }}
+.tiles {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: 0.75rem;
+         margin-bottom: 0.8rem; }}
+.tile {{ border: 1px solid {GREY}55; border-radius: 0.5rem; padding: 0.7rem 0.9rem; }}
+.tile-label {{ font-family: "IBM Plex Mono", monospace; font-size: 0.7rem; letter-spacing: 0.12em;
+              text-transform: uppercase; opacity: 0.75; }}
+.tile-value {{ font-size: 1.7rem; font-weight: 500; font-variant-numeric: tabular-nums; margin-top: 0.2rem; }}
+.tile-note {{ font-size: 0.78rem; opacity: 0.7; }}
+.diag {{ font-family: "IBM Plex Mono", monospace; font-size: 0.78rem; opacity: 0.85;
+        display: flex; gap: 0.8rem; align-items: center; flex-wrap: wrap; margin-bottom: 0.4rem; }}
+.pill {{ border: 1px solid {PRIMARY}; color: {PRIMARY}; border-radius: 999px; padding: 0.1rem 0.6rem;
+        letter-spacing: 0.12em; white-space: nowrap; }}
+.dot {{ display: inline-block; width: 0.5rem; height: 0.5rem; border-radius: 50%; background: {PRIMARY};
+       margin-right: 0.4rem; animation: sim-pulse 1.6s ease-in-out infinite; }}
+@keyframes sim-pulse {{ 0%, 100% {{ opacity: 1; }} 50% {{ opacity: 0.25; }} }}
+@media (prefers-reduced-motion: reduce) {{ .dot {{ animation: none; }} }}
 </style>
 """
 

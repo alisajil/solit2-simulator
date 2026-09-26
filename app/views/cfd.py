@@ -17,7 +17,7 @@ from pathlib import Path
 import plotly.graph_objects as go
 import streamlit as st
 
-from app import palette, state
+from app import palette, plot_theme, state
 from app.components import twin_canvas
 from app.views.fire_test import ensure_trace
 from app.views.result import ensure_result
@@ -390,8 +390,9 @@ def _canvas(design: Design, trace: RunTrace, run_dir: Path, run_state: str,
     # zero everywhere and the water-mass field holds no droplets, so the two
     # fields this selector exists for both open as an empty picture. The caption
     # below already describes that last frame.
-    st.plotly_chart(twin_canvas.figure(design, trace, cfd=field, initial_frame=-1),
-                    key=key, theme=None)
+    fig = twin_canvas.figure(design, trace, cfd=field, initial_frame=-1)
+    fig.update_layout(template=plot_theme.current())
+    st.plotly_chart(fig, key=key, theme=None)
     st.caption(_slice_caption(run_state, slice_))
 
 

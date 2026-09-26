@@ -79,3 +79,16 @@ def test_rgba_never_emits_scientific_notation():
         text = palette.rgba(palette.FAIL, alpha)
         assert "e-" not in text and "e+" not in text, text
         assert text.startswith("rgba(") and text.endswith(")")
+
+
+def test_dark_is_the_default_theme():
+    cfg = tomllib.loads(Path(".streamlit/config.toml").read_text())
+    assert cfg["theme"]["base"] == "dark"
+
+
+def test_the_instrument_styles_are_defined_and_respect_reduced_motion():
+    from app import theme
+
+    for cls in (".sim-head", ".sim-label", ".tiles", ".tile-value", ".diag", ".pill", ".dot"):
+        assert cls in theme.CSS, cls
+    assert "prefers-reduced-motion" in theme.CSS

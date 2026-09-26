@@ -1,4 +1,6 @@
 [theme]
+# Dark by default; the light palette below stays selectable in Streamlit's settings.
+base = "dark"
 font = "IBM Plex Sans, sans-serif"
 headingFont = "IBM Plex Sans, sans-serif"
 codeFont = "IBM Plex Mono, monospace"
