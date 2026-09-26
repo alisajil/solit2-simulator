@@ -193,10 +193,10 @@ def test_summarise_counts_cores_as_block_widths_not_block_counts(tmp_path):
 def test_summarise_counts_an_unmanaged_running_deck_by_its_mesh_count(tmp_path, monkeypatch):
     """A run the web app launched unpinned (app/views/cfd.py) occupies real
     cores that no scheduler block accounts for -- it must still count."""
-    run_dir = _write_deck(tmp_path / "runs" / "unpinned",
-                          extra_mesh="&MESH IJK=1,1,1, XB=0,1,0,1,0,1 /\n"
-                                    "&MESH IJK=1,1,1, XB=1,2,0,1,0,1 /\n"
-                                    "&MESH IJK=1,1,1, XB=2,3,0,1,0,1 /\n")
+    _write_deck(tmp_path / "runs" / "unpinned",
+               extra_mesh="&MESH IJK=1,1,1, XB=0,1,0,1,0,1 /\n"
+                         "&MESH IJK=1,1,1, XB=1,2,0,1,0,1 /\n"
+                         "&MESH IJK=1,1,1, XB=2,3,0,1,0,1 /\n")
     state_dir = tmp_path / "state"
     monkeypatch.setattr(runner_mod, "status", lambda d: {"state": "running", "progress": 0.1,
                                                           "detail": ""})
