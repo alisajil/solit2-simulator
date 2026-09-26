@@ -22,8 +22,15 @@ SERIES_DEFAULT = 3
 LEADERBOARD_TOP = 20
 
 
-def ensure_result(design: Design) -> Result:
-    """The Tier 1 result for `design`, computing and recording it on first use."""
+def ensure_result(design: Design, record: bool = True) -> Result:
+    """The Tier 1 result for `design`, computing it on first use.
+
+    `record=False` (the simulator's own slider exploration) never appends to
+    `runs/history.jsonl` -- the simulator makes one run per slider release, and
+    recording every one of them would flood the leaderboard with slider-drag
+    noise. The wizard's Result step keeps `record=True` (the default): a design
+    reaching that step is the one the engineer is actually considering (I-3).
+    """
     result = state.get_result()
     if result is None:
         try:
@@ -34,7 +41,8 @@ def ensure_result(design: Design) -> Result:
             st.error(f"The engine could not finish this design: {exc}")
             st.stop()
         state.set_result(result)
-        history.append(result, history.DEFAULT_PATH)
+        if record:
+            history.append(result, history.DEFAULT_PATH)
     return result
 
 

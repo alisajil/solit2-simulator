@@ -4,14 +4,25 @@ for the CFD step.
 """
 from streamlit.testing.v1 import AppTest
 
-from app.views import runs
+from app.views import cfd, runs
+from solit2 import history
 from solit2.engines.fds import fleet
 from solit2.engines.fds import runner as runner_mod
 
 APP = "../app/streamlit_app.py"
 
 
+def _patch_app_paths(monkeypatch, tmp_path) -> None:
+    """I-3: every AppTest that lands on the app renders the simulator at least once
+    (it is the default view before `view` is set), and the simulator's own
+    `ensure_result` computes a result the moment it renders -- so any test that
+    forgets this patches the checkout's real `runs/history.jsonl`, not a temp file."""
+    monkeypatch.setattr(history, "DEFAULT_PATH", tmp_path / "h.jsonl")
+    monkeypatch.setattr(cfd, "RUNS_DIR", tmp_path / "runs")
+
+
 def _app(monkeypatch, tmp_path, roots=None) -> AppTest:
+    _patch_app_paths(monkeypatch, tmp_path)
     monkeypatch.setenv("SOLIT2_CFD_STATE_DIR", str(tmp_path / "state"))
     if roots is None:
         monkeypatch.delenv("SOLIT2_RUN_ROOTS", raising=False)
@@ -35,6 +46,7 @@ def _write_deck(run_dir, chid="c1", title="A synthetic run"):
 # --- reaching the manager page ------------------------------------------------
 
 def test_the_nav_switches_to_the_manager_and_back_to_the_wizard(monkeypatch, tmp_path):
+    _patch_app_paths(monkeypatch, tmp_path)
     monkeypatch.delenv("SOLIT2_RUN_ROOTS", raising=False)
     at = AppTest.from_file(APP, default_timeout=180)
     at.run()
@@ -55,6 +67,7 @@ def test_the_nav_switches_to_the_manager_and_back_to_the_wizard(monkeypatch, tmp
 
 
 def test_switching_to_the_manager_keeps_the_current_wizard_step(monkeypatch, tmp_path):
+    _patch_app_paths(monkeypatch, tmp_path)
     monkeypatch.delenv("SOLIT2_RUN_ROOTS", raising=False)
     at = AppTest.from_file(APP, default_timeout=180)
     at.session_state["view"] = "wizard"

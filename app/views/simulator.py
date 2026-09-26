@@ -260,7 +260,7 @@ def render() -> None:
         else:
             state.set_design(candidate)
             st.rerun()
-    result = ensure_result(design)
+    result = ensure_result(design, record=False)
     trace = ensure_trace(design, result)
     _header(design, result)
     main, side = st.columns([5, 1])

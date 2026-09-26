@@ -106,6 +106,19 @@ def test_settings_that_make_no_valid_design_are_reported_and_the_last_design_kep
     assert at.session_state["design"] == before
 
 
+def test_the_simulator_never_records_to_history(monkeypatch, tmp_path):
+    """I-3: the simulator makes one Tier 1 run per slider release, and would flood
+    `runs/history.jsonl` (and its leaderboard) if it recorded every one of them --
+    only the wizard's own Result step records a considered design."""
+    history_path = tmp_path / "h.jsonl"
+    at = _app(monkeypatch, tmp_path)
+    assert not at.exception
+    assert not history_path.exists()
+    at.sidebar.slider(key="sim_pressure").set_value(61.0).run()
+    assert not at.exception
+    assert not history_path.exists()
+
+
 def test_a_preset_loads_that_design_file(monkeypatch, tmp_path):
     at = _app(monkeypatch, tmp_path)
     at.session_state["sim_preset"] = "solit2-test-protocol-class-b"
