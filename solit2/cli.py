@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
+import sqlite3
 import sys
 import time
 from dataclasses import asdict
@@ -487,6 +489,30 @@ def _cmd_fds_adopt(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_accounts_create_admin(args: argparse.Namespace) -> int:
+    # The account code belongs to the app it guards; only this command needs it, so it
+    # is imported here and no other command depends on the app package.
+    from app.accounts import service, store
+
+    db = store.db_path()
+    try:
+        store.init(db)
+        password = getpass.getpass("Password: ")
+        confirm = getpass.getpass("Password again: ")
+        admin = service.create_admin(db, email=args.email, name=args.name,
+                                     organisation=args.organisation, password=password,
+                                     confirm=confirm)
+    except service.AccountError as exc:
+        return _fail(str(exc), exc.field, "correct it and run the command again", EXIT_BAD_INPUT)
+    except (sqlite3.Error, OSError) as exc:
+        return _fail(f"the account store at {db} is unavailable: {exc}", store.DATA_DIR_ENV,
+                     "point SOLIT2_DATA_DIR at a directory this user can write", EXIT_ENGINE)
+    json.dump({"created": "admin", "id": admin.id, "email": admin.email, "store": str(db)},
+              sys.stdout)
+    sys.stdout.write("\n")
+    return EXIT_OK
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="solit2", description="SOLIT2 tunnel water-mist simulator")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -712,6 +738,17 @@ def build_parser() -> argparse.ArgumentParser:
     fadopt.add_argument("--design", help="a design JSON path")
     fadopt.add_argument("--anchor", help="an anchor id from validation/anchors/, e.g. c4")
     fadopt.set_defaults(func=_cmd_fds_adopt)
+
+    accounts = sub.add_parser("accounts", help="manage the app's user accounts")
+    accounts_sub = accounts.add_subparsers(dest="accounts_command", required=True)
+    acreate = accounts_sub.add_parser(
+        "create-admin",
+        help="create an approved admin account; asks for the password twice, "
+             "never takes it as an argument")
+    acreate.add_argument("--email", required=True)
+    acreate.add_argument("--name", required=True)
+    acreate.add_argument("--organisation", required=True)
+    acreate.set_defaults(func=_cmd_accounts_create_admin)
     return parser
 
 

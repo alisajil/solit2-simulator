@@ -172,6 +172,30 @@ Views call the engine in-process -- the same Python functions the CLI
 (`solit2 run`, `solit2 validate`, `solit2 report`) uses. There is no
 separate API server.
 
+## Accounts
+
+The app asks everyone to log in, and an admin approves every new account as **team** (the
+shared project: designs, runs, the CFD runs manager) or **customer**. Customers see a holding
+screen until customer workspaces open.
+
+Create the first admin on the server, from the app's checkout and with the same
+`SOLIT2_DATA_DIR` the app's service uses. It asks for the password twice; the password is
+never an argument:
+
+    SOLIT2_DATA_DIR=/path/to/app-data uv run solit2 accounts create-admin \
+        --email you@example.com --name "Your Name" --organisation "Your organisation"
+
+Accounts live in one SQLite file, `$SOLIT2_DATA_DIR/accounts.db` (default `data/accounts.db`,
+never committed), readable by its owner only. Back it up with
+`sqlite3 "$SOLIT2_DATA_DIR/accounts.db" ".backup accounts-backup.db"`.
+
+A forgotten password is reset by an admin, who issues a temporary one; the account must choose
+its own at its next login. An admin who forgets their own asks another admin, or makes a second
+admin with the command above.
+
+The server keeps its IP allowlist in front of the app until a security review of the accounts
+has passed.
+
 ## Development
 
 ```bash
