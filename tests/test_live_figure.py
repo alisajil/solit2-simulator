@@ -73,5 +73,14 @@ def test_a_set_limit_draws_its_band_from_the_limit_up():
     assert flux.gauge.steps[0].range[0] == 5.0
 
 
+def test_a_floor_limit_draws_its_band_from_zero_up_to_the_limit():
+    raw = Design.load(PROTOCOL).model_dump(by_alias=True, mode="json")
+    raw["ahj"]["min_visibility_m"] = 8.0     # a synthetic limit, set by this test only
+    _, _, fig, _ = _build(Design.from_dict(raw))
+    visibility = _indicators(fig.data)[[g.key for g in readings.GAUGES].index("visibility_m")]
+    assert visibility.gauge.threshold.value == 8.0
+    assert visibility.gauge.steps[0].range == (0.0, 8.0)
+
+
 def test_the_figure_stays_inside_its_size_budget(built):
     assert len(built[2].to_json()) < live_figure.FIGURE_BUDGET_BYTES
