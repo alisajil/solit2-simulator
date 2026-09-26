@@ -426,6 +426,9 @@ def _cmd_fleet_resume(args: argparse.Namespace) -> int:
         return _fail(str(exc), "run_dir",
                      "resume needs restart files and design.json beside deck.fds "
                      "(write the latter with `solit2 fds-adopt`)", EXIT_BAD_INPUT)
+    except ValueError as exc:
+        return _fail(str(exc), "run_dir", "a run with a live process cannot be resumed",
+                     EXIT_BAD_INPUT)
     return EXIT_OK
 
 

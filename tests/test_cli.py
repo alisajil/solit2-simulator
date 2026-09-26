@@ -445,6 +445,28 @@ def test_fds_fleet_resume_without_restart_files_exits_two(tmp_path):
     assert "restart files" in err["error"]
 
 
+def test_fds_fleet_resume_with_live_process_exits_two(tmp_path):
+    from solit2.schema.design import Design
+    from solit2.engines.fds import scheduler as scheduler_mod
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "deck.fds").write_text("&HEAD CHID='x' /\n&TAIL /\n")
+    # Create a restart file so has_restart_files will pass
+    (run_dir / "x.restart").write_text("")
+    # Create a PID file pointing to a process that definitely exists (PID 1)
+    # This makes _launcher_alive() return True in the subprocess
+    (run_dir / "fds.pid").write_text("1\n")
+    design = Design.load("designs/og-dbr-rev0.json")
+    (run_dir / scheduler_mod.DESIGN_NAME).write_text(design.model_dump_json(by_alias=True))
+    proc = _run(["fds-fleet", "resume", str(run_dir)],
+               env={**os.environ, "SOLIT2_CFD_STATE_DIR": str(tmp_path / "state")})
+    assert proc.returncode == 2
+    err = json.loads(proc.stderr)
+    assert "live process" in err["error"]
+    assert err["field"] == "run_dir"
+
+
 def test_fds_adopt_writes_design_json(tmp_path):
     run_dir = tmp_path / "run"
     run_dir.mkdir()

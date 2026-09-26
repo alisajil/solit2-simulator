@@ -305,10 +305,12 @@ def _refuse_if_alive(action: str, run_dir: Path, state_dir: Path) -> None:
     it. Not a scheduler-running check (that's a different question, see
     `enqueue`'s own docstring): this is "is anything actually running here
     right now", true or not regardless of whether a scheduler is watching."""
+    _GERUND = {"resume": "resuming", "enqueue": "enqueuing"}
     if runner_mod._launcher_alive(Path(run_dir)) is True:
         _log_action(state_dir, action, run_dir, "failed: already running")
+        gerund = _GERUND.get(action, action)
         raise ValueError(
-            f"{run_dir} already has a live process; {action}ing it would risk launching a "
+            f"{run_dir} already has a live process; {gerund} it would risk launching a "
             f"second FDS in the same directory")
 
 
