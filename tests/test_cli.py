@@ -396,16 +396,27 @@ def test_fds_fleet_status_json_reports_an_empty_fleet(tmp_path):
     assert proc.returncode == 0, proc.stderr
     payload = json.loads(proc.stdout)
     assert payload["runs"] == []
-    assert payload["summary"]["cores_total"] == 3
+    assert payload["summary"]["cores_total"] == 30, "three 10-core blocks, by width not count"
 
 
 def test_fds_fleet_enqueue_and_status_round_trip(tmp_path):
+    tmp_path = tmp_path.resolve()   # enqueue() resolves; compare against the same form
     state_dir = tmp_path / "state"
     run_dir = tmp_path / "runs" / "x"
+    run_dir.mkdir(parents=True)
+    (run_dir / "deck.fds").write_text("&HEAD CHID='x' /\n&TAIL /\n")
     proc = _run(["fds-fleet", "enqueue", str(run_dir)],
                env={**os.environ, "SOLIT2_CFD_STATE_DIR": str(state_dir)})
     assert proc.returncode == 0, proc.stderr
     assert (state_dir / "queue.txt").read_text().strip() == str(run_dir)
+
+
+def test_fds_fleet_enqueue_refuses_a_directory_with_no_deck(tmp_path):
+    proc = _run(["fds-fleet", "enqueue", str(tmp_path / "empty")],
+               env={**os.environ, "SOLIT2_CFD_STATE_DIR": str(tmp_path / "state")})
+    assert proc.returncode == 2
+    err = json.loads(proc.stderr)
+    assert "deck.fds" in err["error"]
 
 
 def test_fds_fleet_dequeue_a_run_not_queued_exits_two(tmp_path):

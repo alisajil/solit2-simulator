@@ -31,6 +31,15 @@ def test_parse_blocks_rejects_an_empty_spec():
         scheduler.parse_blocks("")
 
 
+def test_parse_blocks_rejects_overlapping_ranges():
+    with pytest.raises(ValueError, match="overlap"):
+        scheduler.parse_blocks("0-9,5-14")
+
+
+def test_parse_blocks_accepts_adjacent_non_overlapping_ranges():
+    assert scheduler.parse_blocks("0-9,10-19") == ("0-9", "10-19")
+
+
 def test_resolve_blocks_reads_the_env_var(monkeypatch):
     monkeypatch.setenv(scheduler.BLOCKS_ENV, "0-3,4-7")
     assert scheduler.resolve_blocks() == ("0-3", "4-7")
@@ -91,6 +100,50 @@ def test_queue_lock_serialises_two_read_modify_writes(tmp_path):
         handle.close()
 
 
+# --- I2: one scheduler instance per state dir -----------------------------
+
+def test_instance_lock_refuses_a_second_holder(tmp_path):
+    with scheduler._instance_lock(tmp_path):
+        with pytest.raises(RuntimeError, match="already holds"):
+            with scheduler._instance_lock(tmp_path):
+                pass    # pragma: no cover -- must never be entered
+
+
+def test_instance_lock_is_released_on_exit(tmp_path):
+    with scheduler._instance_lock(tmp_path):
+        pass
+    with scheduler._instance_lock(tmp_path):
+        pass         # the second `with` proves the first one let go
+
+
+def test_run_forever_refuses_to_start_a_second_instance(tmp_path):
+    import fcntl
+    handle = (tmp_path / scheduler.INSTANCE_LOCK_NAME).open("w")
+    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    try:
+        with pytest.raises(RuntimeError, match="already holds"):
+            scheduler.run_forever(tmp_path, ("0-9",), stop_after=1)
+    finally:
+        handle.close()
+    assert not (tmp_path / scheduler.PID_NAME).exists(), \
+        "a refused start must never claim to be the running scheduler"
+
+
+def test_adopt_refuses_while_another_instance_holds_the_lock(tmp_path):
+    import fcntl
+    handle = (tmp_path / scheduler.INSTANCE_LOCK_NAME).open("w")
+    fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    adopt_state = tmp_path / "s.json"
+    adopt_state.write_text("{}")
+    adopt_queue = tmp_path / "q.txt"
+    adopt_queue.write_text("")
+    try:
+        with pytest.raises(RuntimeError, match="already holds"):
+            scheduler.adopt(tmp_path, ("0-9",), adopt_state, adopt_queue)
+    finally:
+        handle.close()
+
+
 # --- per-run-dir lock: never start two runs on one directory ------------------
 
 def test_try_lock_run_grants_a_free_lock_and_refuses_a_held_one(tmp_path):
@@ -103,6 +156,25 @@ def test_try_lock_run_grants_a_free_lock_and_refuses_a_held_one(tmp_path):
     third, reason = scheduler._try_lock_run(tmp_path)
     assert third is not None, "closing the first handle must release the lock"
     third.close()
+
+
+def test_try_lock_run_does_not_bump_the_lock_files_mtime_on_a_repeat_poll(tmp_path):
+    """`silent_for_s` (runner.py) reads the newest mtime across EVERY file in
+    a run dir to decide whether it has gone quiet. The lock file used to be
+    opened with `Path.open("w")`, which truncates -- and touches the mtime --
+    on every call, so a run polled every 15 s would never trip the stall
+    detector no matter how genuinely wedged it was."""
+    import os
+    import time as time_mod
+    first, _ = scheduler._try_lock_run(tmp_path)
+    first.close()
+    lock_path = tmp_path / scheduler.RUN_LOCK_NAME
+    old = time_mod.time() - 3600.0
+    os.utime(lock_path, (old, old))
+    second, _ = scheduler._try_lock_run(tmp_path)
+    second.close()
+    assert lock_path.stat().st_mtime == pytest.approx(old), \
+        "re-opening the lock must not have reset its mtime"
 
 
 def test_try_lock_run_reports_a_reason_when_the_directory_does_not_exist(tmp_path):

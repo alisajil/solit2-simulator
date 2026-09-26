@@ -430,7 +430,15 @@ def _cmd_fleet_resume(args: argparse.Namespace) -> int:
 
 
 def _cmd_fleet_enqueue(args: argparse.Namespace) -> int:
-    fds_fleet.enqueue(Path(args.run_dir), fds_scheduler.resolve_state_dir(), position=args.position)
+    try:
+        fds_fleet.enqueue(Path(args.run_dir), fds_scheduler.resolve_state_dir(),
+                          position=args.position)
+    except FileNotFoundError as exc:
+        return _fail(str(exc), "run_dir", "point at a run directory that already holds deck.fds",
+                     EXIT_BAD_INPUT)
+    except ValueError as exc:
+        return _fail(str(exc), "run_dir", "a run with a live process cannot be re-queued",
+                     EXIT_BAD_INPUT)
     return EXIT_OK
 
 

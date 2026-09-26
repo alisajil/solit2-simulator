@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import contextlib
 import fcntl
+import itertools
 import json
 import os
 import signal
@@ -43,7 +44,13 @@ IST = ZoneInfo("Asia/Kolkata")
 BLOCKS_ENV = "SOLIT2_CFD_BLOCKS"
 STATE_DIR_ENV = "SOLIT2_CFD_STATE_DIR"
 DEFAULT_BLOCKS = "0-9,10-19,20-29"
-DEFAULT_STATE_DIR = Path("/var/lib/solit2-cfd")
+# I1: NOT /var/lib/solit2-cfd -- that is scripts/cfd_queue.sh's own state
+# directory (see docs/cloud-compute.md's older, still-valid walkthrough),
+# and it holds a queue.txt of its own. Sharing the path would have this
+# scheduler and `solit2-cfd.service`'s `xargs -a .../queue.txt` both
+# consuming (and both rewriting) the SAME queue file with two entirely
+# different mechanisms.
+DEFAULT_STATE_DIR = Path("/var/lib/solit2-scheduler")
 
 STATE_NAME = "state.json"
 QUEUE_NAME = "queue.txt"
@@ -52,10 +59,19 @@ LOG_NAME = "scheduler.log"
 # convention `exec_run.py` already established for the older, blocking
 # queue, so a run dir works with either one.
 DESIGN_NAME = "design.json"
-RUN_LOCK_NAME = ".fds-scheduler.lock"
+# I1: the SAME name `scripts/cfd_queue.sh` locks a run dir with (see its own
+# LOCK_BUSY_CODE/flock usage), not a scheduler-specific one -- so if a run
+# directory is ever reachable from BOTH the old queue and this one (a
+# leftover /var/lib/solit2-cfd/queue.txt entry still naming it, say), they
+# still respect each other's hold on it rather than launching FDS twice
+# under two different lock files that never see one another.
+RUN_LOCK_NAME = ".fds-exec.lock"
 QUEUE_LOCK_NAME = ".queue.lock"
 FAILURES_NAME = ".fds-scheduler.failures"
 PID_NAME = "scheduler.pid"
+# I2: held for the whole life of a `run_forever` call (or a one-shot
+# `adopt`) -- see `_instance_lock`.
+INSTANCE_LOCK_NAME = "scheduler.lock"
 
 # A run dir gets this many launch attempts before the scheduler stops
 # retrying it automatically and logs it as skipped -- the same cap and the
@@ -77,14 +93,32 @@ def parse_blocks(spec: str) -> tuple[str, ...]:
     Each label doubles as its own `I_MPI_PIN_PROCESSOR_LIST` value -- Intel
     MPI accepts exactly this "lo-hi" syntax, so no second representation of
     a block is needed anywhere in this module.
+
+    Refuses two blocks that overlap: pinning is the whole point of a block
+    (see `scheduler._launch`'s `I_MPI_PIN_PROCESSOR_LIST`), and a shared
+    core between two "disjoint" blocks would have two concurrent runs
+    fighting over it -- exactly what pinning exists to prevent.
+
+    Deliberately does NOT check the range against this host's actual core
+    count: that varies by machine (a dev laptop running the test suite is
+    not the 32-vCPU deployment target), so `SOLIT2_CFD_BLOCKS` staying
+    inside the real core count is an operator responsibility -- see
+    docs/cloud-compute.md's `lscpu -e` step in the takeover checklist.
     """
     blocks = tuple(b.strip() for b in spec.split(",") if b.strip())
     if not blocks:
         raise ValueError(f"{spec!r} names no core blocks")
+    spans = []
     for b in blocks:
         lo, _, hi = b.partition("-")
         if not (lo.isdigit() and hi.isdigit() and int(lo) <= int(hi)):
             raise ValueError(f"block {b!r} is not a 'lo-hi' core range, e.g. '0-9'")
+        spans.append((int(lo), int(hi), b))
+    for (lo1, hi1, b1), (lo2, hi2, b2) in itertools.combinations(spans, 2):
+        if lo1 <= hi2 and lo2 <= hi1:
+            raise ValueError(
+                f"blocks {b1!r} and {b2!r} overlap; each core must be pinned to exactly "
+                f"one block or two runs could be scheduled onto the same cores")
     return blocks
 
 
@@ -178,9 +212,17 @@ def _try_lock_run(run_dir: Path) -> tuple[object | None, str | None]:
     `run_dir` exists before calling this -- see `step()` -- so the `OSError`
     guard around opening the lock file is defensive only, for a directory
     removed in the gap between that check and this call.
+
+    Opened with `os.open(O_RDWR | O_CREAT)`, not `Path.open("w")`: "w"
+    truncates on every call, which bumps the lock file's mtime even when
+    its (empty) content never changes -- and `runner.silent_for_s` reads the
+    newest mtime across every file in the run dir to decide whether it has
+    gone quiet. A held lock re-touched on every poll would have kept a
+    genuinely wedged run from ever tripping STALL_AFTER_S.
     """
     try:
-        handle = (Path(run_dir) / RUN_LOCK_NAME).open("w")
+        fd = os.open(str(Path(run_dir) / RUN_LOCK_NAME), os.O_RDWR | os.O_CREAT, 0o644)
+        handle = os.fdopen(fd)
     except OSError as exc:
         return None, f"could not open a lock file in {run_dir}: {exc}"
     try:
@@ -222,6 +264,40 @@ def _clear_failures(run_dir: Path) -> None:
     (Path(run_dir) / FAILURES_NAME).unlink(missing_ok=True)
 
 
+# --- I2: one scheduler process (or one-shot adopt) per state dir, ever -----
+
+@contextlib.contextmanager
+def _instance_lock(state_dir: Path):
+    """Exclusive, non-blocking lock on `<state_dir>/INSTANCE_LOCK_NAME`, held
+    for as long as a scheduler process (or a one-time `adopt`) is actively
+    reading and writing `state.json`/`queue.txt`.
+
+    Without this, a second scheduler started by mistake -- a stray `--once`
+    run while the persistent unit is already up, most plausibly -- would
+    load its own copy of `state.json`, and whichever process saves last
+    silently overwrites the other's. Two schedulers can then each believe a
+    block is free and launch onto the same cores.
+    """
+    state_dir = Path(state_dir)
+    state_dir.mkdir(parents=True, exist_ok=True)
+    handle = (state_dir / INSTANCE_LOCK_NAME).open("w")
+    try:
+        fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as exc:
+        handle.close()
+        raise RuntimeError(
+            f"another solit2 fds-scheduler process already holds "
+            f"{state_dir / INSTANCE_LOCK_NAME} -- state.json is shared, and two schedulers "
+            f"writing it would double-book cores. Stop the other one first "
+            f"(systemctl stop solit2-scheduler.service if it is the unit), or point this "
+            f"one at a different --state-dir") from exc
+    try:
+        yield
+    finally:
+        fcntl.flock(handle, fcntl.LOCK_UN)
+        handle.close()
+
+
 # --- adoption: take over the interim script's state without stopping it ----
 
 def adopt(state_dir: Path, blocks: tuple[str, ...], adopt_state: Path, adopt_queue: Path) -> None:
@@ -233,15 +309,17 @@ def adopt(state_dir: Path, blocks: tuple[str, ...], adopt_state: Path, adopt_que
     same `runner.status()`/`runner.run()` every other run in this deployment
     goes through.
     """
-    raw_state = json.loads(Path(adopt_state).read_text())
-    state = {b: raw_state.get(b) for b in blocks}
-    save_state(state_dir, state)
-    raw_queue = [ln.strip() for ln in Path(adopt_queue).read_text().splitlines() if ln.strip()]
-    with queue_lock(state_dir):
-        save_queue(state_dir, raw_queue)
-    running = sum(1 for v in state.values() if v)
-    _log(state_dir, f"adopted state from {adopt_state} ({running} block(s) already running) "
-                     f"and queue from {adopt_queue} ({len(raw_queue)} queued)")
+    with _instance_lock(state_dir):
+        raw_state = json.loads(Path(adopt_state).read_text())
+        state = {b: raw_state.get(b) for b in blocks}
+        save_state(state_dir, state)
+        raw_queue = [ln.strip() for ln in Path(adopt_queue).read_text().splitlines()
+                    if ln.strip()]
+        with queue_lock(state_dir):
+            save_queue(state_dir, raw_queue)
+        running = sum(1 for v in state.values() if v)
+        _log(state_dir, f"adopted state from {adopt_state} ({running} block(s) already "
+                         f"running) and queue from {adopt_queue} ({len(raw_queue)} queued)")
 
 
 # --- scheduler pid (so fleet/UI can tell whether a scheduler is alive) ------
@@ -505,29 +583,30 @@ def run_forever(state_dir: Path, blocks: tuple[str, ...], poll_s: float = POLL_S
     """
     state_dir = Path(state_dir)
     state_dir.mkdir(parents=True, exist_ok=True)
-    _write_pid(state_dir)
-    _shutdown_event.clear()
-    previous_handler = signal.signal(signal.SIGTERM, _handle_sigterm)
-    try:
-        state = load_state(state_dir, blocks)
-        locks: dict[str, object] = {}
-        _reacquire_locks(state_dir, state, locks)
-        logged_skips: set[str] = set()
-        iterations = 0
-        while stop_after is None or iterations < stop_after:
-            if _shutdown_event.is_set():
-                _log(state_dir, "SIGTERM received; exiting between iterations")
-                break
-            state = step(state_dir, blocks, state, locks, logged_skips)
-            save_state(state_dir, state)
-            iterations += 1
-            if stop_after is None or iterations < stop_after:
-                if _shutdown_event.wait(poll_s):
+    with _instance_lock(state_dir):
+        _write_pid(state_dir)
+        _shutdown_event.clear()
+        previous_handler = signal.signal(signal.SIGTERM, _handle_sigterm)
+        try:
+            state = load_state(state_dir, blocks)
+            locks: dict[str, object] = {}
+            _reacquire_locks(state_dir, state, locks)
+            logged_skips: set[str] = set()
+            iterations = 0
+            while stop_after is None or iterations < stop_after:
+                if _shutdown_event.is_set():
                     _log(state_dir, "SIGTERM received; exiting between iterations")
                     break
-    finally:
-        signal.signal(signal.SIGTERM, previous_handler)
-        (state_dir / PID_NAME).unlink(missing_ok=True)
+                state = step(state_dir, blocks, state, locks, logged_skips)
+                save_state(state_dir, state)
+                iterations += 1
+                if stop_after is None or iterations < stop_after:
+                    if _shutdown_event.wait(poll_s):
+                        _log(state_dir, "SIGTERM received; exiting between iterations")
+                        break
+        finally:
+            signal.signal(signal.SIGTERM, previous_handler)
+            (state_dir / PID_NAME).unlink(missing_ok=True)
 
 
 def eta_ist(eta_s: float | None) -> str | None:

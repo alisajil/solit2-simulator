@@ -3,6 +3,7 @@ are monkeypatched at the module boundary, exactly as `test_fds_scheduler.py`
 does for the scheduler itself.
 """
 import json
+from pathlib import Path
 
 import pytest
 
@@ -284,32 +285,48 @@ def test_stop_calls_runner_and_logs_ok(tmp_path, monkeypatch):
 # --- queue actions: enqueue / dequeue / move --------------------------------------
 
 def test_enqueue_appends_by_default(tmp_path):
-    fleet.enqueue(tmp_path / "run" / "a", tmp_path / "state")
-    fleet.enqueue(tmp_path / "run" / "b", tmp_path / "state")
-    assert scheduler_mod.load_queue(tmp_path / "state") == [
-        str(tmp_path / "run" / "a"), str(tmp_path / "run" / "b")]
+    tmp_path = tmp_path.resolve()      # I8: enqueue() resolves; compare against the same form
+    a, b = _write_deck(tmp_path / "run" / "a"), _write_deck(tmp_path / "run" / "b")
+    fleet.enqueue(a, tmp_path / "state")
+    fleet.enqueue(b, tmp_path / "state")
+    assert scheduler_mod.load_queue(tmp_path / "state") == [str(a), str(b)]
 
 
 def test_enqueue_never_duplicates_an_entry(tmp_path):
-    run = tmp_path / "run" / "a"
+    tmp_path = tmp_path.resolve()
+    run = _write_deck(tmp_path / "run" / "a")
     fleet.enqueue(run, tmp_path / "state")
     fleet.enqueue(run, tmp_path / "state")
     assert scheduler_mod.load_queue(tmp_path / "state") == [str(run)]
 
 
 def test_enqueue_at_a_position_inserts_there(tmp_path):
+    tmp_path = tmp_path.resolve()
     state_dir = tmp_path / "state"
-    fleet.enqueue(tmp_path / "a", state_dir)
-    fleet.enqueue(tmp_path / "b", state_dir)
-    fleet.enqueue(tmp_path / "c", state_dir, position=1)
-    assert scheduler_mod.load_queue(state_dir) == [
-        str(tmp_path / "a"), str(tmp_path / "c"), str(tmp_path / "b")]
+    a, b, c = (_write_deck(tmp_path / n) for n in "abc")
+    fleet.enqueue(a, state_dir)
+    fleet.enqueue(b, state_dir)
+    fleet.enqueue(c, state_dir, position=1)
+    assert scheduler_mod.load_queue(state_dir) == [str(a), str(c), str(b)]
+
+
+def test_enqueue_resolves_a_relative_path_and_requires_a_deck(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    run_dir = _write_deck(tmp_path / "runs" / "x")
+    fleet.enqueue(Path("runs") / "x", tmp_path / "state")
+    assert scheduler_mod.load_queue(tmp_path / "state") == [str(run_dir.resolve())]
+
+
+def test_enqueue_refuses_a_directory_with_no_deck(tmp_path):
+    with pytest.raises(FileNotFoundError, match="deck.fds"):
+        fleet.enqueue(tmp_path / "empty", tmp_path / "state")
 
 
 def test_dequeue_removes_an_entry(tmp_path):
     state_dir = tmp_path / "state"
-    fleet.enqueue(tmp_path / "a", state_dir)
-    fleet.dequeue(tmp_path / "a", state_dir)
+    a = _write_deck(tmp_path / "a")
+    fleet.enqueue(a, state_dir)
+    fleet.dequeue(a, state_dir)
     assert scheduler_mod.load_queue(state_dir) == []
 
 
@@ -319,14 +336,15 @@ def test_dequeue_refuses_an_entry_not_in_the_queue(tmp_path):
 
 
 def test_move_reorders_and_clamps_the_position(tmp_path):
+    tmp_path = tmp_path.resolve()
     state_dir = tmp_path / "state"
-    for name in ("a", "b", "c"):
-        fleet.enqueue(tmp_path / name, state_dir)
-    fleet.move(tmp_path / "c", state_dir, 0)
-    assert scheduler_mod.load_queue(state_dir) == [
-        str(tmp_path / "c"), str(tmp_path / "a"), str(tmp_path / "b")]
-    fleet.move(tmp_path / "c", state_dir, 999)
-    assert scheduler_mod.load_queue(state_dir)[-1] == str(tmp_path / "c")
+    a, b, c = (_write_deck(tmp_path / n) for n in "abc")
+    for run in (a, b, c):
+        fleet.enqueue(run, state_dir)
+    fleet.move(c, state_dir, 0)
+    assert scheduler_mod.load_queue(state_dir) == [str(c), str(a), str(b)]
+    fleet.move(c, state_dir, 999)
+    assert scheduler_mod.load_queue(state_dir)[-1] == str(c)
 
 
 def test_move_refuses_an_entry_not_in_the_queue(tmp_path):
@@ -336,9 +354,10 @@ def test_move_refuses_an_entry_not_in_the_queue(tmp_path):
 
 def test_every_queue_action_writes_an_audit_line(tmp_path):
     state_dir = tmp_path / "state"
-    fleet.enqueue(tmp_path / "a", state_dir)
-    fleet.move(tmp_path / "a", state_dir, 0)
-    fleet.dequeue(tmp_path / "a", state_dir)
+    a = _write_deck(tmp_path / "a")
+    fleet.enqueue(a, state_dir)
+    fleet.move(a, state_dir, 0)
+    fleet.dequeue(a, state_dir)
     rows = [json.loads(ln) for ln in (state_dir / fleet.ACTIONS_LOG_NAME).read_text().splitlines()]
     assert [r["action"] for r in rows] == ["enqueue", "move", "dequeue"]
     assert all(r["outcome"] == "ok" or r["outcome"].startswith("ok") for r in rows)
@@ -361,8 +380,8 @@ def test_resume_refuses_without_design_json(tmp_path, monkeypatch):
 
 
 def test_resume_enqueues_when_restart_files_and_design_are_present(tmp_path, monkeypatch):
-    run_dir = tmp_path / "run"
-    run_dir.mkdir()
+    tmp_path = tmp_path.resolve()
+    run_dir = _write_deck(tmp_path / "run")
     (run_dir / scheduler_mod.DESIGN_NAME).write_text(
         Design.load(BASELINE).model_dump_json(by_alias=True))
     monkeypatch.setattr(runner_mod, "has_restart_files", lambda d: True)
@@ -392,9 +411,10 @@ def test_resume_refuses_a_directory_that_already_has_a_live_process(tmp_path, mo
 
 
 def test_enqueue_refuses_a_directory_that_already_has_a_live_process(tmp_path, monkeypatch):
+    run_dir = _write_deck(tmp_path / "run")
     monkeypatch.setattr(runner_mod, "_launcher_alive", lambda d: True)
     with pytest.raises(ValueError, match="already has a live process"):
-        fleet.enqueue(tmp_path / "run", tmp_path / "state")
+        fleet.enqueue(run_dir, tmp_path / "state")
     assert scheduler_mod.load_queue(tmp_path / "state") == []
 
 

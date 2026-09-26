@@ -318,8 +318,21 @@ def enqueue(run_dir: Path, state_dir: Path, position: int | None = None) -> None
     does: nothing runs until a `solit2 fds-scheduler` process is polling it
     (see `scheduler.is_running`), which is why this never raises for "no
     scheduler running" -- the action is still recorded and still correct,
-    just not yet acted on."""
-    run_dir = Path(run_dir)
+    just not yet acted on.
+
+    I8: `run_dir` is resolved to an absolute path before it is written --
+    an unresolved relative path is stored against whatever the SCHEDULER's
+    own working directory happens to be at launch, not the caller's, so it
+    silently names a different (or no) directory there; and it would never
+    match the same run as discovered by `fleet.discover()`, which always
+    walks from an absolute `SOLIT2_RUN_ROOTS` entry. Also requires
+    `deck.fds` up front -- an empty or non-existent directory has nothing
+    for the scheduler to launch, and queuing it would only be discovered as
+    a launch failure minutes or hours later.
+    """
+    run_dir = Path(run_dir).resolve()
+    if not (run_dir / "deck.fds").exists():
+        raise FileNotFoundError(f"{run_dir} holds no deck.fds; there is nothing to enqueue")
     _refuse_if_alive("enqueue", run_dir, state_dir)
     entry = str(run_dir)
     with scheduler_mod.queue_lock(state_dir):
