@@ -17,9 +17,14 @@ from solit2.schema.design import Design
 from solit2.schema.result import Result
 
 CHART_HEIGHT = 300
+# One cached `RunTrace` is 4-7 MB, and the simulator makes one per slider release
+# -- a distinct design every time a slider settles -- shared by every session on
+# the remote server. Unbounded, that grows without limit; 16 is enough recent
+# designs to hold without paying for every one a session has ever touched (I-2).
+TRACE_CACHE_MAX_ENTRIES = 16
 
 
-@st.cache_data(show_spinner="Replaying the worst case…")
+@st.cache_data(show_spinner="Replaying the worst case…", max_entries=TRACE_CACHE_MAX_ENTRIES)
 def _trace(design: Design, section: str, velocity_ms: float) -> RunTrace:
     return run_once(design, section, velocity_ms)
 
