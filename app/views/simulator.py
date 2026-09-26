@@ -224,7 +224,8 @@ def _header(design: Design, result) -> None:
 
 @st.fragment(run_every=cfd_live.REFRESH_S)
 def _cfd_panel(design: Design) -> None:
-    auth.guard_fragment()
+    if not auth.guard_fragment():
+        return
     st.markdown('<div class="sim-label">CFD · LIVE</div>', unsafe_allow_html=True)
     found = cfd_live.panel(design)
     if found is None:

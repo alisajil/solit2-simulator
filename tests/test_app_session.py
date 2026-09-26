@@ -17,9 +17,11 @@ GUARDED = ("import streamlit as st\n"
            "st.write('page')\n"
            "@st.fragment\n"
            "def panel():\n"
-           "    auth.guard_fragment()\n"
+           "    if not auth.guard_fragment():\n"
+           "        return\n"
            "    st.write('panel')\n"
-           "panel()\n")
+           "panel()\n"
+           "st.write('after')\n")
 
 SIGN_OUT = ("import streamlit as st\n"
             "from app import auth\n"
@@ -89,7 +91,7 @@ def test_a_timed_fragment_renders_for_a_live_session():
     at = AppTest.from_string(GUARDED)
     sign_in(at)
     at.run()
-    assert _written(at) == ["page", "panel"]
+    assert _written(at) == ["page", "panel", "after"]
 
 
 def test_a_timed_fragment_is_not_activity():
@@ -109,10 +111,11 @@ def test_a_timed_fragment_of_an_ended_session_shows_nothing_and_ends_it():
     assert not at.exception
     assert "panel" not in _written(at)
     assert auth.USER_ID_KEY not in at.session_state
+    assert _written(at) == ["page", "after"]
 
 
 def test_a_timed_fragment_with_no_session_shows_nothing():
     at = AppTest.from_string(GUARDED)
     at.run()
     assert not at.exception
-    assert _written(at) == ["page"]
+    assert _written(at) == ["page", "after"]

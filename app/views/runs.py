@@ -245,7 +245,8 @@ def _queue_panel(state_dir: Path, infos: list[fleet.RunInfo]) -> None:
 
 @st.fragment(run_every=POLL)
 def _live_panel(state_dir: Path, roots: tuple[Path, ...]) -> None:
-    auth.guard_fragment()
+    if not auth.guard_fragment():
+        return
     infos = fleet.list_runs(roots=roots, state_dir=state_dir)
     summary = fleet.summarise(infos, state_dir=state_dir)
     _counts(summary)

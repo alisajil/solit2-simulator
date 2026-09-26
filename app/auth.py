@@ -61,13 +61,18 @@ def current_user(*, touch: bool) -> User | None:
     return user
 
 
-def guard_fragment() -> None:
-    """The first line of every timed fragment. A timed refresh does not pass through the
-    login gate and is not activity, yet it must not keep showing data to a session that
-    has ended: a session that just ended reruns the whole app, which shows the login, and
-    a run with no session at all shows nothing."""
+def guard_fragment() -> bool:
+    """The first check in every timed fragment: `if not auth.guard_fragment(): return`.
+
+    A timed refresh does not pass through the login gate and is not activity, yet it
+    must not keep showing data to a session that has ended. A session that just ended
+    reruns the whole app, which shows the login. A run with no session at all gets
+    False, so the fragment renders nothing -- and only the fragment: st.stop() here
+    would halt the whole script whenever the fragment runs inline in a full run.
+    """
     had_session = st.session_state.get(USER_ID_KEY) is not None
-    if current_user(touch=False) is None:
-        if had_session:
-            st.rerun()
-        st.stop()
+    if current_user(touch=False) is not None:
+        return True
+    if had_session:
+        st.rerun()
+    return False
