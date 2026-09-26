@@ -103,3 +103,34 @@ def test_the_diagnostics_line_names_the_worst_case_and_the_calibration(run):
     line = readings.diagnostics(run[1])
     assert "playback: worst case" in line
     assert f"calibration {calibration_hash()}" in line
+
+
+def test_judged_elsewhere_is_empty_when_the_envelope_has_only_one_case(run):
+    """A single-velocity envelope has nothing else a criterion COULD be judged on --
+    every `criteria_cases` entry trivially equals the lone `worst_case`."""
+    raw = run[0].model_dump(by_alias=True, mode="json")
+    raw["ventilation"]["velocity_ms"] = 1.5
+    result = envelope.run(Design.from_dict(raw))
+    assert readings.judged_elsewhere(result) == ()
+
+
+def test_judged_elsewhere_names_the_case_that_actually_decided_a_criterion(run):
+    """I-1: the protocol's own 1.5/3.0 m/s envelope judges heat flux on the 3.0 m/s
+    case (8.78 kW/m2) while the figure replays the worst case, 1.5 m/s -- so a gauge
+    that never enters the red band during playback can still be why a gate failed."""
+    design = _with_limit(run[0], "max_heat_flux_kwm2", 7.5)
+    result = envelope.run(design)
+    assert result.criteria_cases["max_heat_flux_kwm2"] != result.worst_case
+    criterion = result.criteria["max_heat_flux_kwm2"]
+
+    lines = readings.judged_elsewhere(result)
+
+    assert len(lines) == 1
+    line = lines[0]
+    assert "Heat flux" in line
+    assert f"{result.worst_case['velocity_ms']:.2f} m/s" in line
+    case = result.criteria_cases["max_heat_flux_kwm2"]
+    assert f"{case['velocity_ms']:.2f} m/s" in line
+    assert f"{criterion.value:.1f}" in line
+    assert f"{criterion.limit:.1f}" in line
+    assert criterion.status in line

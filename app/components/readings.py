@@ -130,3 +130,40 @@ def diagnostics(result: Result) -> str:
                  f"{case['velocity_ms']:.2f} m/s")
     parts.append(f"calibration {calibration_hash()}")
     return " · ".join(parts)
+
+
+def _limit_text(band: Band, unit: str) -> str:
+    if isinstance(band.limit, tuple):
+        lo, hi = band.limit
+        return f"limit {lo:.1f}-{hi:.1f} {unit}"
+    return f"limit {band.limit:.1f} {unit}"
+
+
+def judged_elsewhere(result: Result) -> tuple[str, ...]:
+    """One line per gauge whose criterion was judged on a case other than the one
+    the figure replays (`result.worst_case`) -- empty when every gauge's criterion
+    was judged on the replayed case.
+
+    I-1: the envelope takes each criterion from its own worst case across every
+    section/velocity combination (`envelope._worst_per_id`), but the figure only
+    ever replays `result.worst_case`, the run with the thinnest hard margin. A
+    gauge can sit comfortably inside its band for the whole animation while the
+    criterion it stands for actually failed on a case nobody sees play out.
+    """
+    worst = result.worst_case
+    lines = []
+    for gauge in GAUGES:
+        if gauge.criterion is None:
+            continue
+        case = result.criteria_cases.get(gauge.criterion)
+        if case is None or case == worst:
+            continue
+        criterion = result.criteria[gauge.criterion]
+        limit_text = "limit not set" if criterion.limit is None else _limit_text(
+            Band(criterion.op, criterion.limit), gauge.unit)
+        lines.append(
+            f"{gauge.label} was judged on the {case['section']} section at "
+            f"{case['velocity_ms']:.2f} m/s: {criterion.value:.1f} {gauge.unit} "
+            f"({limit_text}, {criterion.status}). The figure replays the worst "
+            f"case ({worst['section']} section at {worst['velocity_ms']:.2f} m/s).")
+    return tuple(lines)

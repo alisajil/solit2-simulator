@@ -269,6 +269,14 @@ def render() -> None:
                                  window_m=twin_canvas.core_window_m(design),
                                  template=plot_theme.current())
         st.plotly_chart(fig, key="sim_figure", theme=None, config={"scrollZoom": False})
+        notes = readings.judged_elsewhere(result)
+        if notes:
+            # I-1: the figure always replays `result.worst_case`; a gauge whose own
+            # criterion was decided on a different case can look comfortably clear
+            # here while that other case is what actually failed a gate.
+            items = "".join(f"<li>{html.escape(note)}</li>" for note in notes)
+            st.markdown(f'<div class="sim-label">Judged elsewhere</div>'
+                        f'<ul class="judged-elsewhere">{items}</ul>', unsafe_allow_html=True)
         st.caption(CAPTION)
     with side:
         _cfd_panel(design)

@@ -38,6 +38,29 @@ def test_the_tiles_show_the_results_own_peaks(monkeypatch, tmp_path):
     assert f"free burn {result.peaks['hrr_free_burn_mw']:.1f} MW" in _text(at)
 
 
+def test_judged_elsewhere_is_shown_under_the_figure(monkeypatch, tmp_path):
+    """I-1: the default landing design already disagrees -- heat flux peaks at the
+    3.0 m/s end of the protocol's envelope while the figure replays the worst
+    case, 1.5 m/s (thinnest hard margin), so the gauge alone would look clear."""
+    at = _app(monkeypatch, tmp_path)
+    text = _text(at)
+    assert "Judged elsewhere" in text
+    assert "Heat flux was judged on the test section at 3.00 m/s" in text
+    assert "worst case (test section at 1.50 m/s)" in text
+
+
+def test_judged_elsewhere_is_absent_when_the_envelope_has_only_one_case(monkeypatch, tmp_path):
+    raw = Design.load(simulator.DEFAULT_PRESET).model_dump(by_alias=True, mode="json")
+    raw["ventilation"]["velocity_ms"] = 1.5
+    monkeypatch.setattr(history, "DEFAULT_PATH", tmp_path / "h.jsonl")
+    monkeypatch.setattr(cfd, "RUNS_DIR", tmp_path / "runs")
+    at = AppTest.from_file(APP, default_timeout=180)
+    at.session_state["design"] = Design.from_dict(raw)
+    at.run()
+    assert not at.exception
+    assert "Judged elsewhere" not in _text(at)
+
+
 def test_the_calibration_note_is_on_screen(monkeypatch, tmp_path):
     at = _app(monkeypatch, tmp_path)
     note = at.session_state["result"].meta["calibration_note"]
