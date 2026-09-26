@@ -149,7 +149,7 @@ tiles, and one figure that replays the Tier 1 virtual fire test — press ▶ Pl
 a 3D tunnel and three charts move together. Every value is the engine's own; a gauge has a red
 band only where the design's `ahj` block sets that criterion's limit. The **Wizard** keeps the
 formal record (fire test, CFD, compliance, reports) and **CFD runs** manages the FDS fleet.
-The app is dark by default; Streamlit's settings menu switches it to light.
+The app follows your computer's light or dark setting — the dark palette on a dark system, the light one on a light system — and Streamlit's settings menu can switch it either way.
 
 The Wizard is a five-step flow, each step computed from the one before it -- nothing
 is downloaded or uploaded in between:

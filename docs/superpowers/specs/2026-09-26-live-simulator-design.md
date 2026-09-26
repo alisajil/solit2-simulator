@@ -101,9 +101,8 @@ Built from the design and the worst-case trace, over the zoom window the 2D twin
 - Navigation: a top-level view in session state — `simulator` (the default landing) or
   `wizard` — switched from a small header nav. The wizard's steps are unchanged. The CFD runs
   manager on its own branch adds a third view the same way.
-- Theme: dark by default app-wide, from `.streamlit/config.toml`'s existing `[theme.dark]`
-  palette; light stays available from Streamlit's settings. Every existing screen and figure is
-  checked for legibility on dark: figures that pass `theme=None` take a Plotly template from
+- Theme: the app follows the viewer's system theme — `.streamlit/config.toml`'s `[theme.dark]` palette on a dark system, `[theme.light]` on a light one (Streamlit 1.64 ignores `theme.base` while both palettes are defined); Streamlit's settings menu switches either way. Every existing screen and figure is
+  checked for legibility on both palettes: figures that pass `theme=None` take a Plotly template from
   `app/plot_theme.py`, chosen by `st.context.theme.type` (dark when unknown). Instrument styling (mono uppercase labels, tile cards, the pill's pulsing
   dot) lives in `app/theme.py`; the pulse stops under `prefers-reduced-motion`.
 
