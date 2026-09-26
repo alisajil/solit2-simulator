@@ -135,8 +135,12 @@ def _change_password(db: Path, user: User) -> None:
         if not submitted:
             return
         try:
-            updated = service.change_password(db, user.id, password, confirm)
+            updated = service.change_password(db, user.id, password, confirm,
+                                              expected_epoch=user.session_epoch)
         except service.AccountError as exc:
+            if exc.field == "session":
+                auth.sign_out(auth.REVOKED_NOTICE)
+                st.rerun()
             st.error(str(exc))
             return
         auth.sign_in(updated)

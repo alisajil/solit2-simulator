@@ -188,15 +188,19 @@ def list_users(conn: sqlite3.Connection) -> list[User]:
 
 
 def update_user(conn: sqlite3.Connection, user_id: int, *, expected_state: str | None = None,
-               **fields: object) -> bool:
+               expected_epoch: int | None = None, **fields: object) -> bool:
     """Set the named columns. Only the columns in _UPDATABLE may be named, so a column
     name never comes from anywhere else into the SQL.
 
     When `expected_state` is given, the UPDATE only applies if the row's current state
     still matches it -- so a caller that read the row, decided what to write, and now
-    writes it back is not silently overwriting a state it never saw. The return value
-    says whether a row actually changed; a caller that needed `expected_state` to hold
-    should treat False as "look at the account again", not as a no-op."""
+    writes it back is not silently overwriting a state it never saw. `expected_epoch`
+    is the same guard for `session_epoch`: a caller that verified a password against the
+    hash it read together with that epoch is not signing the account in, or writing a
+    rehash of that password, over a reset that landed in between. The return value says
+    whether a row actually changed; a caller that needed `expected_state` or
+    `expected_epoch` to hold should treat False as "look at the account again", not as a
+    no-op."""
     unknown = sorted(set(fields) - _UPDATABLE)
     if unknown or not fields:
         raise ValueError(f"cannot update {unknown or 'nothing'}")
@@ -207,6 +211,9 @@ def update_user(conn: sqlite3.Connection, user_id: int, *, expected_state: str |
     if expected_state is not None:
         where += " AND state = ?"
         params.append(expected_state)
+    if expected_epoch is not None:
+        where += " AND session_epoch = ?"
+        params.append(expected_epoch)
     cursor = conn.execute(f"UPDATE users SET {assignments} {where}", params)
     return cursor.rowcount == 1
 

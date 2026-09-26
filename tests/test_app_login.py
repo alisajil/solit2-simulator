@@ -254,6 +254,29 @@ def test_changing_the_password_keeps_the_changing_session_in_and_ends_the_others
     assert auth.REVOKED_NOTICE in [i.value for i in other.info]
 
 
+def test_a_stale_reset_during_the_change_form_signs_out_with_the_revoked_notice(monkeypatch,
+                                                                               tmp_path):
+    """I1 residual (app level): when service.change_password finds its expected_epoch
+    stale -- a reset landed while the change form was open -- the form must sign the
+    session out and show the login with REVOKED_NOTICE, not its own error banner."""
+    make_account(role="team", email="t@example.test", must_change_password=True)
+    at = _app(monkeypatch, tmp_path)
+    at.run()
+    _log_in(at, "t@example.test", TEST_PASSWORD)
+    assert "change_submit" in _keys(at)
+
+    def raise_session_ended(*_args, **_kwargs):
+        raise service.AccountError(
+            "Your session ended because this account's password was reset. Log in again.",
+            "session")
+
+    monkeypatch.setattr(service, "change_password", raise_session_ended)
+    _change(at, NEW_PASSWORD, NEW_PASSWORD)
+    assert not at.exception
+    assert "login_submit" in _keys(at)
+    assert auth.REVOKED_NOTICE in [i.value for i in at.info]
+
+
 def test_an_unreadable_store_shows_that_and_nothing_else(monkeypatch, tmp_path):
     broken = tmp_path / "broken"
     broken.mkdir()

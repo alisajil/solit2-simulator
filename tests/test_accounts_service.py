@@ -142,6 +142,17 @@ def test_a_locked_account_does_not_check_the_password_or_extend_the_lock(db, adm
     assert _by_email(db, user.email).failed_logins == 0
 
 
+def test_a_login_password_over_the_max_length_is_refused_before_the_lookup(db, admin):
+    """Item 3: a login password longer than passwords.MAX_CHARS must never reach argon2 --
+    it is bounded before the account is even looked up, so it cannot be used to burn CPU
+    on every attempt, and it is not claimed, so it does not count toward the lockout."""
+    user = _approved(db, admin)
+    long_password = "x" * (passwords.MAX_CHARS + 1)
+    result = service.log_in(db, user.email, long_password, now=T0)
+    assert result.status == "wrong"
+    assert _by_email(db, user.email).failed_logins == 0
+
+
 def test_a_hash_under_old_parameters_is_replaced_at_the_next_login(db, admin):
     user = _approved(db, admin)
     old = PasswordHasher(time_cost=1, memory_cost=8, parallelism=1).hash(PASSWORD)
@@ -151,6 +162,61 @@ def test_a_hash_under_old_parameters_is_replaced_at_the_next_login(db, admin):
     with store.connect(db) as conn:
         fresh = store.password_hash(conn, user.id)
     assert fresh != old and not passwords.needs_rehash(fresh)
+
+
+# --- I1 residual: a reset landing inside the login's own verify -------------
+
+def test_a_reset_that_lands_inside_the_logins_verify_answers_wrong(db, admin, monkeypatch):
+    """I1 residual: log_in reads the hash and the epoch together, then verifies -- slow
+    argon2 work an admin's reset can land inside. Its success UPDATE is conditioned on the
+    epoch read alongside the verified hash, so a login with the password that was valid
+    when it started cannot still win the account back after the reset lands."""
+    user = _approved(db, admin)
+    real_verify = passwords.verify
+    issued: dict[str, str] = {}
+
+    def racing_verify(stored, password):
+        ok = real_verify(stored, password)
+        if password == PASSWORD and "temp" not in issued:
+            issued["temp"] = service.issue_temporary_password(db, admin.id, user.id, now=T0)
+        return ok
+
+    monkeypatch.setattr(passwords, "verify", racing_verify)
+    result = service.log_in(db, user.email, PASSWORD, now=T0)
+    assert result.status == "wrong"
+    assert issued  # the reset really did land inside the verify
+    assert service.log_in(db, user.email, PASSWORD, now=T0).status == "wrong"
+    assert service.log_in(db, user.email, issued["temp"], now=T0).status == "ok"
+
+
+def test_a_reset_that_lands_during_a_rehash_does_not_overwrite_the_temporary_password(
+        db, admin, monkeypatch):
+    """I1 residual, continued: the same race, but the account's stored hash is under old,
+    cheap parameters, so the login's success path also computes a rehash of the password
+    it just verified. That rehash is computed from stale credentials -- the epoch check
+    covers the whole UPDATE, rehash included, so it still cannot land over the temporary
+    password's hash."""
+    user = _approved(db, admin)
+    old = PasswordHasher(time_cost=1, memory_cost=8, parallelism=1).hash(PASSWORD)
+    with store.connect(db) as conn:
+        store.update_user(conn, user.id, password_hash=old)
+    real_verify = passwords.verify
+    issued: dict[str, str] = {}
+
+    def racing_verify(stored, password):
+        ok = real_verify(stored, password)
+        if password == PASSWORD and "temp" not in issued:
+            issued["temp"] = service.issue_temporary_password(db, admin.id, user.id, now=T0)
+        return ok
+
+    monkeypatch.setattr(passwords, "verify", racing_verify)
+    result = service.log_in(db, user.email, PASSWORD, now=T0)
+    assert result.status == "wrong"
+    with store.connect(db) as conn:
+        stored_hash = store.password_hash(conn, user.id)
+    assert real_verify(stored_hash, issued["temp"])  # still the temporary password's hash
+    assert service.log_in(db, user.email, issued["temp"], now=T0).status == "ok"
+    assert service.log_in(db, user.email, PASSWORD, now=T0).status == "wrong"
 
 
 # --- I2 regression: the lockout must hold under concurrent logins ------------
@@ -333,11 +399,13 @@ def test_issuing_a_temporary_password_bumps_the_session_epoch(db, admin):
 def test_changing_the_password_clears_the_must_change_flag(db, admin):
     user = _approved(db, admin)
     temporary = service.issue_temporary_password(db, admin.id, user.id, now=T0)
+    epoch = service.get_user(db, user.id).session_epoch
     with pytest.raises(AccountError, match="different from the one you have now"):
-        service.change_password(db, user.id, temporary, temporary)
+        service.change_password(db, user.id, temporary, temporary, expected_epoch=epoch)
     with pytest.raises(AccountError, match="do not match"):
-        service.change_password(db, user.id, NEW_PASSWORD, NEW_PASSWORD + "x")
-    service.change_password(db, user.id, NEW_PASSWORD, NEW_PASSWORD)
+        service.change_password(db, user.id, NEW_PASSWORD, NEW_PASSWORD + "x",
+                                expected_epoch=epoch)
+    service.change_password(db, user.id, NEW_PASSWORD, NEW_PASSWORD, expected_epoch=epoch)
     result = service.log_in(db, user.email, NEW_PASSWORD, now=T0)
     assert (result.status, result.user.must_change_password) == ("ok", False)
     assert service.log_in(db, user.email, temporary, now=T0).status == "wrong"
@@ -348,9 +416,27 @@ def test_changing_the_password_bumps_the_epoch_and_returns_the_updated_account(d
     the bumped epoch) so the caller can re-sign its own session in with it."""
     user = _approved(db, admin)
     epoch = user.session_epoch
-    updated = service.change_password(db, user.id, NEW_PASSWORD, NEW_PASSWORD)
+    updated = service.change_password(db, user.id, NEW_PASSWORD, NEW_PASSWORD,
+                                      expected_epoch=epoch)
     assert updated.must_change_password is False
     assert updated.session_epoch == epoch + 1
+
+
+def test_change_password_with_a_stale_epoch_raises_and_changes_nothing(db, admin):
+    """I1 residual: a password change whose expected_epoch was captured before a reset
+    landed must not be allowed to overwrite that reset -- the UPDATE conditioned on the
+    stale epoch changes nothing, so it is told its session ended instead, and the
+    temporary password the reset issued still logs in."""
+    user = _approved(db, admin)
+    stale_epoch = user.session_epoch
+    temporary = service.issue_temporary_password(db, admin.id, user.id, now=T0)
+    after_reset = service.get_user(db, user.id)
+    with pytest.raises(AccountError, match="password was reset") as excinfo:
+        service.change_password(db, user.id, NEW_PASSWORD, NEW_PASSWORD,
+                                expected_epoch=stale_epoch)
+    assert excinfo.value.field == "session"
+    assert service.get_user(db, user.id) == after_reset  # the failed attempt changed nothing
+    assert service.log_in(db, user.email, temporary, now=T0).status == "ok"
 
 
 # --- the first admin ----------------------------------------------------------
@@ -376,7 +462,8 @@ def test_no_password_or_hash_is_ever_logged(db, admin, caplog):
     service.log_in(db, user.email, WRONG, now=T0)
     service.log_in(db, user.email, PASSWORD, now=T0)
     temporary = service.issue_temporary_password(db, admin.id, user.id, now=T0)
-    service.change_password(db, user.id, NEW_PASSWORD, NEW_PASSWORD)
+    epoch = service.get_user(db, user.id).session_epoch
+    service.change_password(db, user.id, NEW_PASSWORD, NEW_PASSWORD, expected_epoch=epoch)
     with store.connect(db) as conn:
         stored = store.password_hash(conn, user.id)
     for secret in (PASSWORD, NEW_PASSWORD, WRONG, temporary, stored, "$argon2"):

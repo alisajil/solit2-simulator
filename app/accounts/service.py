@@ -107,10 +107,19 @@ def sign_up(db: Path, *, name: str, organisation: str, email: str, password: str
 
 def log_in(db: Path, email: str, password: str, *, now: datetime | None = None) -> LoginResult:
     """Check a login. Only a correct password learns the account's state; a wrong password
-    and an unknown email get the same answer. Before the password is verified, the attempt
-    is claimed -- counted, and checked against the lockout -- in one short UPDATE that is
-    committed right away, so a burst of attempts arriving at once cannot all slip under the
-    limit, and no write lock is held through the slow argon2 verify that follows."""
+    and an unknown email get the same answer. A password longer than passwords.MAX_CHARS is
+    refused immediately, with a dummy verify so its timing still matches a real check, and
+    is never claimed -- it cannot even count toward the lockout. Before the password is
+    verified, the attempt is claimed -- counted, and checked against the lockout -- in one
+    short UPDATE that is committed right away, so a burst of attempts arriving at once
+    cannot all slip under the limit, and no write lock is held through the slow argon2
+    verify that follows. The success UPDATE is conditioned on the session epoch read
+    together with the verified hash: a reset that lands while the verify is running bumps
+    that epoch first, so the UPDATE changes nothing and the answer is "wrong" -- the
+    password just checked, and any rehash of it, is no longer the account's."""
+    if len(password) > passwords.MAX_CHARS:
+        passwords.verify_dummy(password[:passwords.MAX_CHARS])
+        return LoginResult("wrong")
     moment = _now(now)
     with store.connect(db) as conn:
         found = store.credentials_by_email(conn, normalise_email(email))
@@ -129,9 +138,13 @@ def log_in(db: Path, email: str, password: str, *, now: datetime | None = None) 
         if passwords.needs_rehash(stored):
             fields["password_hash"] = passwords.hash_password(password)
         if user.state != "approved":
-            store.update_user(conn, user.id, **fields)
-            return LoginResult(user.state)
-        store.update_user(conn, user.id, last_login_at=moment, **fields)
+            changed = store.update_user(conn, user.id, expected_epoch=user.session_epoch,
+                                        **fields)
+            return LoginResult(user.state) if changed else LoginResult("wrong")
+        changed = store.update_user(conn, user.id, expected_epoch=user.session_epoch,
+                                    last_login_at=moment, **fields)
+        if not changed:
+            return LoginResult("wrong")
         return LoginResult("ok", user=store.user_by_id(conn, user.id))
 
 
@@ -237,10 +250,16 @@ def issue_temporary_password(db: Path, admin_id: int, user_id: int, *,
     return temporary
 
 
-def change_password(db: Path, user_id: int, password: str, confirm: str) -> User:
+def change_password(db: Path, user_id: int, password: str, confirm: str, *,
+                    expected_epoch: int) -> User:
     """Set the account's own new password, and end every session of the account -- the
     caller re-signs its own session in with the account this returns. It may not be the
-    one it has now -- a temporary password is known to the admin who issued it."""
+    one it has now -- a temporary password is known to the admin who issued it.
+
+    The UPDATE is conditioned on `expected_epoch`, the epoch the caller last read the
+    account with: a reset that lands before or during this call -- an admin's temporary
+    password, or another session's own change -- bumps the epoch first, so the UPDATE
+    (the new hash included) changes nothing, and this raises rather than overwriting it."""
     _checked_password(password, confirm)
     with store.connect(db) as conn:
         user = store.user_by_id(conn, user_id)
@@ -250,8 +269,13 @@ def change_password(db: Path, user_id: int, password: str, confirm: str) -> User
         if passwords.verify(current, password):
             raise AccountError("Choose a password different from the one you have now.",
                                "password")
-        store.update_user(conn, user_id, password_hash=passwords.hash_password(password),
-                          must_change_password=False)
+        hashed = passwords.hash_password(password)
+        changed = store.update_user(conn, user_id, expected_epoch=expected_epoch,
+                                    password_hash=hashed, must_change_password=False)
+        if not changed:
+            raise AccountError(
+                "Your session ended because this account's password was reset. "
+                "Log in again.", "session")
         store.bump_session_epoch(conn, user_id)
         return store.user_by_id(conn, user_id)
 
