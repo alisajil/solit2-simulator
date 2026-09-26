@@ -134,9 +134,14 @@ def test_a_result_without_a_clock_gets_no_invented_caveat():
 
 
 def _baseline_pair():
+    """A runnable design and its result, for tests of the report writer.
+
+    The shipped example, not a project file: `designs/` is the user's space and
+    its nozzles refuse to run until the tester enters a measured spectrum, which
+    is a statement about that project's data, not about the report writer."""
     from solit2.engines.reduced import envelope
     from solit2.schema.design import Design
-    design = Design.load("designs/og-dbr-rev0.json")
+    design = Design.load(SITE_DESIGN)
     return design, envelope.run(design)
 
 

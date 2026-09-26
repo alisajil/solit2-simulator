@@ -1,5 +1,8 @@
+import pytest
+
 from solit2.compliance import check
 from solit2.compliance.verdict import Verdict
+from solit2.schema.design import MissingNozzleData
 
 
 def _by_id(report):
@@ -13,6 +16,7 @@ def test_the_example_spec_checks_cleanly_and_is_not_full():
     assert _by_id(report)["annex7.6_5.hrr_method"].verdict is Verdict.COMPLIES
 
 
+@pytest.mark.xfail(strict=True, raises=MissingNozzleData, reason="designs/ is the project's own data: its MTX nozzle refuses to run until the tester enters the measured Dv50/Dv90 (the tool no longer assumes a spread). Remove this mark once they are in the file.")
 def test_the_project_spec_shows_the_findings_the_audit_predicted():
     report = check.run("designs/og-test-spec.json")
     found = _by_id(report)

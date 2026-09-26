@@ -1,10 +1,10 @@
 {
   "preset": "template",
-  "note": "PLACEHOLDER, NOT DATA. A single-mode head with a K-factor of 1.0 at a 100 bar reference pressure and a round 100 um drop size: round numbers chosen so no result computed from them can be mistaken for an assessment. This is not any manufacturer's nozzle and no such head exists. Replace with measured performance data -- K-factor, drop spectrum, spray geometry and mounting -- before any result means anything.",
+  "note": "PLACEHOLDER, NOT DATA. A single-mode head with a K-factor of 1.0 at a 100 bar reference pressure and a round 100 um drop size: round numbers chosen so no result computed from them can be mistaken for an assessment. This is not any manufacturer's nozzle and no such head exists. Replace with measured performance data -- K-factor, drop spectrum, spray geometry and mounting -- before any result means anything. Dv50/Dv90 are illustrative, chosen to reproduce a Rosin-Rammler n of 2.5; replace with measured values.",
   "k_factor_lpm_bar05": 1.0,
   "pressure_bar": 100.0,
   "modes": [
-    {"id": "fine", "fraction": 1.0, "smd_um": 100.0, "cone_half_angle_deg": 45.0, "launch_velocity_ms": 20.0}
+    {"id": "fine", "fraction": 1.0, "smd_um": 100.0, "cone_half_angle_deg": 45.0, "launch_velocity_ms": 20.0, "dv50_um": 128.611840, "dv90_um": 207.891648}
   ],
   "mounting": {
     "type": "ceiling_rows",

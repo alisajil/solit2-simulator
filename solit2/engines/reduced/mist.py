@@ -169,15 +169,15 @@ class _ModeGeometry:
 # thousands of designs makes the footprint matter.
 _GEOMETRY_CACHE: dict[tuple, tuple[_ModeGeometry, ...]] = {}
 
-# `_compute_geometry` calls `spray_shielding_factor` and `size_distribution`,
-# both of which read their own calibration constants internally -- values
+# `_compute_geometry` calls `spray_shielding_factor`, which reads its own
+# calibration constants internally -- values
 # `_geometry_key` cannot see because they never pass through its arguments. A
 # fit that changes them would otherwise go on being served trajectories computed
 # under whatever value happened to populate a cache entry first. Registering
 # unconditionally, at import time, means that discipline does not depend on
 # `_geometry_key` (or whoever edits it next) knowing every constant every callee
-# reads -- `droplet_size_spread` is the second constant to arrive this way and
-# needed no change here at all.
+# reads. The droplet spread is NOT one of them: it is the tester's measured
+# Dv50/Dv90, a property of the design, so `_geometry_key` carries it.
 register_cache_invalidation_hook(_GEOMETRY_CACHE.clear)
 
 
@@ -337,7 +337,7 @@ def _mode_geometry(design: Design, mode: Mode, positions: tuple[NozzlePosition, 
     )
     radius_m = drop_height_m * math.tan(math.radians(mode.cone_half_angle_deg))
     flights = []
-    for size_bin in size_distribution(smd_um):
+    for size_bin in size_distribution(smd_um, design.nozzles.spread_n(mode.id)):
         try:
             traj = integrate(
                 diameter_um=size_bin.diameter_um,
@@ -452,8 +452,8 @@ def _geometry_key(design: Design, positions: tuple[NozzlePosition, ...],
     back a shield factor computed for the wrong flow rate.
     """
     nozzles = design.nozzles
-    modes = tuple((m.id, nozzles.smd_um(m.id), m.cone_half_angle_deg, m.launch_velocity_ms,
-                  nozzles.mode_flow_lpm(m.id))
+    modes = tuple((m.id, nozzles.smd_um(m.id), nozzles.spread_n(m.id), m.cone_half_angle_deg,
+                   m.launch_velocity_ms, nozzles.mode_flow_lpm(m.id))
                   for m in nozzles.modes)
     return (modes, nozzles.mounting.tilt_deg, drop_height_m,
             u_bucket_ms, gas_bucket_k, positions, envelope)

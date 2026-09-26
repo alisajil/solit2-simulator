@@ -1,11 +1,11 @@
 {
   "preset": "single_mode_example",
-  "note": "ILLUSTRATION ONLY, not a default and not an endorsement. A single-mode high-pressure head on one sidewall-offset ceiling row, tilted towards the carriageway. tilt_deg is measured from vertical, so 55 degrees here is 35 degrees below horizontal. Replace with the measured performance of the head actually being assessed.",
+  "note": "ILLUSTRATION ONLY, not a default and not an endorsement. A single-mode high-pressure head on one sidewall-offset ceiling row, tilted towards the carriageway. tilt_deg is measured from vertical, so 55 degrees here is 35 degrees below horizontal. Replace with the measured performance of the head actually being assessed. Dv50/Dv90 are illustrative, chosen to reproduce a Rosin-Rammler n of 2.5; replace with measured values.",
   "k_factor_lpm_bar05": 4.2,
   "pressure_bar": 56.0,
   "smd_table": {"56": 120.0},
   "modes": [
-    {"id": "fine", "fraction": 1.0, "cone_half_angle_deg": 50.0, "launch_velocity_ms": 20.0}
+    {"id": "fine", "fraction": 1.0, "cone_half_angle_deg": 50.0, "launch_velocity_ms": 20.0, "dv50_um": 154.334208, "dv90_um": 249.469978}
   ],
   "mounting": {
     "type": "ceiling_rows",
