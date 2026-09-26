@@ -8,6 +8,7 @@ from app.views import cfd, runs
 from solit2 import history
 from solit2.engines.fds import fleet
 from solit2.engines.fds import runner as runner_mod
+from tests.conftest import sign_in
 
 APP = "../app/streamlit_app.py"
 
@@ -29,6 +30,7 @@ def _app(monkeypatch, tmp_path, roots=None) -> AppTest:
     else:
         monkeypatch.setenv("SOLIT2_RUN_ROOTS", ":".join(str(r) for r in roots))
     at = AppTest.from_file(APP, default_timeout=180)
+    sign_in(at)
     at.session_state["view"] = "runs"
     at.run()
     return at
@@ -49,6 +51,7 @@ def test_the_nav_switches_to_the_manager_and_back_to_the_wizard(monkeypatch, tmp
     _patch_app_paths(monkeypatch, tmp_path)
     monkeypatch.delenv("SOLIT2_RUN_ROOTS", raising=False)
     at = AppTest.from_file(APP, default_timeout=180)
+    sign_in(at)
     at.run()
     assert not at.exception
     assert at.button(key="nav_runs")
@@ -70,6 +73,7 @@ def test_switching_to_the_manager_keeps_the_current_wizard_step(monkeypatch, tmp
     _patch_app_paths(monkeypatch, tmp_path)
     monkeypatch.delenv("SOLIT2_RUN_ROOTS", raising=False)
     at = AppTest.from_file(APP, default_timeout=180)
+    sign_in(at)
     at.session_state["view"] = "wizard"
     at.run()
     at.button(key="build_design").click().run()          # -> step 2

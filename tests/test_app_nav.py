@@ -3,6 +3,7 @@ from streamlit.testing.v1 import AppTest
 
 from app.views import cfd
 from solit2 import history
+from tests.conftest import sign_in
 
 APP = "../app/streamlit_app.py"
 
@@ -13,6 +14,7 @@ def _app(monkeypatch, tmp_path) -> AppTest:
     monkeypatch.setenv("SOLIT2_RUN_ROOTS", str(tmp_path / "runs"))
     monkeypatch.setenv("SOLIT2_CFD_STATE_DIR", str(tmp_path / "state"))
     at = AppTest.from_file(APP, default_timeout=180)
+    sign_in(at)
     at.run()
     return at
 
@@ -54,3 +56,13 @@ def test_set_view_refuses_an_unknown_view():
     at.run()
     assert at.exception
     assert "unknown view" in at.exception[0].value
+
+
+def test_a_role_lands_only_on_a_screen_it_may_open():
+    script = ("import streamlit as st\nfrom app import state\n"
+              "st.write(' '.join(f'{r}={state.current_view(r)}' "
+              "for r in ('admin', 'team', 'customer', None)))\n")
+    at = AppTest.from_string(script)
+    at.session_state["view"] = "wizard"
+    at.run()
+    assert at.markdown[0].value == "admin=wizard team=wizard customer=None None=None"

@@ -22,6 +22,7 @@ from pathlib import Path
 
 import streamlit as st
 
+from app import auth
 from app.components import run_states
 from solit2.engines.fds import fleet
 from solit2.engines.fds import runner as runner_mod
@@ -78,6 +79,8 @@ def _clear_pending() -> None:
 
 @st.dialog("Pause this run?")
 def _confirm_pause(run_dir: Path, state_dir: Path) -> None:
+    if not auth.guard_fragment():
+        return
     st.write(f"Asks FDS to finish its current step, write its restart files and exit "
              f"cleanly for `{run_dir}`. Not a kill: it can be resumed from where it stops "
              f"afterwards. A wedged run may not notice until it is stopped instead.")
@@ -97,6 +100,8 @@ def _confirm_pause(run_dir: Path, state_dir: Path) -> None:
 
 @st.dialog("Stop this run?")
 def _confirm_stop(run_dir: Path, state_dir: Path) -> None:
+    if not auth.guard_fragment():
+        return
     st.write(f"Kills every process for `{run_dir}` outright. Whatever restart files it "
              f"already wrote are kept, but the step it was on when this fires is lost. "
              f"For a run that has stopped responding and will not see a pause.")
@@ -244,6 +249,8 @@ def _queue_panel(state_dir: Path, infos: list[fleet.RunInfo]) -> None:
 
 @st.fragment(run_every=POLL)
 def _live_panel(state_dir: Path, roots: tuple[Path, ...]) -> None:
+    if not auth.guard_fragment():
+        return
     infos = fleet.list_runs(roots=roots, state_dir=state_dir)
     summary = fleet.summarise(infos, state_dir=state_dir)
     _counts(summary)
