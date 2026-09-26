@@ -8,7 +8,7 @@ from app.views import cfd, runs
 from solit2 import history
 from solit2.engines.fds import fleet
 from solit2.engines.fds import runner as runner_mod
-from tests.conftest import sign_in
+from tests.conftest import fill_nozzle, sign_in
 
 APP = "../app/streamlit_app.py"
 
@@ -76,7 +76,7 @@ def test_switching_to_the_manager_keeps_the_current_wizard_step(monkeypatch, tmp
     sign_in(at)
     at.session_state["view"] = "wizard"
     at.run()
-    at.button(key="build_design").click().run()          # -> step 2
+    fill_nozzle(at).button(key="build_design").click().run()          # -> step 2
     assert at.session_state["step"] == 2
     at.button(key="nav_runs").click().run()
     at.button(key="nav_wizard").click().run()

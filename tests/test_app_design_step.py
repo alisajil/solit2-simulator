@@ -1,10 +1,39 @@
 import json
+
+import pytest
+
 from app.views import design as design_view
 from solit2.engines.reduced import envelope
+from tests.conftest import TEST_NOZZLE_FIELDS, TEST_NOZZLE_OFFSETS, fill_nozzle
+
+
+def test_nozzle_block_lists_every_missing_field_and_builds_nothing():
+    block, missing = design_view.nozzle_block({})
+    assert block is None
+    assert "Dv90 (µm)" in missing and "K-factor (L/min·bar⁰·⁵)" in missing
+    assert design_view.OFFSETS_LABEL in missing
+
+
+def test_nozzle_block_is_preset_free_and_carries_only_what_was_typed():
+    block, missing = design_view.nozzle_block({**TEST_NOZZLE_FIELDS, "d_offsets": "-2.2, 2.2"})
+    assert missing == []
+    assert block["preset"] == "tester_input"
+    assert block["modes"][0]["dv90_um"] == TEST_NOZZLE_FIELDS["d_dv90"]
+    assert block["mounting"]["row_lateral_offsets_m"] == [-2.2, 2.2]
+
+
+def test_an_empty_nozzle_form_names_what_is_missing_and_cannot_be_built(run_view):
+    """Nothing about the nozzle is filled in for the tester."""
+    at = run_view("design", seed_design=False)
+    assert not at.exception
+    for key in TEST_NOZZLE_FIELDS:
+        assert at.number_input(key=key).value is None, key
+    assert any("Nozzle data still needed" in w.value for w in at.warning)
+    assert at.button(key="build_design").disabled
 
 
 def test_summary_card_shows_live_hydraulics_before_building(run_view):
-    at = run_view("design", seed_design=False)
+    at = fill_nozzle(run_view("design", seed_design=False))
     assert not at.exception
     labels = [m.label for m in at.metric]
     assert labels[:3] == ["Active heads", "Per head", "Zone flow"]
@@ -12,7 +41,7 @@ def test_summary_card_shows_live_hydraulics_before_building(run_view):
 
 
 def test_build_and_continue_sets_the_design_and_advances(run_view):
-    at = run_view("design", seed_design=False)
+    at = fill_nozzle(run_view("design", seed_design=False))
     assert "design" not in at.session_state
     at.button(key="build_design").click().run()
     assert not at.exception
@@ -38,7 +67,7 @@ def test_the_file_list_excludes_the_compliance_spec_and_the_project_rules_file(r
 
 
 def test_changing_pressure_changes_the_summary(run_view):
-    at = run_view("design", seed_design=False)
+    at = fill_nozzle(run_view("design", seed_design=False))
     before = at.metric[1].value
     at.number_input(key="d_pressure").set_value(100.0).run()
     assert at.metric[1].value != before
@@ -49,6 +78,7 @@ def test_acceptance_limits_start_empty_and_stay_unset(run_view):
     at = run_view("design", seed_design=False)
     for _field, key, *_rest in design_view.AHJ_FIELDS:
         assert at.number_input(key=key).value is None, key
+    fill_nozzle(at)
     at.button(key="build_design").click().run()
     ahj = at.session_state["design"].ahj
     assert ahj.max_air_temp_c is None and ahj.max_co_ppm is None
@@ -57,7 +87,7 @@ def test_acceptance_limits_start_empty_and_stay_unset(run_view):
 
 def test_a_limit_the_authority_sets_is_carried_into_the_design_and_judged(run_view):
     """A set limit has to reach the engine, or entering it would be theatre."""
-    at = run_view("design", seed_design=False)
+    at = fill_nozzle(run_view("design", seed_design=False))
     at.number_input(key="ahj_air_temp").set_value(1.0).run()
     at.button(key="build_design").click().run()
 
@@ -78,7 +108,11 @@ def test_a_design_file_seeds_every_field_and_invents_no_limit(run_view, monkeypa
     (tmp_path / "site.json").write_text(json.dumps({
         "tunnel": {"preset": "template"},
         "nozzles": {"k_factor_lpm_bar05": 6.5, "pressure_bar": 80.0,
-                    "mounting": {"rows": 3, "pitch_m": 1.5}},
+                    "modes": [{"id": "fine", "fraction": 1.0, "smd_um": 80.0, "dv50_um": 100.0,
+                               "dv90_um": 170.0, "cone_half_angle_deg": 40.0,
+                               "launch_velocity_ms": 30.0}],
+                    "mounting": {"rows": 3, "pitch_m": 1.5, "row_lateral_offsets_m": [-3.0, 0.0, 3.0],
+                                 "height_above_carriageway_m": 5.5, "tilt_deg": 0.0}},
         "zones": {"section_length_m": 42.0, "sections_simultaneous": 2},
         "ventilation": {"velocity_range_ms": [2.5, 4.0]},
         "ahj": {"tvs_design_fire_mw": 50.0, "max_air_temp_c": None,
@@ -93,6 +127,8 @@ def test_a_design_file_seeds_every_field_and_invents_no_limit(run_view, monkeypa
     assert at.number_input(key="d_pressure").value == 80.0
     assert at.number_input(key="d_rows").value == 3
     assert at.number_input(key="d_pitch").value == 1.5
+    assert at.number_input(key="d_dv90").value == 170.0
+    assert at.text_input(key="d_offsets").value == "-3, 0, 3"
     assert at.number_input(key="d_section_len").value == 42.0
     assert at.number_input(key="d_sections").value == 2
     assert at.number_input(key="d_v_lo").value == 2.5
@@ -151,8 +187,10 @@ def test_a_file_overwrites_stale_widget_state_rather_than_clearing_the_key(monke
     assert stale["d_v_lo"] == 2.0 and stale["d_v_hi"] == 3.0
     assert stale["ahj_tvs"] == 50.0, "a declared limit must be carried"
     assert stale["ahj_air_temp"] is None, "a limit this file omits must be cleared, not kept"
-    # Fields this file is silent on return to the form's default, not the last file's value.
-    assert stale["d_k"] == 4.1
+    # A nozzle value this file is silent on is cleared: the form has no nozzle
+    # default to return to, because the tool does not assume one.
+    assert stale["d_k"] is None
+    # Other fields this file is silent on return to the form's default.
     assert stale["d_tunnel"] == "twin_bore_11m"
 
 
@@ -164,6 +202,7 @@ def test_every_seeded_widget_is_written_so_none_can_go_stale(monkeypatch):
 
     expected = {key for key, *_rest in design_view.SEEDED_FIELDS}
     expected |= {key for _field, key, *_rest in design_view.AHJ_FIELDS}
+    expected |= {key for key, *_rest in design_view.NOZZLE_FIELDS} | {design_view.OFFSETS_KEY}
     assert set(written) == expected
 
 
@@ -202,59 +241,63 @@ def test_the_app_and_the_cli_identify_an_unedited_design_identically():
 
 
 def test_a_design_loaded_from_a_file_is_not_quietly_rebuilt_from_presets():
-    """`_assemble` used to compose a design from the four presets plus twelve
-    form fields, whatever the source file said. Everything the form does not
-    expose was replaced: drop size, cone angle and launch velocity came from
-    the nozzle preset, and row offsets, detection, activation delay and
-    discharge duration were hardcoded.
-
-    A user who loads their own design file and presses Build is told "every
-    field below starts from" that file. They must not then be assessing a
-    different system. Anything the form cannot edit has to survive."""
+    """`_assemble` used to compose a design from the presets plus a dozen form
+    fields, whatever the source file said: detection, activation delay and
+    discharge duration were hardcoded. A user who loads their own design file
+    and presses Build is told "every field below starts from" that file, so
+    anything the form does not edit has to survive, and the nozzle the form
+    carries has to be the one the file seeded it with."""
     from pathlib import Path
     from solit2.schema.design import Design
 
     path = Path("designs/og-ds01-rev00-cd-meas.json")
     if not path.is_file():
-        import pytest
         pytest.skip("needs a project design file carrying real nozzle data")
     raw_source = json.loads(path.read_text())
-    n = raw_source["nozzles"]
-    # pitch and some other fields live in the preset, not the file, so read the
-    # form's starting values off the RESOLVED design, exactly as the form does.
-    resolved = Design.from_dict(raw_source)
+    file_design = Design.from_dict(raw_source)
+    mode, mount = file_design.nozzles.modes[0], file_design.nozzles.mounting
+    # What the form would hold after seeding from this file; the file has no
+    # measured spectrum, so the tester types the test values for Dv50/Dv90.
+    values = {"d_k": file_design.nozzles.k_factor_lpm_bar05, "d_pressure": file_design.nozzles.pressure_bar,
+              "d_smd": file_design.nozzles.smd_um(mode.id),
+              "d_dv50": TEST_NOZZLE_FIELDS["d_dv50"], "d_dv90": TEST_NOZZLE_FIELDS["d_dv90"],
+              "d_cone": mode.cone_half_angle_deg, "d_launch": mode.launch_velocity_ms,
+              "d_mount_h": mount.height_above_carriageway_m, "d_rows": mount.rows,
+              "d_pitch": mount.pitch_m, "d_tilt": mount.tilt_deg,
+              "d_offsets": ", ".join(f"{x:g}" for x in mount.row_lateral_offsets_m)}
+    nozzles, missing = design_view.nozzle_block(values)
+    assert missing == []
     built = design_view._assemble(
         raw_source["tunnel"]["preset"], raw_source["fire"]["preset"],
-        n["preset"], raw_source["hydraulics"]["preset"],
-        n["k_factor_lpm_bar05"], n["pressure_bar"],
-        resolved.nozzles.mounting.rows, resolved.nozzles.mounting.pitch_m,
+        raw_source["hydraulics"]["preset"], nozzles,
         raw_source["zones"]["section_length_m"], raw_source["zones"]["sections_simultaneous"],
         raw_source["ventilation"]["velocity_range_ms"][0],
         raw_source["ventilation"]["velocity_range_ms"][1],
         raw_source.get("ahj") or {}, raw_source)
 
-    from_file, from_form = Design.from_dict(raw_source), Design.from_dict(built)
-    mode_of = lambda d: d.nozzles.modes[0]
-    assert mode_of(from_form).smd_um == mode_of(from_file).smd_um, "drop size was dropped"
-    assert mode_of(from_form).launch_velocity_ms == mode_of(from_file).launch_velocity_ms
-    assert mode_of(from_form).cone_half_angle_deg == mode_of(from_file).cone_half_angle_deg
-    assert (from_form.nozzles.mounting.row_lateral_offsets_m
-            == from_file.nozzles.mounting.row_lateral_offsets_m), "offsets were hardcoded"
-    assert (from_form.nozzles.mounting.height_above_carriageway_m
-            == from_file.nozzles.mounting.height_above_carriageway_m)
-    assert from_form.zones.activation_delay_s == from_file.zones.activation_delay_s
-    assert from_form.zones.duration_min == from_file.zones.duration_min
-    assert from_form.detection.threshold_c == from_file.detection.threshold_c
-    assert from_form.zones.manual_activation_s == from_file.zones.manual_activation_s, \
+    from_form = Design.from_dict(built)
+    form_mode = from_form.nozzles.modes[0]
+    assert form_mode.smd_um == file_design.nozzles.smd_um(mode.id), "drop size was dropped"
+    assert form_mode.launch_velocity_ms == mode.launch_velocity_ms
+    assert form_mode.cone_half_angle_deg == mode.cone_half_angle_deg
+    assert from_form.nozzles.mounting.row_lateral_offsets_m == mount.row_lateral_offsets_m
+    assert from_form.nozzles.mounting.height_above_carriageway_m == mount.height_above_carriageway_m
+    assert from_form.nozzles.preset == "tester_input", "no preset may fill the nozzle in"
+    assert from_form.zones.activation_delay_s == file_design.zones.activation_delay_s
+    assert from_form.zones.duration_min == file_design.zones.duration_min
+    assert from_form.detection.threshold_c == file_design.detection.threshold_c
+    assert from_form.zones.manual_activation_s == file_design.zones.manual_activation_s, \
         "the form's manual-activation default must not override the file's timetable"
 
 
-def test_building_without_a_source_file_still_composes_from_the_presets():
-    """The from-scratch path is what a user gets with no file chosen, and it
-    must keep working."""
+def test_building_without_a_source_file_composes_the_tunnel_and_fire_from_presets():
+    """The from-scratch path: the tunnel, fire and hydraulics from their presets,
+    the nozzle exactly as the tester typed it."""
     from solit2.schema.design import Design
-    raw = design_view._assemble("twin_bore_11m", "hgv_150mw", "single_mode_fine_example",
-                                "example", 4.1, 50.0, 2, 2.4, 30.0, 3, 3.88, 5.08, {}, None)
+    nozzles, _ = design_view.nozzle_block({**TEST_NOZZLE_FIELDS, "d_offsets": TEST_NOZZLE_OFFSETS})
+    raw = design_view._assemble("twin_bore_11m", "hgv_150mw", "example", nozzles,
+                                30.0, 3, 3.88, 5.08, {}, None)
     built = Design.from_dict(raw)
     assert built.meta.name == "streamlit-design"
-    assert built.nozzles.mounting.rows == 2
+    assert built.nozzles.mounting.rows == 2 and built.nozzles.preset == "tester_input"
+    assert built.nozzles.spread_n("fine") == pytest.approx(2.5, abs=1e-6)

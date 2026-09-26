@@ -13,6 +13,20 @@ from app import auth
 from app.accounts import passwords, store
 
 EXAMPLE_DESIGN = "examples/designs/road-tunnel-twin-bore.json"
+# TEST VALUES, NOT DATA: a single-mode head for the Design step's tester-input
+# fields. Dv50/Dv90 give a Rosin-Rammler n of 2.5; 5.0 m fits the SOLIT2 gallery.
+TEST_NOZZLE_FIELDS = {"d_k": 4.1, "d_pressure": 50.0, "d_smd": 100.0, "d_dv50": 128.61184,
+                      "d_dv90": 207.891648, "d_cone": 45.0, "d_launch": 20.0,
+                      "d_mount_h": 5.0, "d_rows": 2, "d_pitch": 2.4, "d_tilt": 0.0}
+TEST_NOZZLE_OFFSETS = "-2.75, 2.75"
+
+
+def fill_nozzle(at: AppTest) -> AppTest:
+    """Type the test head into the Design step, as a tester would."""
+    for key, value in TEST_NOZZLE_FIELDS.items():
+        at.number_input(key=key).set_value(value)
+    at.text_input(key="d_offsets").set_value(TEST_NOZZLE_OFFSETS)
+    return at.run()
 TEST_PASSWORD = "a test password, long enough"
 
 
