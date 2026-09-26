@@ -25,7 +25,7 @@ from solit2.engines.fds import scheduler as fds_scheduler
 from solit2.engines.reduced import envelope
 from solit2.reports import archive as archive_mod
 from solit2.reports import assessment, correlation, test_plan
-from solit2.schema.design import Design
+from solit2.schema.design import Design, MissingNozzleData
 from solit2.schema.result import Result
 
 EXIT_OK, EXIT_VALIDATION_MISS, EXIT_BAD_INPUT, EXIT_ENGINE = 0, 1, 2, 3
@@ -239,8 +239,17 @@ def _cmd_validate(args: argparse.Namespace) -> int:
     from validation import compare
 
     ids = tuple(args.anchor) if args.anchor else None
+    try:
+        nozzle = compare.load_reference_nozzle(
+            Path(args.reference_nozzle) if args.reference_nozzle else None)
+        anchors = compare.load_anchors(ids, reference_nozzle=nozzle)
+    except (compare.ReferenceNozzleMissing, MissingNozzleData) as exc:
+        return _fail(str(exc), "reference_nozzle",
+                     f"create {compare.DEFAULT_REFERENCE_NOZZLE_PATH}, or pass --reference-nozzle "
+                     f"PATH, with the SOLIT2 reference test nozzle's measured data",
+                     EXIT_BAD_INPUT)
     all_passed = True
-    for anchor in compare.load_anchors(ids):
+    for anchor in anchors:
         report = compare.check(anchor, args.engine)
         print(f"\n{anchor.id}  ({anchor.source})")
         print(f"  {'quantity':<24} {'modelled':>12} {'measured':>12}  {'tolerance':<16} ok")
@@ -630,6 +639,9 @@ def build_parser() -> argparse.ArgumentParser:
     val = sub.add_parser("validate", help="check the engine against the anchor fire tests")
     val.add_argument("--engine", default="reduced", choices=["reduced"])
     val.add_argument("--anchor", action="append")
+    val.add_argument("--reference-nozzle",
+                     help="the SOLIT2 reference test nozzle's data (SOLIT2 does not publish it); "
+                          "default designs/solit2-reference-nozzle.json")
     val.set_defaults(func=_cmd_validate)
 
     report = sub.add_parser("report", help="generate a markdown report")

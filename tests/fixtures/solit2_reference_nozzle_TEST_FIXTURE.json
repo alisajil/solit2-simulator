@@ -1,0 +1,18 @@
+{
+  "preset": "tester_input",
+  "note": "TEST FIXTURE, NOT DATA. The values of the withdrawn nozzle_solit2_reference preset (back-figured to the reported application density, never published by SOLIT2; Dv50/Dv90 chosen to reproduce a Rosin-Rammler n of 2.5), kept only so the test suite can exercise the c4-c6 anchors. Never read by the product.",
+  "k_factor_lpm_bar05": 2.8,
+  "pressure_bar": 100.0,
+  "smd_table": {"100": 90.0},
+  "modes": [
+    {"id": "fine", "fraction": 1.0, "cone_half_angle_deg": 50.0, "launch_velocity_ms": 25.0, "dv50_um": 115.750656, "dv90_um": 187.102483}
+  ],
+  "mounting": {
+    "type": "ceiling_rows",
+    "rows": 2,
+    "row_lateral_offsets_m": [-2.2, 2.2],
+    "height_above_carriageway_m": 4.9,
+    "pitch_m": 4.0,
+    "tilt_deg": 0.0
+  }
+}

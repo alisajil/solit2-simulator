@@ -490,3 +490,15 @@ def test_fds_adopt_refuses_a_run_dir_with_no_deck(tmp_path):
     assert proc.returncode == 2
     err = json.loads(proc.stderr)
     assert "deck.fds" in err["error"]
+
+
+def test_validate_refuses_cleanly_without_a_reference_nozzle(tmp_path):
+    """SOLIT2 publishes no nozzle data for c4-c6: with none supplied, validate says
+    what to provide and exits 2, rather than running on an assumed head."""
+    env = {**os.environ, "SOLIT2_REFERENCE_NOZZLE": str(tmp_path / "absent.json")}
+    proc = _run(["validate"], env=env)
+    assert proc.returncode == 2
+    error = json.loads(proc.stderr)
+    assert error["field"] == "reference_nozzle"
+    assert "SOLIT2 Annex 2 does not publish it" in error["error"]
+    assert "Traceback" not in proc.stderr

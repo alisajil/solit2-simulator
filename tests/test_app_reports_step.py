@@ -4,7 +4,9 @@ from solit2.reports import twin
 
 def test_reports_step_builds_and_runs_the_twin_and_offers_exports(run_view, monkeypatch, tmp_path):
     monkeypatch.setattr(history, "DEFAULT_PATH", tmp_path / "h.jsonl")
-    at = run_view("reports", timeout=180)
+    # Heads at 5.0 m fit the 5.2 m SOLIT2 gallery; the site example's 5.75 m would
+    # be refused, since SOLIT2 publishes no reference height to substitute.
+    at = run_view("reports", timeout=180, design_path="examples/designs/solit2-test-protocol.json")
     assert not at.exception
     assert at.session_state["twin_result"] is not None
     bodies = [m.value for m in at.markdown]

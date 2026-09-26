@@ -211,7 +211,7 @@ def test_from_dict_merges_presets_exactly_like_load(tmp_path):
 
 def test_from_dict_rejects_an_unknown_preset_kind_the_same_way_load_does():
     raw = {"meta": {"name": "x"}, "tunnel": {"preset": "does_not_exist"},
-           "fire": {"preset": "hgv_150mw"}, "nozzles": {"preset": "solit2_reference"},
+           "fire": {"preset": "hgv_150mw"}, "nozzles": {"preset": "template"},
            "zones": {"section_length_m": 30.0, "sections_simultaneous": 1,
                      "manual_activation_s": 60.0, "activation_delay_s": 0.0,
                      "pump_ramp_s": 30.0, "duration_min": 30.0},

@@ -14,7 +14,6 @@ from solit2.schema.design import Design
 from solit2.schema.presets import load_preset
 
 GALLERY_TUNNEL = "solit2_test"
-REFERENCE_NOZZLE = "solit2_reference"
 # Annex 7 test protocol, as examples/designs/solit2-test-protocol.json encodes it.
 PROTOCOL_ZONES = {"section_length_m": 20.0, "sections_simultaneous": 3,
                   "activation_delay_s": 60.0, "pump_ramp_s": 30.0, "duration_min": 35.0}
@@ -25,10 +24,10 @@ PROTOCOL_DETECTION = {"type": "linear_heat", "threshold_c": 60.0, "sensor_spacin
 def gallery_mount_height_m(design: Design) -> tuple[float, str]:
     """Where the heads go in the gallery, and the one-sentence reason why.
 
-    The site's own height when it fits between the fuel top and the gallery
-    ceiling — the system is tested as it will be installed. Otherwise the
-    height the SOLIT2 reference tests used in this same gallery, which is a
-    fact about the standard's facility, not a vendor figure.
+    The tester's own height when it fits between the fuel top and the gallery
+    ceiling — the system is tested as it will be installed. Otherwise refused:
+    SOLIT2 publishes no mounting height for its reference system, so there is
+    no standard value to fall back on.
     """
     gallery_m = float(load_preset("tunnel", GALLERY_TUNNEL)["height_m"])
     site_m = design.nozzles.mounting.height_above_carriageway_m
@@ -36,15 +35,10 @@ def gallery_mount_height_m(design: Design) -> tuple[float, str]:
     if fuel_top_m < site_m < gallery_m:
         return site_m, (f"heads at the site's own {site_m:.2f} m, which fits under the "
                         f"{gallery_m:.2f} m gallery ceiling")
-    ref_m = float(load_preset("nozzle", REFERENCE_NOZZLE)["mounting"]["height_above_carriageway_m"])
-    if not fuel_top_m < ref_m < gallery_m:
-        raise ValueError(
-            f"nozzle mounting cannot be reproduced in the {gallery_m:.2f} m test gallery: "
-            f"the site's {site_m:.2f} m and the reference tests' {ref_m:.2f} m both fall "
-            f"outside the {fuel_top_m:.2f} m fuel top to ceiling range")
-    return ref_m, (f"heads at {ref_m:.2f} m, where the SOLIT2 reference tests mounted theirs: "
-                   f"the site's {site_m:.2f} m does not fit between the {fuel_top_m:.2f} m "
-                   f"fuel top and the {gallery_m:.2f} m gallery ceiling")
+    raise ValueError(
+        f"nozzle mounting cannot be reproduced in the {gallery_m:.2f} m SOLIT2 gallery: the "
+        f"tester's {site_m:.2f} m head height does not fit between the {fuel_top_m:.2f} m fuel "
+        f"top and the ceiling; enter the height the heads will be tested at")
 
 
 def test_facility_twin(design: Design) -> Design:

@@ -4,6 +4,7 @@ and the accounts every app test needs now that the app has a login."""
 import time
 from datetime import UTC, datetime
 from functools import cache
+from pathlib import Path
 
 import pytest
 from streamlit.testing.v1 import AppTest
@@ -13,6 +14,22 @@ from app.accounts import passwords, store
 
 EXAMPLE_DESIGN = "examples/designs/road-tunnel-twin-bore.json"
 TEST_PASSWORD = "a test password, long enough"
+
+
+REFERENCE_NOZZLE_FIXTURE = (Path(__file__).parent / "fixtures"
+                            / "solit2_reference_nozzle_TEST_FIXTURE.json")
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _reference_nozzle_fixture():
+    """The anchors run on the labelled fixture; the product reads the tester's own file.
+
+    Session-scoped so module-scoped fixtures that load anchors see it too; a test
+    that needs the file absent overrides it with its own function-scoped monkeypatch.
+    """
+    with pytest.MonkeyPatch.context() as patch:
+        patch.setenv("SOLIT2_REFERENCE_NOZZLE", str(REFERENCE_NOZZLE_FIXTURE))
+        yield
 
 
 @pytest.fixture(autouse=True)
@@ -63,9 +80,9 @@ def screen_text(at: AppTest) -> str:
     return "\n".join(parts)
 
 
-def view_script(view: str, seed_design: bool) -> str:
+def view_script(view: str, seed_design: bool, design_path: str = EXAMPLE_DESIGN) -> str:
     seed = (f'if state.get_design() is None:\n'
-            f'    state.set_design(Design.load("{EXAMPLE_DESIGN}"))\n') if seed_design else ""
+            f'    state.set_design(Design.load("{design_path}"))\n') if seed_design else ""
     return ("import streamlit as st\n"
             "from app import state, theme\n"
             f"from app.views import {view} as view\n"
@@ -77,8 +94,10 @@ def view_script(view: str, seed_design: bool) -> str:
 
 @pytest.fixture
 def run_view():
-    def _run(view: str, seed_design: bool = True, timeout: float = 90.0) -> AppTest:
-        at = AppTest.from_string(view_script(view, seed_design), default_timeout=timeout)
+    def _run(view: str, seed_design: bool = True, timeout: float = 90.0,
+             design_path: str = EXAMPLE_DESIGN) -> AppTest:
+        at = AppTest.from_string(view_script(view, seed_design, design_path),
+                                 default_timeout=timeout)
         sign_in(at)
         at.run()
         return at

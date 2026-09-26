@@ -41,25 +41,14 @@ def test_a_site_height_that_fits_the_gallery_is_kept():
     assert height == 4.5 and "site's own" in reason
 
 
-def test_a_site_height_above_the_gallery_ceiling_falls_back_to_the_reference_tests():
-    site = _design_with_mount(6.5)
-    height, reason = twin.gallery_mount_height_m(site)
-    assert height == 4.9 and "reference" in reason
-    t = twin.test_facility_twin(site)
-    assert t.nozzles.mounting.height_above_carriageway_m == 4.9
-    assert "4.90 m" in t.meta.notes and "6.50 m" in t.meta.notes
+def test_a_site_height_above_the_gallery_ceiling_is_refused_not_substituted():
+    """SOLIT2 publishes no mounting height for its reference system, so there is
+    no standard value to put the heads at instead; the tester must enter one."""
+    with pytest.raises(ValueError, match="enter the height the heads will be tested at"):
+        twin.gallery_mount_height_m(_design_with_mount(6.5))
 
 
 def test_the_twin_validates_and_runs_in_tier_one():
-    result = envelope.run(twin.test_facility_twin(_design_with_mount(6.5)))
+    result = envelope.run(twin.test_facility_twin(_design_with_mount(4.5)))
     assert result.meta["design_name"].endswith("-test-facility")
     assert result.worst_case["velocity_ms"] in (1.5, 3.0)
-
-
-def test_an_impossible_gallery_raises_instead_of_clamping(monkeypatch):
-    # a fuel taller than the reference mounting height leaves no valid height
-    site = _design_with_mount(6.5)
-    monkeypatch.setattr(twin, "load_preset", lambda kind, name: (
-        {"height_m": 5.2} if kind == "tunnel" else {"mounting": {"height_above_carriageway_m": 3.5}}))
-    with pytest.raises(ValueError, match="gallery"):
-        twin.gallery_mount_height_m(site)

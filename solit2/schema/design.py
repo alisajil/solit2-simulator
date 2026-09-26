@@ -160,8 +160,12 @@ class Mounting(Frozen):
         return self
 
 
+# The `preset` a nozzles block carries when the tester supplied every value.
+TESTER_INPUT = "tester_input"
+
+
 class Nozzles(Frozen):
-    preset: str
+    preset: str = TESTER_INPUT
     note: str = ""
     k_factor_lpm_bar05: float = Field(gt=0.5, le=20)
     pressure_bar: float
@@ -359,10 +363,16 @@ class Design(Frozen):
         merged = dict(raw)
         for block, kind in (("tunnel", "tunnel"), ("fire", "fire"),
                             ("nozzles", "nozzle"), ("hydraulics", "hydraulics")):
-            name = merged.get(block, {}).get("preset")
+            block_raw = merged.get(block, {})
+            name = block_raw.get("preset")
+            if block == "nozzles" and name in (None, TESTER_INPUT):
+                # The tester typed every field (or supplied a file of them): there is
+                # no preset to merge and nothing may be filled in behind their back.
+                merged[block] = {**block_raw, "preset": TESTER_INPUT}
+                continue
             if name is None:
                 raise ValueError(f"design block {block!r} must name a preset")
-            merged[block] = deep_merge(load_preset(kind, name), merged[block])
+            merged[block] = deep_merge(load_preset(kind, name), block_raw)
         return cls.model_validate(merged)
 
     @classmethod
