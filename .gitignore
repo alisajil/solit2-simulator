@@ -44,3 +44,7 @@ htmlcov/
 
 # the app's account store (password hashes) -- never committed. Anchored, like /reports/.
 /data/
+
+# local secrets (e.g. SOLIT2_ADMIN_EMAIL/PASSWORD for the bootstrap admin) -- Streamlit
+# Cloud's own Secrets panel is where these live for a deploy; never in the repo.
+.streamlit/secrets.toml
