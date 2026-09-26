@@ -183,6 +183,11 @@ The app asks everyone to log in, and an admin approves every new account as **te
 shared project: designs, runs, the CFD runs manager) or **customer**. Customers see a holding
 screen until customer workspaces open.
 
+The **Admin** screen (admins only) lists the sign-ups waiting for approval — approve as team or
+customer, or reject — and every account with its role, state and last login, with Disable,
+Re-enable and Temporary password. A temporary password is shown once, to pass on privately.
+Every admin action is kept in the trail at the bottom of the screen.
+
 Create the first admin on the server, from the app's checkout and with the same
 `SOLIT2_DATA_DIR` the app's service uses. It asks for the password twice; the password is
 never an argument:

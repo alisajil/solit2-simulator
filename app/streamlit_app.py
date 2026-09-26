@@ -1,11 +1,13 @@
 """Entry point. Run with: uv run streamlit run app/streamlit_app.py"""
 from __future__ import annotations
 
+from functools import partial
+
 import streamlit as st
 
 from app import state, theme
 from app.components import nav, stepper
-from app.views import cfd, compliance, design, fire_test, login, reports, result, runs, simulator
+from app.views import admin, cfd, compliance, design, fire_test, login, reports, result, runs, simulator
 
 st.set_page_config(page_title="SOLIT2 Simulator", layout="wide",
                    initial_sidebar_state="expanded")
@@ -31,7 +33,8 @@ def _wizard() -> None:
     stepper.render_footer()
 
 
-SCREENS = {"simulator": simulator.render, "wizard": _wizard, "runs": runs.render}
+SCREENS = {"simulator": simulator.render, "wizard": _wizard, "runs": runs.render,
+           "admin": partial(admin.render, user)}
 
 nav.render(user)
 view = state.current_view(user.role)

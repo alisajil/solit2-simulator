@@ -7,7 +7,7 @@ import streamlit as st
 from app import auth, state
 from app.accounts.store import User
 
-LABELS = {"simulator": "Simulator", "wizard": "Wizard", "runs": "CFD runs"}
+LABELS = {"simulator": "Simulator", "wizard": "Wizard", "runs": "CFD runs", "admin": "Admin"}
 # One narrow column per screen, a spacer, then the account's email and Log out.
 VIEW_COLUMN, SPACER_COLUMN, EMAIL_COLUMN, LOGOUT_COLUMN = 1, 3, 2, 1
 

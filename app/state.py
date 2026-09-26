@@ -22,15 +22,16 @@ STEP_MIN, STEP_MAX = 1, 6
 _DERIVED_KEYS = (_RESULT_KEY, _TWIN_KEY, _TIER2_KEY)
 
 _VIEW_KEY = "view"
-# The app's three top-level screens: the live simulator is the landing screen,
-# the wizard carries the formal record, the runs manager watches the FDS fleet.
-VIEWS = ("simulator", "wizard", "runs")
+# The app's top-level screens: the live simulator is the landing screen, the wizard
+# carries the formal record, the runs manager watches the FDS fleet, and Admin (admins
+# only) manages the accounts.
+VIEWS = ("simulator", "wizard", "runs", "admin")
+PROJECT_VIEWS = ("simulator", "wizard", "runs")
 DEFAULT_VIEW = "simulator"
-
 # Which screens each role may open. A customer opens none of the project's screens
 # until customer workspaces exist (Phase 2 of the accounts spec): until then the shared
 # designs, runs and history are the team's alone.
-ROLE_VIEWS = {"admin": VIEWS, "team": VIEWS, "customer": ()}
+ROLE_VIEWS = {"admin": VIEWS, "team": PROJECT_VIEWS, "customer": ()}
 
 
 def views_for(role: str | None) -> tuple[str, ...]:
