@@ -3,6 +3,7 @@ from streamlit.testing.v1 import AppTest
 
 from app.views import cfd
 from solit2 import history
+from tests.conftest import sign_in
 
 APP = "../app/streamlit_app.py"
 
@@ -13,6 +14,7 @@ def _app(monkeypatch, tmp_path) -> AppTest:
     monkeypatch.setenv("SOLIT2_RUN_ROOTS", str(tmp_path / "runs"))
     monkeypatch.setenv("SOLIT2_CFD_STATE_DIR", str(tmp_path / "state"))
     at = AppTest.from_file(APP, default_timeout=180)
+    sign_in(at)
     at.run()
     return at
 

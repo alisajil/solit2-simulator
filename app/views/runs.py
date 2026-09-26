@@ -22,6 +22,7 @@ from pathlib import Path
 
 import streamlit as st
 
+from app import auth
 from app.components import run_states
 from solit2.engines.fds import fleet
 from solit2.engines.fds import runner as runner_mod
@@ -244,6 +245,7 @@ def _queue_panel(state_dir: Path, infos: list[fleet.RunInfo]) -> None:
 
 @st.fragment(run_every=POLL)
 def _live_panel(state_dir: Path, roots: tuple[Path, ...]) -> None:
+    auth.guard_fragment()
     infos = fleet.list_runs(roots=roots, state_dir=state_dir)
     summary = fleet.summarise(infos, state_dir=state_dir)
     _counts(summary)

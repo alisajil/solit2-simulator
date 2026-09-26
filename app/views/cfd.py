@@ -17,7 +17,7 @@ from pathlib import Path
 import plotly.graph_objects as go
 import streamlit as st
 
-from app import palette, plot_theme, state
+from app import auth, palette, plot_theme, state
 from app.components import twin_canvas
 from app.views.fire_test import ensure_trace
 from app.views.result import ensure_result
@@ -297,6 +297,7 @@ def _live_statistics(run_dir: Path, trace: RunTrace) -> None:
     these read whole files rather than their last line and there is no reason
     to make the progress figures wait on that.
     """
+    auth.guard_fragment()
     hrr = fds_runner.series(run_dir, "_hrr.csv", HRR_COLUMNS)
     devc = fds_runner.series(run_dir, "_devc.csv", DEVC_COLUMNS)
     charts = [("cfd_live_hrr", heat_release_chart(hrr, trace)),
@@ -315,6 +316,7 @@ def _live_statistics(run_dir: Path, trace: RunTrace) -> None:
 
 @st.fragment(run_every=POLL)
 def _live_progress(run_dir: Path) -> None:
+    auth.guard_fragment()
     status = fds_runner.status(run_dir)
     live = fds_runner.live(run_dir)
     st.progress(min(status["progress"], 1.0),
