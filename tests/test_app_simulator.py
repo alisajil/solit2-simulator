@@ -247,3 +247,48 @@ def test_the_cfd_panel_reads_a_run_of_this_design(monkeypatch, tmp_path):
     assert '<span class="chip unset">running</span>' in _text(at)
     progress = at.get("progress")
     assert progress and progress[0].proto.value == 10   # 0.1 of T_END, on a 0-100 scale
+
+
+def test_opening_the_wizard_from_the_simulator_records_that_design_once(monkeypatch, tmp_path):
+    """The wizard's Result step must record the design exactly once, even though
+    the simulator cached it with record=False. This test verifies that opening
+    the wizard from the simulator via the sidebar button records the design."""
+    import json
+    history_path = tmp_path / "h.jsonl"
+    at = _app(monkeypatch, tmp_path)
+    assert not at.exception
+    # History file should not exist yet (simulator never records)
+    assert not history_path.exists()
+    # Get the design SHA before opening wizard
+    design_sha = at.session_state["result"].meta["design_sha"]
+    # Click "Open the wizard" button
+    at.sidebar.button(key="sim_open_wizard").click().run()
+    assert not at.exception
+    # Now history file should exist with exactly one line
+    assert history_path.exists()
+    lines = history_path.read_text().splitlines()
+    assert len(lines) == 1, f"Expected 1 history line, got {len(lines)}"
+    # The recorded design_sha should match
+    row = json.loads(lines[0])
+    assert row["design_sha"] == design_sha
+
+
+def test_revisiting_the_result_step_does_not_record_twice(monkeypatch, tmp_path):
+    """After opening the wizard from the simulator and recording the design,
+    a second run of the Result step should not record it again."""
+    import json
+    history_path = tmp_path / "h.jsonl"
+    at = _app(monkeypatch, tmp_path)
+    design_sha = at.session_state["result"].meta["design_sha"]
+    # Open wizard and record
+    at.sidebar.button(key="sim_open_wizard").click().run()
+    assert not at.exception
+    assert len(history_path.read_text().splitlines()) == 1
+    # Trigger another run of the Result step (still on result step)
+    at.run()
+    assert not at.exception
+    # History should still have exactly one line for this design
+    lines = history_path.read_text().splitlines()
+    assert len(lines) == 1, f"Expected 1 history line after re-run, got {len(lines)}"
+    row = json.loads(lines[0])
+    assert row["design_sha"] == design_sha
