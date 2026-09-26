@@ -3,7 +3,15 @@ optional seeded design), without the stepper so buttons are addressed by key onl
 import pytest
 from streamlit.testing.v1 import AppTest
 
+from app.accounts import store
+
 EXAMPLE_DESIGN = "examples/designs/road-tunnel-twin-bore.json"
+
+
+@pytest.fixture(autouse=True)
+def _account_store_per_test(tmp_path_factory, monkeypatch):
+    """Every test gets its own empty account store; no test touches data/accounts.db."""
+    monkeypatch.setenv(store.DATA_DIR_ENV, str(tmp_path_factory.mktemp("accounts")))
 
 
 def view_script(view: str, seed_design: bool) -> str:
