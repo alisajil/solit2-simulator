@@ -1,8 +1,6 @@
 """Run every clause against a spec and say how far from compliant the test is."""
 from __future__ import annotations
 
-import hashlib
-import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -14,9 +12,7 @@ from solit2.compliance.spec import load_spec
 from solit2.compliance.verdict import Finding, Headline, Verdict, headline
 from solit2.engines.reduced import envelope
 from solit2.reports import test_plan
-from solit2.schema.presets import load_calibration
-
-CALIBRATION_HASH_CHARS = 12
+from solit2.schema.presets import CALIBRATION_HASH_CHARS, calibration_hash
 
 
 @dataclass(frozen=True)
@@ -56,13 +52,7 @@ def run(spec_path: str | Path) -> ComplianceReport:
                   protocol_text={cls: test_plan.render(d, results[cls])
                                  for cls, d in loaded.tests.items()})
     findings = tuple(evaluate(r, ctx, loaded.spec.deviations) for r in rules)
-    # Hash the SAME calibration content the Tier 1 runs above actually used
-    # (`load_calibration` is process-cached; see `presets.reload_calibration`), not a
-    # fresh read of calibration.json off disk. Those two could otherwise disagree: a
-    # calibration file edited after this process started, without a reload, would still
-    # hash as "used" here while every run above kept the stale cached constants.
-    calibration = json.dumps(load_calibration(), sort_keys=True).encode()
     provenance = {f"design_sha.{cls}": res.meta["design_sha"] for cls, res in results.items()}
     provenance["design_sha.installation"] = installation_result.meta["design_sha"]
-    provenance["calibration"] = hashlib.sha256(calibration).hexdigest()[:CALIBRATION_HASH_CHARS]
+    provenance["calibration"] = calibration_hash()
     return ComplianceReport(loaded.spec.name, loaded.path, findings, headline(findings), provenance)

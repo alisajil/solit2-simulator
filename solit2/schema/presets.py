@@ -5,6 +5,7 @@ preset supplies everything else.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 from collections.abc import Callable
 from copy import deepcopy
@@ -65,6 +66,21 @@ def load_calibration() -> dict:
     from a fitting loop) to pick up the change.
     """
     return json.loads((PRESET_DIR / "calibration.json").read_text())
+
+
+# The provenance hash of a calibration is the first 12 hex digits of SHA-256,
+# long enough to tell two fits apart and short enough to read in a report.
+CALIBRATION_HASH_CHARS = 12
+
+
+def calibration_hash() -> str:
+    """The calibration the engine is actually using, fingerprinted.
+
+    Hashes `load_calibration()` -- the process-cached content every Tier 1 run
+    reads -- rather than a fresh read of the file, so the hash can never name a
+    calibration the runs did not use (see `reload_calibration`)."""
+    text = json.dumps(load_calibration(), sort_keys=True).encode()
+    return hashlib.sha256(text).hexdigest()[:CALIBRATION_HASH_CHARS]
 
 
 # Every module that caches something computed FROM calibration -- even only
