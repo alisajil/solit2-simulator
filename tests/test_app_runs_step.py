@@ -18,7 +18,7 @@ def _app(monkeypatch, tmp_path, roots=None) -> AppTest:
     else:
         monkeypatch.setenv("SOLIT2_RUN_ROOTS", ":".join(str(r) for r in roots))
     at = AppTest.from_file(APP, default_timeout=180)
-    at.session_state["manager_view"] = True
+    at.session_state["view"] = "runs"
     at.run()
     return at
 
@@ -34,19 +34,19 @@ def _write_deck(run_dir, chid="c1", title="A synthetic run"):
 
 # --- reaching the manager page ------------------------------------------------
 
-def test_the_header_button_switches_to_the_manager_and_back(monkeypatch, tmp_path):
+def test_the_nav_switches_to_the_manager_and_back_to_the_wizard(monkeypatch, tmp_path):
     monkeypatch.delenv("SOLIT2_RUN_ROOTS", raising=False)
     at = AppTest.from_file(APP, default_timeout=180)
     at.run()
     assert not at.exception
-    assert at.button(key="manager_toggle").label == "CFD runs"
+    assert at.button(key="nav_runs")
 
-    at.button(key="manager_toggle").click().run()
+    at.button(key="nav_runs").click().run()
     assert not at.exception
     assert any("CFD runs" in h.value for h in at.header)
-    assert at.button(key="manager_toggle").label == "← Back to design"
+    assert at.session_state["view"] == "runs"
 
-    at.button(key="manager_toggle").click().run()
+    at.button(key="nav_wizard").click().run()
     assert not at.exception
     # "step" is never written to session_state until the user actually
     # navigates (see app/state.py's get_step default) -- a fresh load that
@@ -57,11 +57,12 @@ def test_the_header_button_switches_to_the_manager_and_back(monkeypatch, tmp_pat
 def test_switching_to_the_manager_keeps_the_current_wizard_step(monkeypatch, tmp_path):
     monkeypatch.delenv("SOLIT2_RUN_ROOTS", raising=False)
     at = AppTest.from_file(APP, default_timeout=180)
+    at.session_state["view"] = "wizard"
     at.run()
     at.button(key="build_design").click().run()          # -> step 2
     assert at.session_state["step"] == 2
-    at.button(key="manager_toggle").click().run()
-    at.button(key="manager_toggle").click().run()
+    at.button(key="nav_runs").click().run()
+    at.button(key="nav_wizard").click().run()
     assert at.session_state["step"] == 2
 
 

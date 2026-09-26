@@ -11,11 +11,12 @@ def _app(monkeypatch, tmp_path) -> AppTest:
     monkeypatch.setattr(history, "DEFAULT_PATH", tmp_path / "h.jsonl")
     monkeypatch.setattr(cfd, "RUNS_DIR", tmp_path / "runs")
     at = AppTest.from_file(APP, default_timeout=180)
+    at.session_state["view"] = "wizard"
     at.run()
     return at
 
 
-def test_landing_is_the_design_step_with_later_steps_locked(monkeypatch, tmp_path):
+def test_the_wizard_opens_on_the_design_step_with_later_steps_locked(monkeypatch, tmp_path):
     at = _app(monkeypatch, tmp_path)
     assert not at.exception
     assert at.session_state.get("step", 1) == 1

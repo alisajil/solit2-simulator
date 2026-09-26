@@ -4,27 +4,18 @@ from __future__ import annotations
 import streamlit as st
 
 from app import state, theme
-from app.components import stepper
-from app.views import cfd, compliance, design, fire_test, reports, result, runs
+from app.components import nav, stepper
+from app.views import cfd, compliance, design, fire_test, reports, result, runs, simulator
 
 st.set_page_config(page_title="SOLIT2 Simulator", layout="wide",
-                   initial_sidebar_state="collapsed")
+                   initial_sidebar_state="expanded")
 theme.inject()
 
-VIEWS = {1: design.render, 2: result.render, 3: fire_test.render,
-         4: cfd.render, 5: compliance.render, 6: reports.render}
+STEP_VIEWS = {1: design.render, 2: result.render, 3: fire_test.render,
+              4: cfd.render, 5: compliance.render, 6: reports.render}
 
-_, toggle_col = st.columns([6, 1])
-with toggle_col:
-    manager = state.in_manager_view()
-    if st.button("← Back to design" if manager else "CFD runs",
-                key="manager_toggle", width="stretch"):
-        state.set_manager_view(not manager)
-        st.rerun()
 
-if state.in_manager_view():
-    runs.render()
-else:
+def _wizard() -> None:
     stepper.render_header()
     step = state.get_step()
     if step > state.STEP_MIN and state.get_design() is None:
@@ -33,5 +24,11 @@ else:
             state.set_step(state.STEP_MIN)
             st.rerun()
     else:
-        VIEWS[step]()
+        STEP_VIEWS[step]()
     stepper.render_footer()
+
+
+SCREENS = {"simulator": simulator.render, "wizard": _wizard, "runs": runs.render}
+
+nav.render()
+SCREENS[state.get_view()]()

@@ -17,6 +17,7 @@ def test_the_step_shows_the_headline_and_the_blockers(monkeypatch):
     monkeypatch.setattr(compliance, "SPEC_ROOTS", (FIXTURE_DIR,))
     at = AppTest.from_file(APP, default_timeout=180)
     at.session_state["step"] = 5
+    at.session_state["view"] = "wizard"
     at.session_state["design"] = object()  # the gate only checks that a design exists
     at.run()
     text = " ".join(m.value for m in at.markdown)
