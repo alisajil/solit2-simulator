@@ -16,7 +16,8 @@ from solit2.engines.reduced.criteria import (BREATHING_HEIGHT_M, FLAME_CONTACT_F
                                              WOOD_PILOTED_IGNITION_KWM2,
                                              thermocouple_heights_m)
 from solit2.engines.reduced.geometry import (NozzlePosition, SectionGeometry,
-                                             nozzle_positions, section_geometry)
+                                             fire_lateral_m, nozzle_positions,
+                                             section_geometry)
 from solit2.engines.reduced.state import (FireState, MistEffect, RunTrace, StationSample,
                                           StepRecord)
 from solit2.engines.reduced.thermal import ThermalField
@@ -111,7 +112,7 @@ def _build_scene(design: Design, section: str, velocity_ms: float) -> _Scene:
     tunnel = design.tunnel.model_copy(update={"section": section})
     scoped = design.model_copy(update={"tunnel": tunnel})
     geom = section_geometry(scoped)
-    fire_y = scoped.fire.lane_centre_offset_from_wall_m - geom.road_width_m / 2.0
+    fire_y = fire_lateral_m(scoped, geom)
     fire_top = scoped.fire.footprint.top_height_m
     fire_base = scoped.fire.footprint.base_height_m
     return _Scene(
@@ -177,9 +178,10 @@ def _mist_water_ratio(mist: MistEffect, q_conv_kw: float, air_kgs: float) -> flo
 
     Recovered from `MistEffect.chi_cool` rather than modelled again, so the
     water reported as humidity is exactly the water charged for as cooling.
-    `chi_cool` is capped by calibration's `chi_cool_max`, so where that cap
-    binds this UNDER-states the evaporated mass -- an under-report of humidity,
-    never an over-report.
+    `chi_cool` is self-limiting rather than clipped -- it approaches 1 as the
+    spray overwhelms the fire and never exceeds it -- so this tracks the
+    cooling it is derived from instead of flattening wherever a cap used to
+    bind.
     """
     if q_conv_kw <= 0 or air_kgs <= 0:
         return 0.0
@@ -347,7 +349,20 @@ def run_once(design: Design, section: str, velocity_ms: float) -> RunTrace:
     for _ in range(total_steps):
         state = fire_mod.step(scene.model, state, DT_S, mist)
         q_conv = fire_mod.convective_kw(scene.model, state.hrr_mw)
-        vent = ventilation.evaluate(scene.geom, velocity_ms, q_conv)
+        # Backlayering and the critical velocity are driven by buoyancy, so by
+        # the convective heat that actually reaches the gas. The mist takes its
+        # share first. `thermal.field` already applies exactly this factor to
+        # the ceiling excess; ventilation was reading the uncooled figure, so
+        # the same heat drove the plume twice and the critical velocity came
+        # out as if the system were off. On reference case c4 that predicted
+        # 30 m of backlayering at 2.25 m/s where the test reported none.
+        # `mist` here is the previous step's, the same one-step lag
+        # `fire_mod.step` above already runs on.
+        q_conv_gas = q_conv * (1.0 - mist.chi_cool)
+        # The smoke that turns upstream is cooled a second time by the spray it
+        # has to pass under; see `mist.backlayer_heat_kw`.
+        vent = ventilation.evaluate(scene.geom, velocity_ms, q_conv_gas,
+                                    mist_mod.backlayer_heat_kw(q_conv, mist.chi_cool))
         _detect(scene, events, state.hrr_mw, state.t_s)
         flow_fraction = _flow_fraction(scene.design.zones, events, state.t_s)
 

@@ -316,15 +316,25 @@ class Design(Frozen):
     criteria: dict = Field(default_factory=dict)
 
     @classmethod
-    def load(cls, path: str | Path) -> "Design":
-        raw = json.loads(Path(path).read_text())
+    def from_dict(cls, raw: dict) -> "Design":
+        """Preset-merge every block that names a `preset` key, then validate.
+
+        `raw` is not mutated -- a merged copy is built and validated; the
+        caller's dict is untouched, consistent with this schema's frozen-model
+        discipline everywhere else.
+        """
+        merged = dict(raw)
         for block, kind in (("tunnel", "tunnel"), ("fire", "fire"),
                             ("nozzles", "nozzle"), ("hydraulics", "hydraulics")):
-            name = raw.get(block, {}).get("preset")
+            name = merged.get(block, {}).get("preset")
             if name is None:
                 raise ValueError(f"design block {block!r} must name a preset")
-            raw[block] = deep_merge(load_preset(kind, name), raw[block])
-        return cls.model_validate(raw)
+            merged[block] = deep_merge(load_preset(kind, name), merged[block])
+        return cls.model_validate(merged)
+
+    @classmethod
+    def load(cls, path: str | Path) -> "Design":
+        return cls.from_dict(json.loads(Path(path).read_text()))
 
     @property
     def heads_per_zone(self) -> int:

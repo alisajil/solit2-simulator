@@ -1,0 +1,76 @@
+{
+  "meta": {
+    "name": "og-cand-a",
+    "notes": "CANDIDATE, not the baseline. Derived from og-dbr-rev0 by the CLAUDE.md optimisation loop (23 runs, one parameter group per iteration). Changes and the physical reason for each: (1) nozzle pressure 50 -> 40 bar. Flow scales as sqrt(P) and pump power as Q*dP, so this is the cheapest water and power available; 40 bar keeps 5.5 bar of margin over the NFPA 750 / tender floor of 34.5 bar rather than sitting on it. (2) heads per zone 25 -> 18 (1.67 m longitudinal step on two staggered rows, was 1.2 m). Below 18 the score's water component saturates at its clip and only suppression margin erodes, so 18 is the interior optimum, not a bound. (3) mounting height 5.5 -> 6.0 m above carriageway: 0.5 m clear of the 5.5 m vehicle envelope and 1.6 m below the crown. In this engine a higher head discharges above the smoke layer interface instead of inside it, so less of the fine mode evaporates in transit. Section length stays 30 m (Annex 7 5.2.8 wants at least 3x the 10 m mock-up). Sections simultaneous stays 3 (mandated by HPWM-TECHNICAL SPEC_R2 section 6). RESULT vs baseline: score 7.82 -> 8.81, flow 2174 -> 1400 lpm (-36%), pump power 373 -> 187 kW (-50%), cost index 1.000 -> 0.966, peak HRR 14.2 -> 16.1 MW against the 50 MW limit. CAVEAT: seven of the nine Annex 7 criteria are still unset, so nothing in the model penalises reduced coverage except the HRR margin. The reduced head count and the 1.53 mm/min density need test or CFD evidence before they are proposed. The 'higher mounting is better' behaviour is this engine's smoke-layer evaporation model and is unvalidated for this nozzle."
+  },
+  "tunnel": {
+    "preset": "twin_bore_11m",
+    "section": "bored",
+    "internal_diameter_m": 11.0,
+    "deck_below_centre_m": 2.125,
+    "length_m": 4240.0,
+    "gradient_pct": 0.0,
+    "ambient_temp_c": 33.0,
+    "ambient_rh_pct": 75.0
+  },
+  "fire": {
+    "preset": "hgv_150mw"
+  },
+  "nozzles": {
+    "preset": "single_mode_fine_example",
+    "k_factor_lpm_bar05": 4.1,
+    "pressure_bar": 40.0,
+    "modes": [
+      {
+        "id": "fine",
+        "fraction": 1.0,
+        "smd_um": 100.0,
+        "cone_half_angle_deg": 45.0,
+        "launch_velocity_ms": 15.0
+      }
+    ],
+    "mounting": {
+      "height_above_carriageway_m": 6.0,
+      "row_lateral_offsets_m": [
+        -2.75,
+        2.75
+      ]
+    }
+  },
+  "zones": {
+    "section_length_m": 30.0,
+    "sections_simultaneous": 3,
+    "heads_per_zone": 18,
+    "activation_delay_s": 60.0,
+    "pump_ramp_s": 30.0,
+    "duration_min": 60.0
+  },
+  "ventilation": {
+    "mode": "longitudinal",
+    "velocity_range_ms": [
+      3.88,
+      5.08
+    ]
+  },
+  "detection": {
+    "type": "linear_heat",
+    "threshold_c": 60.0,
+    "sensor_spacing_m": 25.0
+  },
+  "hydraulics": {
+    "preset": "example",
+    "pump_efficiency": 0.68,
+    "motor_efficiency": 0.93,
+    "loop_factor": 0.25,
+    "main_dn_mm": 150.0,
+    "zone_header_dn_mm": 65.0
+  },
+  "constraints": {
+    "note": "Site and procurement limits. NOT from SOLIT2 and not acceptance criteria."
+  },
+  "ahj": {
+    "note": "Only one acceptance limit is set, because only one is stated by an authority. HPWM-TECHNICAL SPEC_R2 section 6 requires a 150 MW minimum design fire load reduced to <= 50 MW. Every other Annex 7 criterion stays null and is reported 'unset': the tender defers tenability to 'SOLIT2 or NFPA 502 test protocols' without naming numbers, and Annex 7 7.1 leaves those to the authority having jurisdiction. Do not fill them from a vendor's test report -- see INDEPENDENCE.md rule 2.",
+    "tvs_design_fire_mw": 50.0
+  },
+  "criteria": {}
+}

@@ -1,0 +1,18 @@
+{
+  "preset": "single_mode_fine_example",
+  "note": "ILLUSTRATION ONLY, not a default and not an endorsement. A single-fluid, single-mode high-pressure head: fine mist only, no deliberate coarse/ballistic fraction. Same hydraulic and droplet-vs-pressure basis as `bimodal_example` (K-factor, design pressure, SMD-vs-pressure table) with the coarse mode removed, so the two presets isolate the effect of the coarse fraction on its own -- everything else about the head is unchanged. Replace with the measured performance of the head actually being assessed.",
+  "k_factor_lpm_bar05": 4.1,
+  "pressure_bar": 50.0,
+  "smd_table": {"34.5": 118.0, "45": 107.0, "50": 102.0, "60": 95.0},
+  "modes": [
+    {"id": "fine", "fraction": 1.0, "cone_half_angle_deg": 45.0, "launch_velocity_ms": 15.0}
+  ],
+  "mounting": {
+    "type": "ceiling_rows",
+    "rows": 2,
+    "row_lateral_offsets_m": [-2.5, 2.5],
+    "height_above_carriageway_m": 5.75,
+    "pitch_m": 2.4,
+    "tilt_deg": 0.0
+  }
+}

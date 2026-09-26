@@ -1,0 +1,76 @@
+{
+  "meta": {
+    "name": "og-ds01-rev00-cd-lit",
+    "notes": "REV00 as drawn, literature C_d 0.78/0.74. Nozzle data from Mistelix DS-01 Rev 1 (MTX-WMS-NOZ-DS-001, 2026-09-21), at its 65 bar design point. THE SHEET STATES NOTHING IS MEASURED: K, D32, cone angle and velocity are all ESTIMATED, and it says plainly that 'Nothing in this document constitutes a validated or certified product rating.' The single measured datum in the whole project is a drilled test hole, 16.2 L/min at 100 bar. Measured values are to come from TEST-001/002/003/018.\n\nNOT MODELLED: the sheet's intended installation is WALL-MOUNTED at 4.6 m, 35 degrees below horizontal (Table 5-1). This design keeps the ceiling-row mounting because the schema has one tilt scalar shared by every row, so two walls tilting inward cannot be expressed. What this run varies is the nozzle's hydraulics and spray, not its installation geometry.\n\nACTIVATION: zones.activation_delay_s set to 180 s after detection (was 60 s, inherited from the Rev 0 file). SOLIT2's own published tests started water 108-171 s after this model's linear heat detector trips on the same fires: Annex 2 places activation at 420 s (c4), 240 s (c5) and about 175 s (c6) after ignition. The detector times are modelled, not measured. 180 s is slightly slower than all three, so it does not flatter the design. Annex 7 5.2.8 requires activation delayed relative to detection, and 3.2 requires the real tunnel to detect and activate at least as fast as the test did; replace this with the project's own LHDS alarm and pump-start time when L&T supplies it."
+  },
+  "tunnel": {
+    "preset": "twin_bore_11m",
+    "section": "bored",
+    "internal_diameter_m": 11.0,
+    "deck_below_centre_m": 2.125,
+    "length_m": 4240.0,
+    "gradient_pct": 0.0,
+    "ambient_temp_c": 33.0,
+    "ambient_rh_pct": 75.0
+  },
+  "fire": {
+    "preset": "hgv_150mw"
+  },
+  "nozzles": {
+    "preset": "single_mode_fine_example",
+    "k_factor_lpm_bar05": 6.085,
+    "pressure_bar": 65.0,
+    "modes": [
+      {
+        "id": "fine",
+        "fraction": 1.0,
+        "smd_um": 61.0,
+        "cone_half_angle_deg": 45.0,
+        "launch_velocity_ms": 113.0
+      }
+    ],
+    "mounting": {
+      "height_above_carriageway_m": 5.5,
+      "row_lateral_offsets_m": [
+        -2.75,
+        2.75
+      ]
+    }
+  },
+  "zones": {
+    "section_length_m": 30.0,
+    "sections_simultaneous": 3,
+    "heads_per_zone": 25,
+    "activation_delay_s": 180.0,
+    "pump_ramp_s": 30.0,
+    "duration_min": 60.0
+  },
+  "ventilation": {
+    "mode": "longitudinal",
+    "velocity_range_ms": [
+      3.88,
+      5.08
+    ]
+  },
+  "detection": {
+    "type": "linear_heat",
+    "threshold_c": 60.0,
+    "sensor_spacing_m": 25.0
+  },
+  "hydraulics": {
+    "preset": "example",
+    "pump_efficiency": 0.68,
+    "motor_efficiency": 0.93,
+    "loop_factor": 0.25,
+    "main_dn_mm": 150.0,
+    "zone_header_dn_mm": 65.0
+  },
+  "constraints": {
+    "note": "Site and procurement limits. NOT from SOLIT2 and not acceptance criteria."
+  },
+  "ahj": {
+    "note": "Only one acceptance limit is set, because only one is stated by an authority. HPWM-TECHNICAL SPEC_R2 section 6 requires a 150 MW minimum design fire load reduced to <= 50 MW. Every other Annex 7 criterion stays null and is reported 'unset': the tender defers tenability to 'SOLIT2 or NFPA 502 test protocols' without naming numbers, and Annex 7 7.1 leaves those to the authority having jurisdiction. Do not fill them from a vendor's test report -- see INDEPENDENCE.md rule 2.",
+    "tvs_design_fire_mw": 50.0
+  },
+  "criteria": {}
+}

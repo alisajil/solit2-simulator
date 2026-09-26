@@ -7,8 +7,9 @@ first-order response.
 
 Class B follows Babrauskas' pool-fire law per pool, with a ventilation factor for
 the tunnel wind. The mist first reduces the burning rate, then extinguishes the
-pools one at a time once the water flux on the fuel is high enough for long
-enough, which is the behaviour reported in SOLIT2 Annex 2.
+pools one at a time once either the water flux on the fuel or the heat the
+spray takes from the flame is high enough for long enough, which is the
+behaviour reported in SOLIT2 Annex 2.
 """
 from __future__ import annotations
 
@@ -27,6 +28,21 @@ RADIATIVE_FRACTION_CLASS_B = 0.30
 # Babrauskas diesel: infinite-diameter mass burning rate and extinction coefficient.
 DIESEL_MDOT_INF_KGM2S = 0.035
 DIESEL_KBETA_PER_M = 1.7
+# Gas-phase extinction of a pool flame. A flame goes out when the heat taken
+# from it holds it below its critical flame temperature; FDS's extinction model
+# uses the same idea with a default of 1427 C (FDS Technical Reference Guide,
+# combustion chapter). The adiabatic flame temperature is stoichiometric
+# n-heptane in air, the Class B surrogate the FDS deck burns (Turns, An
+# Introduction to Combustion, Table B.1). The share of its heat release a flame
+# can lose and still stay above the critical temperature is then
+# (T_ad - T_cft) / (T_ad - T_0), about 0.29.
+CRITICAL_FLAME_TEMPERATURE_K = 1700.0
+HEPTANE_ADIABATIC_FLAME_TEMPERATURE_K = 2274.0
+AMBIENT_TEMPERATURE_K = 293.0
+FLAME_EXTINCTION_HEAT_FRACTION = (
+    (HEPTANE_ADIABATIC_FLAME_TEMPERATURE_K - CRITICAL_FLAME_TEMPERATURE_K)
+    / (HEPTANE_ADIABATIC_FLAME_TEMPERATURE_K - AMBIENT_TEMPERATURE_K)
+)
 
 
 def _cal(section: str, key: str):
@@ -133,7 +149,8 @@ def step(model: FireModel, state: FireState, dt_s: float, mist: MistEffect) -> F
     else:
         free_kw = _free_burn_class_b_kw(model, state, t)
         wetting = mist.w_fuel_mm_min * mist.f_cov >= model.pool_extinction_flux_mm_min
-        wet = state.wet_time_s + dt_s if wetting else 0.0
+        extinguishing = wetting or _flame_cooled_out(mist)
+        wet = state.wet_time_s + dt_s if extinguishing else 0.0
         pools = state.pools_remaining
         if wet >= model.pool_extinction_time_s and pools > 0:
             pools -= 1
@@ -147,6 +164,39 @@ def step(model: FireModel, state: FireState, dt_s: float, mist: MistEffect) -> F
     return FireState(t_s=t, hrr_mw=hrr_kw / 1000.0, hrr_free_mw=free_kw / 1000.0,
                      energy_released_mj=energy, suppression=suppression,
                      pools_remaining=pools, wet_time_s=wet)
+
+
+def flame_heat_extracted_fraction(mist: MistEffect) -> float:
+    """Share of a pool fire's heat release taken up by the evaporating spray.
+
+    `chi_cool` is the share of the CONVECTIVE heat the spray removes; the
+    convective heat is `1 - RADIATIVE_FRACTION_CLASS_B` of the whole.
+    """
+    return mist.chi_cool * (1.0 - RADIATIVE_FRACTION_CLASS_B)
+
+
+def _flame_cooled_out(mist: MistEffect) -> bool:
+    """Is the spray taking enough heat from a pool flame to put it out.
+
+    The pool branch used to have one way out, water landing on the fuel: at
+    least `pool_extinction_flux_mm_min` on it for `pool_extinction_time_s`. A
+    fine mist evaporates in the flame and plume long before it reaches a pool,
+    so on reference case c6 barely 0.005 mm/min landed and the 60 MW pools
+    could never go out -- yet Annex 2 section 6.3 reports that "After a few
+    minutes the fire was extinguished pool by pool", and re-ignition afterwards
+    "ensures that the fire was extinguished by the FFFS and not by a lack of
+    fuel". A liquid pool is put out in the gas phase, by flame cooling, which is
+    the mechanism this adds alongside wetting.
+
+    AN UPPER BOUND, and stated as one: `chi_cool` counts heat the spray takes
+    anywhere in the fire's gas, and this compares all of it with what the FLAME
+    can lose. Water evaporating in the plume above the flame cools gas the flame
+    has already finished with, so this puts a pool out as early as it could go
+    out, and later only if much of the evaporation happens above the flame.
+    Nothing resolves that split in a reduced-order model; the FDS tier, whose
+    extinction model applies this criterion cell by cell, does.
+    """
+    return flame_heat_extracted_fraction(mist) >= FLAME_EXTINCTION_HEAT_FRACTION
 
 
 def radiative_fraction(model: FireModel) -> float:

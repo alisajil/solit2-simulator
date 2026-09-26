@@ -76,10 +76,41 @@ def max_ceiling_excess_k(hrr_kw: float, q_conv_kw: float, u_ms: float,
     return min(excess * coefficient, cap)
 
 
-def longitudinal_decay(x_m: float, height_m: float) -> float:
-    """Fraction of the maximum ceiling excess remaining `x_m` downstream."""
+def longitudinal_decay(x_m: float, height_m: float,
+                       backlayer_m: float | None = None) -> float:
+    """Fraction of the maximum ceiling excess remaining at `x_m` from the fire.
+
+    Downstream this is the Ingason, Li & Lonnermark two-term decay, which is
+    what that correlation describes.
+
+    Upstream it is not. A forced-ventilated tunnel carries its hot gas
+    downstream, and hot gas reaches upstream only as far as the backlayer.
+    Applying the downstream decay to `abs(x_m)` made the model symmetric about
+    the fire, which is the single defect behind four of the anchor misses: on
+    reference case c4 it read 41 C both 15 m upstream and 15 m downstream where
+    the test measured 22 C and 75 C. One magnitude cannot satisfy both, so the
+    calibration fit crushed the whole ceiling excess to 0.30 of the published
+    correlation to keep the upstream figure down, and took the ceiling
+    temperature (3x low), D15 and D100 with it.
+
+    With `backlayer_m` given, the upstream side decays to ambient at the
+    backlayer tip and is ambient beyond it. The taper is
+    `(1 - |x| / backlayer_m)` on top of the downstream shape: continuous with
+    it at the fire, zero at the tip. That taper is OUR ENGINEERING CHOICE --
+    the correlations give a backlayering LENGTH and no profile within it --
+    and it is bounded by two things that are not choices, the value at the
+    fire and the reach of the layer.
+
+    Without `backlayer_m` the old symmetric behaviour is kept, so a caller
+    that has no ventilation state still gets a defined answer.
+    """
     ratio = abs(x_m) / height_m
-    return DECAY_A1 * math.exp(-DECAY_B1 * ratio) + DECAY_A2 * math.exp(-DECAY_B2 * ratio)
+    downstream = DECAY_A1 * math.exp(-DECAY_B1 * ratio) + DECAY_A2 * math.exp(-DECAY_B2 * ratio)
+    if x_m >= 0.0 or backlayer_m is None:
+        return downstream
+    if backlayer_m <= 0.0 or abs(x_m) >= backlayer_m:
+        return 0.0
+    return downstream * (1.0 - abs(x_m) / backlayer_m)
 
 
 def stratification_factor(u_ms: float, height_m: float, ceiling_excess_k: float) -> float:
@@ -124,9 +155,12 @@ class ThermalField:
     radiative_fraction: float
     flame_centroid_z_m: float
     flame_tip_x_m: float
+    # How far hot gas reaches UPSTREAM. Beyond it the upstream side is ambient.
+    backlayer_m: float = 0.0
 
     def ceiling_temp_c(self, x_m: float) -> float:
-        return self.ambient_c + self.ceiling_excess_k * longitudinal_decay(x_m, self.height_m)
+        return self.ambient_c + self.ceiling_excess_k * longitudinal_decay(
+            x_m, self.height_m, self.backlayer_m)
 
     def gas_temp_profile_c(self, x_m: float,
                            heights_m: tuple[float, ...]) -> tuple[float, ...]:
@@ -136,7 +170,7 @@ class ThermalField:
         cross-section of 5 or 7 thermocouples costs one decay evaluation and n
         blends rather than n of each.
         """
-        excess = self.ceiling_excess_k * longitudinal_decay(x_m, self.height_m)
+        excess = self.ceiling_excess_k * longitudinal_decay(x_m, self.height_m, self.backlayer_m)
         # strat_factor is defined AT breathing height (Newman), so anchor the blend there
         # rather than at the floor: exactly strat_factor at BREATHING_HEIGHT_M, rising
         # linearly to 1.0 at the crown, flat at strat_factor below breathing height. A
@@ -218,5 +252,6 @@ def field(geom: SectionGeometry, fire_model: FireModel, fire_state: FireState,
     tip = c_f * max(flame - flame_clearance_m, 0.0)  # flame that cannot rise is deflected downstream
     return ThermalField(ceiling_excess_k=excess, strat_factor=strat, ambient_c=ambient_c,
                         height_m=geom.crown_height_m, hrr_kw=hrr_kw,
+                        backlayer_m=vent_state.backlayer_m,
                         radiative_fraction=radiative_fraction(fire_model),
                         flame_centroid_z_m=centroid, flame_tip_x_m=tip)

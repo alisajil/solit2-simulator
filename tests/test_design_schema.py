@@ -1,4 +1,6 @@
 import json
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 from solit2.schema.design import AHJ, Design, Nozzles
@@ -195,3 +197,25 @@ def test_the_solit2_test_tunnel_preset_loads(tmp_path):
     assert d.tunnel.section == "test"
     assert d.ventilation.velocity_range_ms == (1.5, 3.0)
     assert "5.2.7" in d.tunnel.note
+
+
+def test_from_dict_merges_presets_exactly_like_load(tmp_path):
+    """from_dict and load must produce an identical Design from identical
+    input, since load becomes a thin wrapper over from_dict."""
+    raw = json.loads(Path("examples/designs/road-tunnel-twin-bore-single-mode.json").read_text())
+    from_dict_design = Design.from_dict(raw)
+    from_load_design = Design.load("examples/designs/road-tunnel-twin-bore-single-mode.json")
+    assert from_dict_design == from_load_design
+
+
+def test_from_dict_rejects_an_unknown_preset_kind_the_same_way_load_does():
+    raw = {"meta": {"name": "x"}, "tunnel": {"preset": "does_not_exist"},
+           "fire": {"preset": "hgv_150mw"}, "nozzles": {"preset": "solit2_reference"},
+           "zones": {"section_length_m": 30.0, "sections_simultaneous": 1,
+                     "manual_activation_s": 60.0, "activation_delay_s": 0.0,
+                     "pump_ramp_s": 30.0, "duration_min": 30.0},
+           "ventilation": {"mode": "longitudinal", "velocity_ms": 2.0},
+           "detection": {"type": "linear_heat", "threshold_c": 60.0, "sensor_spacing_m": 25.0},
+           "hydraulics": {"preset": "template"}}
+    with pytest.raises(FileNotFoundError):
+        Design.from_dict(raw)

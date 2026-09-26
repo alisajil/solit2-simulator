@@ -1,0 +1,46 @@
+{
+  "meta": {
+    "name": "road-tunnel-twin-bore-single-mode",
+    "notes": "ILLUSTRATION ONLY. Identical to road-tunnel-twin-bore.json except the nozzle: single-mode fine mist only, no coarse/ballistic fraction. Same tunnel (11 m twin bore), same 150 MW Class A fire, same three-zone (30 m x 3 = 90 m) bracketing, same 3.88-5.08 m/s ventilation band, same site constraints. Isolates what the coarse mode contributes: compare this design's result against road-tunnel-twin-bore.json's to see the effect of removing it, holding everything else fixed."
+  },
+  "tunnel": {
+    "preset": "twin_bore_11m",
+    "tube": "LHS",
+    "section": "bored"
+  },
+  "fire": {
+    "preset": "hgv_150mw"
+  },
+  "nozzles": {
+    "preset": "single_mode_fine_example"
+  },
+  "zones": {
+    "section_length_m": 30.0,
+    "sections_simultaneous": 3,
+    "activation_delay_s": 60.0,
+    "pump_ramp_s": 30.0,
+    "duration_min": 60.0
+  },
+  "ventilation": {
+    "mode": "longitudinal",
+    "velocity_range_ms": [
+      3.88,
+      5.08
+    ]
+  },
+  "detection": {
+    "type": "linear_heat",
+    "threshold_c": 60.0,
+    "sensor_spacing_m": 25.0
+  },
+  "hydraulics": {
+    "preset": "example"
+  },
+  "constraints": {
+    "note": "Site and procurement limits this example project imposes. NOT from SOLIT2 and not acceptance criteria: the feeder capacity available at this portal, and the discharge density the installed pump power leaves headroom for. They are judged separately from the Annex 7 criteria and a breach is not a SOLIT2 failure. The density figure is an illustration of a site declaring its own limit, not a recommended one: exceeding it costs the design score points and nothing more, and leaving it out means no limit applies at any density.",
+    "max_pump_power_kw": 650.0,
+    "max_application_density_mm_min": 4.0
+  },
+  "ahj": {},
+  "criteria": {}
+}

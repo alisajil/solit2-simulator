@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 
@@ -71,3 +72,421 @@ def test_history_subcommand_lists_the_leaderboard(tmp_path):
     proc = _run(["history", "--history", str(hist), "--top", "5"])
     assert proc.returncode == 0, proc.stderr
     assert "road-tunnel-twin-bore" in proc.stdout
+
+
+def test_report_test_plan_emits_markdown_with_inputs_and_outcomes():
+    proc = _run(["report", "test-plan", "examples/designs/road-tunnel-twin-bore.json"])
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.startswith("# Fire test protocol")
+    assert "road-tunnel-twin-bore" in proc.stdout
+    assert "## 13. Predicted outcomes" in proc.stdout
+
+
+def test_report_test_plan_writes_the_out_file(tmp_path):
+    out = tmp_path / "plan.md"
+    proc = _run(["report", "test-plan", "examples/designs/road-tunnel-twin-bore.json",
+                 "--out", str(out)])
+    assert proc.returncode == 0, proc.stderr
+    assert out.read_text() == proc.stdout
+
+
+def test_report_test_plan_bad_field_exits_two_with_a_named_error(tmp_path):
+    raw = json.loads(open("examples/designs/road-tunnel-twin-bore.json").read())
+    raw["nozzles"]["pressure_bar"] = 12.0
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps(raw))
+    proc = _run(["report", "test-plan", str(bad)])
+    assert proc.returncode == 2
+    err = json.loads(proc.stderr)
+    assert "pressure_bar" in err["error"]
+
+
+def test_report_correlation_puts_both_runs_side_by_side(tmp_path):
+    test_out = tmp_path / "test.json"
+    site_out = tmp_path / "site.json"
+    _run(["run", "examples/designs/solit2-test-protocol.json", "--no-history",
+          "--out", str(test_out)])
+    _run(["run", "examples/designs/road-tunnel-twin-bore.json", "--no-history",
+          "--out", str(site_out)])
+    proc = _run(["report", "correlation", "--test", str(test_out), "--site", str(site_out)])
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.startswith("# Correlation")
+    assert "solit2-test-protocol" in proc.stdout
+    assert "road-tunnel-twin-bore" in proc.stdout
+
+
+def test_report_correlation_missing_file_exits_two():
+    proc = _run(["report", "correlation", "--test", "does/not/exist.json",
+                 "--site", "examples/designs/road-tunnel-twin-bore.json"])
+    assert proc.returncode == 2
+    err = json.loads(proc.stderr)
+    assert err["fix"]
+
+
+def test_fds_deck_writes_a_namelist(tmp_path):
+    out = tmp_path / "case.fds"
+    proc = _run(["fds-deck", "examples/designs/road-tunnel-twin-bore.json", "--out", str(out)])
+    assert proc.returncode == 0, proc.stderr
+    text = out.read_text()
+    assert text.startswith("&HEAD")
+    assert "&TAIL /" in text
+
+
+def test_fds_deck_honours_the_dx_override(tmp_path):
+    # Both must succeed: two refused sizes both print nothing, and nothing
+    # equals nothing -- which is how this test once passed with neither deck.
+    coarse = _run(["fds-deck", "examples/designs/road-tunnel-twin-bore.json", "--dx", "0.75"])
+    fine = _run(["fds-deck", "examples/designs/road-tunnel-twin-bore.json", "--dx", "0.25"])
+    assert coarse.returncode == 0, coarse.stderr
+    assert fine.returncode == 0, fine.stderr
+    assert coarse.stdout != fine.stdout
+
+
+def test_fds_deck_on_a_bad_design_exits_two(tmp_path):
+    raw = json.loads(open("examples/designs/road-tunnel-twin-bore.json").read())
+    raw["nozzles"]["pressure_bar"] = 12.0
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps(raw))
+    proc = _run(["fds-deck", str(bad)])
+    assert proc.returncode == 2
+    assert json.loads(proc.stderr)["fix"]
+
+
+def test_fds_status_reports_a_missing_run(tmp_path):
+    proc = _run(["fds-status", str(tmp_path / "nope")])
+    assert proc.returncode == 0, proc.stderr
+    assert "failed" in proc.stdout
+
+
+def test_fds_exec_wires_the_run_dir_and_t_end_through(tmp_path, monkeypatch):
+    from solit2 import cli
+    from solit2.engines.fds import exec_run as fds_exec
+
+    captured = {}
+
+    def fake_run_foreground(run_dir, t_end_s=None):
+        captured["run_dir"] = run_dir
+        captured["t_end_s"] = t_end_s
+        return 0
+
+    monkeypatch.setattr(fds_exec, "run_foreground", fake_run_foreground)
+    run_dir = tmp_path / "run"
+    assert cli.main(["fds-exec", str(run_dir), "--t-end", "300"]) == cli.EXIT_OK
+    assert captured["run_dir"] == run_dir
+    assert captured["t_end_s"] == 300.0
+
+
+def test_fds_exec_exits_engine_code_when_fds_did_not_complete(tmp_path, monkeypatch, capsys):
+    from solit2 import cli
+    from solit2.engines.fds import exec_run as fds_exec
+
+    monkeypatch.setattr(fds_exec, "run_foreground", lambda run_dir, t_end_s=None: 1)
+    run_dir = tmp_path / "run"
+    assert cli.main(["fds-exec", str(run_dir)]) == cli.EXIT_ENGINE
+    err = json.loads(capsys.readouterr().err)
+    assert str(run_dir) in err["error"]
+    assert err["fix"]
+
+
+def test_fds_exec_reports_a_setup_failure_as_a_named_error(tmp_path, monkeypatch, capsys):
+    from solit2 import cli
+    from solit2.engines.fds import exec_run as fds_exec
+
+    def fake_run_foreground(run_dir, t_end_s=None):
+        raise RuntimeError("the fds binary is not on PATH and SOLIT2_FDS_BIN is not set")
+
+    monkeypatch.setattr(fds_exec, "run_foreground", fake_run_foreground)
+    run_dir = tmp_path / "run"
+    assert cli.main(["fds-exec", str(run_dir)]) == cli.EXIT_ENGINE
+    err = json.loads(capsys.readouterr().err)
+    assert "fds binary" in err["error"]
+    assert err["fix"]
+
+
+def test_fds_exec_refuses_without_a_binary_end_to_end(tmp_path):
+    # No FDS/mpiexec on this machine by design -- the real preflight check,
+    # unmocked, must be what fails, exactly like `run --engine fds` already
+    # does.
+    proc = _run(["fds-exec", str(tmp_path / "run")])
+    assert proc.returncode == 3
+    err = json.loads(proc.stderr)
+    assert err["fix"]
+
+
+def test_run_with_engine_fds_refuses_without_a_binary(tmp_path):
+    # no FDS on this machine: the pre-flight must say so plainly, not crash
+    proc = _run(["run", "examples/designs/road-tunnel-twin-bore.json", "--engine", "fds", "--no-history"])
+    assert proc.returncode == 3
+    err = json.loads(proc.stderr)
+    assert "fds" in err["error"]
+    assert err["fix"]
+
+
+def test_run_with_engine_fds_completes_end_to_end(tmp_path, monkeypatch, capsys):
+    """The promised happy path: generate, launch, poll, read.
+
+    There is no FDS binary on this machine by design, so the launch and the
+    status polling are stubbed -- the status stub reports `running` once and
+    then `done`, so the CLI's poll loop is actually entered and left -- and the
+    reader is pointed at the committed device fixture.
+    """
+    import shutil
+    from pathlib import Path
+
+    from solit2 import cli
+    from solit2.engines.fds import runner as fds_runner
+    from solit2.engines.reduced.envelope import _design_sha
+    from solit2.schema.design import Design
+
+    design_path = "designs/og-dbr-rev0.json"
+    chid = _design_sha(Design.load(design_path))
+    fixtures = Path("tests/fixtures/fds")
+    states = [{"state": "running", "progress": 0.0, "detail": ""},
+              {"state": "done", "progress": 1.0, "detail": ""}]
+
+    def fake_run(deck_path, out_dir):
+        shutil.copy(fixtures / "sample_devc.csv", Path(out_dir) / f"{chid}_devc.csv")
+        shutil.copy(fixtures / "sample_hrr.csv", Path(out_dir) / f"{chid}_hrr.csv")
+        shutil.copy(fixtures / "sample_ctrl.csv", Path(out_dir) / f"{chid}_ctrl.csv")
+        return Path(out_dir).name
+
+    monkeypatch.setattr(fds_runner, "preflight", lambda: [])
+    monkeypatch.setattr(fds_runner, "run", fake_run)
+    monkeypatch.setattr(fds_runner, "status", lambda run_dir: states.pop(0) if states
+                        else {"state": "done", "progress": 1.0, "detail": ""})
+    monkeypatch.setattr(cli, "FDS_POLL_S", 0.0)
+
+    hist = tmp_path / "history.jsonl"
+    assert cli.main(["run", design_path, "--engine", "fds", "--history", str(hist)]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["meta"]["engine"] == "fds"
+    assert "target_ignited" in payload["criteria"]
+    assert "total" in payload["score"]
+    assert (tmp_path / chid / "deck.fds").read_text().startswith("&HEAD")
+    assert json.loads(hist.read_text().splitlines()[0])["design_name"] == "og-dbr-rev0"
+
+
+def test_fds_deck_minutes_shortens_the_run_not_the_design():
+    # zones.duration_min sizes the water tank and the cost index; --minutes
+    # must shorten only the simulated window.
+    full = _run(["fds-deck", "designs/og-cand-a.json"])
+    short = _run(["fds-deck", "designs/og-cand-a.json", "--minutes", "20"])
+    assert full.returncode == 0 and short.returncode == 0, short.stderr
+    assert "T_END=3600.0" in full.stdout
+    assert "T_END=1200.0" in short.stdout
+    # everything except the T_END line is identical
+    a = [ln for ln in full.stdout.splitlines() if not ln.startswith("&TIME")]
+    b = [ln for ln in short.stdout.splitlines() if not ln.startswith("&TIME")]
+    assert a == b
+
+
+def test_fds_calibrate_e_writes_decks_and_reports_what_did_not_finish(tmp_path):
+    out = tmp_path / "ecal"
+    proc = _run(["fds-calibrate-e", "--anchor", "c4", "c5", "--e", "0.1", "0.2", "0.4", "0.8",
+                "--dx", "0.6", "--out", str(out), "--report"])
+    assert proc.returncode == 0, proc.stderr
+    assert len(list(out.rglob("deck.fds"))) == 8
+    assert (out / "report.md").exists() and (out / "report.json").exists()
+    payload = json.loads((out / "report.json").read_text())
+    assert payload["dx_m"] == 0.6
+    assert len(payload["points"]) == 8
+    assert all(not p["included"] for p in payload["points"]), "nothing was actually run"
+    assert payload["fit"]["best_e"] is None
+
+
+def test_fds_calibrate_e_on_an_unknown_anchor_exits_two(tmp_path):
+    proc = _run(["fds-calibrate-e", "--anchor", "not-a-real-anchor", "--e", "0.4",
+                "--dx", "0.6", "--out", str(tmp_path / "ecal")])
+    assert proc.returncode == 2
+    err = json.loads(proc.stderr)
+    assert err["fix"]
+
+
+def test_fds_calibrate_e_run_refuses_without_a_binary(tmp_path):
+    proc = _run(["fds-calibrate-e", "--anchor", "c4", "--e", "0.4", "--dx", "0.6",
+                "--out", str(tmp_path / "ecal"), "--run"])
+    assert proc.returncode == 3
+    err = json.loads(proc.stderr)
+    assert "fds" in err["error"]
+
+
+def test_fds_grid_study_writes_three_decks_and_reports_what_is_missing(tmp_path):
+    out = tmp_path / "grid"
+    proc = _run(["fds-grid-study", "designs/og-dbr-rev0.json", "--dx", "1.2", "0.75", "0.6",
+                "--t-end", "300", "--out", str(out), "--report"])
+    assert proc.returncode == 0, proc.stderr
+    assert len(list(out.rglob("deck.fds"))) == 3
+    payload = json.loads((out / "report.json").read_text())
+    assert payload["t_end_s"] == 300.0
+    assert len(payload["grids"]) == 3
+    assert all(not g["included"] for g in payload["grids"])
+    assert "needs exactly 3" in payload["error"]
+
+
+def test_fds_grid_study_on_a_bad_dx_exits_two(tmp_path):
+    proc = _run(["fds-grid-study", "designs/og-dbr-rev0.json", "--dx", "0.37", "0.6", "1.2",
+                "--t-end", "300", "--out", str(tmp_path / "grid")])
+    assert proc.returncode == 2
+    err = json.loads(proc.stderr)
+    assert "--dx" in err["field"]
+
+
+def test_fds_campaign_refuses_without_a_binary_before_writing_anything(tmp_path):
+    out = tmp_path / "campaign"
+    proc = _run(["fds-campaign", "designs/og-dbr-rev0.json", "--grid-dx", "1.2", "0.75", "0.6",
+                "--grid-t-end", "300", "--out", str(out)])
+    assert proc.returncode == 3
+    err = json.loads(proc.stderr)
+    assert "fds" in err["error"]
+    assert not out.exists(), "preflight must refuse before any deck is written"
+
+
+# --- fds-scheduler / fds-fleet / fds-adopt: never a real FDS process --------
+
+def test_fds_scheduler_once_with_an_empty_queue_writes_no_fds_call(tmp_path):
+    # An empty queue means _launch() -- the only place that would touch a
+    # real fds/mpiexec binary -- is never reached, so this is safe to run as
+    # a real subprocess with no fake binaries on PATH.
+    state_dir = tmp_path / "state"
+    proc = _run(["fds-scheduler", "--state-dir", str(state_dir), "--blocks", "0-9,10-19",
+                "--once"])
+    assert proc.returncode == 0, proc.stderr
+    assert not (state_dir / "scheduler.pid").exists(), "the pid file must be removed on exit"
+    assert json.loads((state_dir / "state.json").read_text()) == {"0-9": None, "10-19": None}
+
+
+def test_fds_scheduler_rejects_a_malformed_blocks_spec(tmp_path):
+    proc = _run(["fds-scheduler", "--state-dir", str(tmp_path), "--blocks", "not-a-range",
+                "--once"])
+    assert proc.returncode == 2
+    err = json.loads(proc.stderr)
+    assert "--blocks" in err["field"]
+
+
+def test_fds_scheduler_adopt_needs_both_flags_together(tmp_path):
+    proc = _run(["fds-scheduler", "--state-dir", str(tmp_path), "--adopt-state",
+                str(tmp_path / "s.json"), "--once"])
+    assert proc.returncode == 2
+    err = json.loads(proc.stderr)
+    assert "adopt-state" in err["error"] and "adopt-queue" in err["error"]
+
+
+def test_fds_scheduler_adopts_an_interim_states_state_and_queue(tmp_path):
+    interim_state = tmp_path / "interim_state.json"
+    interim_state.write_text(json.dumps({"0-9": "runs/a", "10-19": None}))
+    interim_queue = tmp_path / "interim_queue.txt"
+    interim_queue.write_text("runs/b\n")
+    state_dir = tmp_path / "state"
+    proc = _run(["fds-scheduler", "--state-dir", str(state_dir), "--blocks", "0-9,10-19",
+                "--adopt-state", str(interim_state), "--adopt-queue", str(interim_queue),
+                "--once"])
+    assert proc.returncode == 0, proc.stderr
+    assert "adopted state" in (state_dir / "scheduler.log").read_text()
+
+
+def test_fds_fleet_status_with_no_roots_says_so(tmp_path):
+    proc = _run(["fds-fleet", "status"], env={**os.environ, "SOLIT2_RUN_ROOTS": ""})
+    assert proc.returncode == 0, proc.stderr
+    assert "no run directories" in proc.stdout
+
+
+def test_fds_fleet_status_json_reports_an_empty_fleet(tmp_path):
+    proc = _run(["fds-fleet", "status", "--json"],
+               env={**os.environ, "SOLIT2_RUN_ROOTS": "", "SOLIT2_CFD_STATE_DIR": str(tmp_path)})
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["runs"] == []
+    assert payload["summary"]["cores_total"] == 30, "three 10-core blocks, by width not count"
+
+
+def test_fds_fleet_enqueue_and_status_round_trip(tmp_path):
+    tmp_path = tmp_path.resolve()   # enqueue() resolves; compare against the same form
+    state_dir = tmp_path / "state"
+    run_dir = tmp_path / "runs" / "x"
+    run_dir.mkdir(parents=True)
+    (run_dir / "deck.fds").write_text("&HEAD CHID='x' /\n&TAIL /\n")
+    proc = _run(["fds-fleet", "enqueue", str(run_dir)],
+               env={**os.environ, "SOLIT2_CFD_STATE_DIR": str(state_dir)})
+    assert proc.returncode == 0, proc.stderr
+    assert (state_dir / "queue.txt").read_text().strip() == str(run_dir)
+
+
+def test_fds_fleet_enqueue_refuses_a_directory_with_no_deck(tmp_path):
+    proc = _run(["fds-fleet", "enqueue", str(tmp_path / "empty")],
+               env={**os.environ, "SOLIT2_CFD_STATE_DIR": str(tmp_path / "state")})
+    assert proc.returncode == 2
+    err = json.loads(proc.stderr)
+    assert "deck.fds" in err["error"]
+
+
+def test_fds_fleet_dequeue_a_run_not_queued_exits_two(tmp_path):
+    proc = _run(["fds-fleet", "dequeue", str(tmp_path / "nope")],
+               env={**os.environ, "SOLIT2_CFD_STATE_DIR": str(tmp_path / "state")})
+    assert proc.returncode == 2
+    err = json.loads(proc.stderr)
+    assert "not in the queue" in err["error"]
+
+
+def test_fds_fleet_pause_on_a_run_with_no_deck_exits_three(tmp_path):
+    proc = _run(["fds-fleet", "pause", str(tmp_path / "nope")],
+               env={**os.environ, "SOLIT2_CFD_STATE_DIR": str(tmp_path / "state")})
+    assert proc.returncode == 3
+    err = json.loads(proc.stderr)
+    assert "CHID" in err["error"] or "no deck" in err["error"].lower()
+
+
+def test_fds_fleet_resume_without_restart_files_exits_two(tmp_path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    proc = _run(["fds-fleet", "resume", str(run_dir)],
+               env={**os.environ, "SOLIT2_CFD_STATE_DIR": str(tmp_path / "state")})
+    assert proc.returncode == 2
+    err = json.loads(proc.stderr)
+    assert "restart files" in err["error"]
+
+
+def test_fds_fleet_resume_with_live_process_exits_two(tmp_path):
+    from solit2.schema.design import Design
+    from solit2.engines.fds import scheduler as scheduler_mod
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "deck.fds").write_text("&HEAD CHID='x' /\n&TAIL /\n")
+    # Create a restart file so has_restart_files will pass
+    (run_dir / "x.restart").write_text("")
+    # Create a PID file pointing to a process that definitely exists (PID 1)
+    # This makes _launcher_alive() return True in the subprocess
+    (run_dir / "fds.pid").write_text("1\n")
+    design = Design.load("designs/og-dbr-rev0.json")
+    (run_dir / scheduler_mod.DESIGN_NAME).write_text(design.model_dump_json(by_alias=True))
+    proc = _run(["fds-fleet", "resume", str(run_dir)],
+               env={**os.environ, "SOLIT2_CFD_STATE_DIR": str(tmp_path / "state")})
+    assert proc.returncode == 2
+    err = json.loads(proc.stderr)
+    assert "live process" in err["error"]
+    assert err["field"] == "run_dir"
+
+
+def test_fds_adopt_writes_design_json(tmp_path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "deck.fds").write_text("&HEAD CHID='x' /\n&TAIL /\n")
+    proc = _run(["fds-adopt", str(run_dir), "--design", "designs/og-dbr-rev0.json"])
+    assert proc.returncode == 0, proc.stderr
+    assert (run_dir / "design.json").exists()
+
+
+def test_fds_adopt_needs_exactly_one_of_design_or_anchor(tmp_path):
+    proc = _run(["fds-adopt", str(tmp_path / "run")])
+    assert proc.returncode == 2
+    err = json.loads(proc.stderr)
+    assert "exactly one" in err["error"]
+
+
+def test_fds_adopt_refuses_a_run_dir_with_no_deck(tmp_path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    proc = _run(["fds-adopt", str(run_dir), "--anchor", "c4"])
+    assert proc.returncode == 2
+    err = json.loads(proc.stderr)
+    assert "deck.fds" in err["error"]

@@ -269,3 +269,36 @@ def test_a_tip_short_of_the_target_leaves_the_flux_below_the_contact_clamp(monke
 
     assert field.flame_tip_x_m < design.fire.target_x_m
     assert sim._target_flux_kwm2(scene, field, MistEffect.none()) < FLAME_CONTACT_FLUX_KWM2
+
+
+def test_a_declared_head_count_that_contradicts_the_layout_is_warned_about():
+    """`zones.heads_per_zone`, when set, silently overrides rows x pitch. The
+    baseline declares 25, which is exactly what its two rows derive, so the
+    design is self-consistent and nothing should be said. Change the row count
+    alone and the declared figure wins: flow, pump power and tank size go on
+    costing two rows while the spray pattern is drawn with three. Nothing in
+    the result revealed that until this warning."""
+    design = Design.load(BASELINE)
+    mount = design.nozzles.mounting
+    implied = round(design.zones.section_length_m / (mount.pitch_m / mount.rows))
+    agreeing = design.model_copy(deep=True)
+    object.__setattr__(agreeing.zones, "heads_per_zone", implied)
+    assert envelope._head_count_warnings(agreeing) == [], \
+        "a design that agrees with its own geometry; saying otherwise is noise"
+
+    three_rows = agreeing.model_copy(deep=True)
+    object.__setattr__(three_rows.nozzles.mounting, "rows", 3)
+    object.__setattr__(three_rows.nozzles.mounting, "row_lateral_offsets_m",
+                       (mount.row_lateral_offsets_m[0], 0.0, mount.row_lateral_offsets_m[-1]))
+    warned = envelope._head_count_warnings(three_rows)
+    assert len(warned) == 1
+    assert str(three_rows.zones.heads_per_zone) in warned[0], "say what was declared"
+    assert "3 row" in warned[0], "say what the layout implies"
+
+
+def test_no_head_count_warning_when_the_design_lets_the_layout_decide():
+    """A design that does not pin the count cannot contradict itself."""
+    design = Design.load(BASELINE)
+    free = design.model_copy(deep=True)
+    object.__setattr__(free.zones, "heads_per_zone", None)
+    assert envelope._head_count_warnings(free) == []

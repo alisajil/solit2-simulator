@@ -1,0 +1,14 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "solit2-streamlit",
+      "runtimeExecutable": "/bin/zsh",
+      "runtimeArgs": [
+        "-c",
+        "export PATH=\"$HOME/FDS/native/bin:$HOME/FDS/FDS6/smvbin:/opt/homebrew/bin:$PATH\"; exec uv run streamlit run app/streamlit_app.py --server.headless true"
+      ],
+      "port": 8501
+    }
+  ]
+}

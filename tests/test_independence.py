@@ -20,6 +20,7 @@ from solit2.schema.presets import EXAMPLE_PRESET_DIR, PRESET_DIR, load_preset
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 PACKAGE_DIR = REPO_ROOT / "solit2"
+APP_DIR = REPO_ROOT / "app"
 EXAMPLES_DIR = REPO_ROOT / "examples"
 EXAMPLE_DESIGN = "examples/designs/road-tunnel-twin-bore.json"
 
@@ -64,8 +65,35 @@ SKIP_DIRS = {"__pycache__", ".pytest_cache", ".ruff_cache"}
 
 
 def _package_files() -> list[Path]:
-    return sorted(p for p in PACKAGE_DIR.rglob("*")
+    # `app/` is scanned too: it is now the primary surface, and a vendor name reaching
+    # a screen is exactly what this rule exists to prevent.
+    return sorted(p for root in (PACKAGE_DIR, APP_DIR) for p in root.rglob("*")
                   if p.is_file() and not SKIP_DIRS & set(p.parts))
+
+
+def _wrapped_offences(relative: Path, text: str) -> list[str]:
+    """Banned terms that appear only once line breaks are flattened away."""
+    flat, source_index = [], []
+    for i, char in enumerate(text):
+        if char.isspace():
+            if flat and flat[-1] == " ":
+                continue
+            flat.append(" ")
+        else:
+            flat.append(char.lower())
+        source_index.append(i)
+    flattened = "".join(flat)
+    offences = []
+    for term in BANNED_TERMS:
+        start = flattened.find(term)
+        while start != -1:
+            first = source_index[start]
+            last = source_index[min(start + len(term) - 1, len(source_index) - 1)]
+            if "\n" in text[first:last + 1]:      # the line-by-line scan already has the rest
+                offences.append(f"{relative}:{text.count(chr(10), 0, first) + 1}: "
+                                f"{term!r} wrapped across a line break")
+            start = flattened.find(term, start + 1)
+    return offences
 
 
 def test_no_file_in_the_package_names_a_vendor_or_a_project():
@@ -91,6 +119,11 @@ def test_no_file_in_the_package_names_a_vendor_or_a_project():
                 if term in lowered:
                     offences.append(
                         f"{relative}:{number}: {term!r} in {line.strip()!r}")
+        # A name wrapped across a line break reads as the name to any human and
+        # was invisible to the line-by-line scan above: a project name sat in
+        # the FDS deck module for weeks, split as "the Orange" / "Gate baseline",
+        # while this test passed. Flattening runs of whitespace catches it.
+        offences += _wrapped_offences(relative, "\n".join(lines))
     assert not offences, (
         "vendor or project names must not ship inside the package; move the "
         "data to examples/ and neutralise the wording:\n  " + "\n  ".join(offences))
@@ -335,3 +368,28 @@ def test_a_declared_density_limit_costs_score_points_and_never_a_gate():
     assert declared.score["total"] < undeclared.score["total"], "it costs points"
     assert declared.score["gates_passed"] == undeclared.score["gates_passed"]
     assert declared.score["gates_failed"] == undeclared.score["gates_failed"]
+
+
+def test_the_scan_sees_a_name_wrapped_across_a_line_break():
+    """A guard on the guard, written from the leak it was found by.
+
+    A project name shipped inside the FDS deck module for weeks as a wrapped
+    docstring line -- "takes the Orange" / "Gate baseline from 92.4 m3" -- which
+    reads as the name to any human and matched nothing line by line.
+
+    It catches a term broken by the wrap itself. A term broken by a comment
+    marker or a quote on the next line ("the Orange" / "# Gate") is NOT caught:
+    flattening those away would start matching prose that is not a name.
+    """
+    wrapped = ('    a CFD run short would shrink the tank -- takes the Orange\n'
+               '    Gate baseline from 92.4 m3 to 30.8 m3 -- and break 5.2.8\n')
+    assert not any(term in line.lower() for line in wrapped.splitlines()
+                   for term in BANNED_TERMS), "the line-by-line scan cannot see it"
+    offences = _wrapped_offences(Path("fake.py"), wrapped)
+    assert offences and "orange gate" in offences[0] and "fake.py:1" in offences[0]
+
+
+def test_the_wrapped_scan_stays_quiet_on_clean_text():
+    assert _wrapped_offences(Path("x.py"), "a normal comment\nabout tunnels\n") == []
+    # and does not double-report what the line-by-line scan already catches
+    assert _wrapped_offences(Path("x.py"), "# the orange gate tunnel\n") == []

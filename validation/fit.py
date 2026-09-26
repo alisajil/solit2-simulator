@@ -36,7 +36,6 @@ CALIBRATION_PATH = PRESET_DIR / "calibration.json"
 FITTED_KEYS = (
     ("mist", "eta_max", 0.50, 0.98),
     ("mist", "w_ref_mm_min", 0.30, 8.00),
-    ("mist", "chi_cool_max", 0.10, 0.70),
     ("mist", "evaporation_k_ref_m2s", 1.0e-8, 1.0e-6),
     ("mist", "flank_reach_factor", 0.10, 2.00),
     ("mist", "flank_efficiency", 0.05, 1.00),

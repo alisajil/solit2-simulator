@@ -81,9 +81,18 @@ class VentilationState:
     backlayer_m: float
 
 
-def evaluate(geom: SectionGeometry, fan_velocity_ms: float, q_conv_kw: float) -> VentilationState:
+def evaluate(geom: SectionGeometry, fan_velocity_ms: float, q_conv_kw: float,
+             q_backlayer_kw: float | None = None) -> VentilationState:
+    """`q_conv_kw` is the plume's heat, which throttles the fans. `q_backlayer_kw`
+    is the heat the smoke still carries upstream -- lower than the plume's when
+    a spray stands in its path (`mist.backlayer_heat_kw`) -- and it alone sets
+    the critical velocity and the backlayer, which are two readings of one
+    question: can the smoke push upstream. Omitted, it is the plume's heat."""
+    q_back = q_conv_kw if q_backlayer_kw is None else q_backlayer_kw
+    if q_back < 0:
+        raise ValueError(f"backlayer heat must not be negative, got {q_back} kW")
     u_eff = throttled_velocity_ms(fan_velocity_ms, q_conv_kw, geom.free_area_m2)
     h = geom.crown_height_m
-    u_c = critical_velocity_ms(q_conv_kw, h) if q_conv_kw > 0 else 0.0
-    backlayer = backlayering_length_m(q_conv_kw, h, u_eff) if q_conv_kw > 0 else 0.0
+    u_c = critical_velocity_ms(q_back, h) if q_back > 0 else 0.0
+    backlayer = backlayering_length_m(q_back, h, u_eff) if q_back > 0 else 0.0
     return VentilationState(fan_velocity_ms, u_eff, u_c, backlayer)

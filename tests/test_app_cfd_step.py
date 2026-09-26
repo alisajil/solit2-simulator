@@ -1,0 +1,617 @@
+"""No FDS is assumed: the runner is stubbed at the module boundary."""
+import os
+from pathlib import Path
+
+from solit2 import history
+from solit2.engines.fds import reader as fds_reader
+from solit2.engines.fds import runner as fds_runner
+from solit2.engines.reduced import envelope
+from solit2.engines.reduced.envelope import _design_sha
+from solit2.schema.design import Design
+
+EXAMPLE = "examples/designs/road-tunnel-twin-bore.json"
+
+
+def _isolate(monkeypatch, tmp_path, problems):
+    from app.views import cfd
+    monkeypatch.setattr(history, "DEFAULT_PATH", tmp_path / "h.jsonl")
+    monkeypatch.setattr(cfd, "RUNS_DIR", tmp_path / "runs")
+    monkeypatch.setattr(fds_runner, "preflight", lambda: problems)
+    monkeypatch.setattr(fds_runner, "smokeview_binary", lambda: None)
+    return tmp_path / "runs" / _design_sha(Design.load(EXAMPLE))
+
+
+def _fake_run(run_dir: Path, log: str, t_end: float = 1200.0, pid: str | None = None) -> None:
+    run_dir.mkdir(parents=True)
+    (run_dir / "deck.fds").write_text(f"&HEAD CHID='x' /\n&TIME T_END={t_end} /\n")
+    (run_dir / "x.out").write_text(log)
+    # `run()` writes this for everything the app launches, and `stop()` needs it
+    # to know which processes are the run's own.
+    if pid is not None:
+        (run_dir / fds_runner.PID_NAME).write_text(pid)
+
+
+def test_without_fds_the_step_says_so_and_offers_no_start(run_view, monkeypatch, tmp_path):
+    _isolate(monkeypatch, tmp_path, ["the fds binary is not on PATH"])
+    at = run_view("cfd")
+    assert not at.exception
+    assert any("fds binary" in m.value for m in at.markdown)
+    assert all(b.key != "fds_start" for b in at.button)
+    assert not at.get("file_uploader")
+
+
+def test_with_fds_ready_the_start_button_names_the_default_window(run_view, monkeypatch, tmp_path):
+    _isolate(monkeypatch, tmp_path, [])
+    at = run_view("cfd")
+    assert at.radio(key="fds_minutes").value == "20 min"
+    assert at.button(key="fds_start").label == "Start FDS run (20 min)"
+
+
+def test_start_warns_when_a_pinning_scheduler_is_running(run_view, monkeypatch, tmp_path):
+    """Known limit, documented rather than fixed in this round: this step
+    launches unpinned, never through the scheduler's own queue -- worth
+    saying out loud only when there is a scheduler actually pinning OTHER
+    runs to reserved cores for this one to compete with."""
+    from app.views import cfd
+    _isolate(monkeypatch, tmp_path, [])
+    monkeypatch.setattr(cfd.fds_scheduler, "is_running", lambda state_dir: True)
+    at = run_view("cfd")
+    assert any("core-block scheduler" in c.value for c in at.caption)
+
+
+def test_start_says_nothing_about_pinning_with_no_scheduler_running(run_view, monkeypatch,
+                                                                    tmp_path):
+    from app.views import cfd
+    _isolate(monkeypatch, tmp_path, [])
+    monkeypatch.setattr(cfd.fds_scheduler, "is_running", lambda state_dir: False)
+    at = run_view("cfd")
+    assert not any("core-block scheduler" in c.value for c in at.caption)
+
+
+def test_start_writes_the_shortened_deck_and_launches(run_view, monkeypatch, tmp_path):
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    launched = []
+    monkeypatch.setattr(fds_runner, "run", lambda deck, out: launched.append((deck, out)) or out.name)
+    at = run_view("cfd")
+    at.radio(key="fds_minutes").set_value("5 min").run()
+    at.button(key="fds_start").click().run()
+    assert launched and launched[0][1] == run_dir
+    assert "T_END=300.0" in (run_dir / "deck.fds").read_text()
+
+
+def test_start_writes_design_json_beside_the_deck(run_view, monkeypatch, tmp_path):
+    """The run manager's resume path (runner.prepare_resume, via
+    fleet.resume/scheduler._launch) needs design.json beside deck.fds -- a
+    deck alone does not carry the design that generated it back out."""
+    from solit2.engines.fds.exec_run import DESIGN_NAME
+    from solit2.schema.design import Design
+
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    monkeypatch.setattr(fds_runner, "run", lambda deck, out: out.name)
+    at = run_view("cfd")
+    at.button(key="fds_start").click().run()
+    design_path = run_dir / DESIGN_NAME
+    assert design_path.exists()
+    assert Design.load(design_path) == Design.load(EXAMPLE)
+
+
+def test_a_running_run_shows_progress_and_hides_start(run_view, monkeypatch, tmp_path):
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    _fake_run(run_dir, "Time Step 10\n Total Time:  120.0 s\n")
+    at = run_view("cfd")
+    assert not at.exception
+    assert at.get("progress") and all(b.key != "fds_start" for b in at.button)
+    assert any("Preliminary" in c.value or "not written" in c.value
+               for c in list(at.info) + list(at.caption))
+
+
+def test_a_finished_run_reads_tier_two_and_correlates(run_view, monkeypatch, tmp_path):
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    _fake_run(run_dir, "Total Time: 1200.0 s\nSTOP: FDS completed successfully\n")
+    tier1 = envelope.run(Design.load(EXAMPLE))
+    monkeypatch.setattr(fds_reader, "read", lambda d, design, **kw: tier1)
+    at = run_view("cfd")
+    assert not at.exception
+    assert at.session_state["tier2_result"] is not None
+    assert any(m.value.startswith("# Correlation") for m in at.markdown)
+    assert at.button(key="open_smv").disabled
+    assert at.button(key="fds_start").label.startswith("Re-run FDS")
+
+
+def test_stamp_changes_when_a_slice_file_changes(tmp_path):
+    from app.views import cfd
+    (tmp_path / "a_1_1.sf").write_bytes(b"1")
+    before = cfd.stamp(tmp_path)
+    (tmp_path / "a_1_1.sf").write_bytes(b"12")
+    assert cfd.stamp(tmp_path) != before
+
+
+def test_a_failed_run_never_captions_its_field_as_complete(run_view, monkeypatch, tmp_path):
+    """A run that died mid-simulation must not describe its partial field as finished.
+
+    The canvas caption keys off the run's actual state, not merely "is it still
+    running", so `failed` gets its own wording rather than falling through to the
+    completed-run sentence.
+    """
+    import numpy as np
+
+    from app.views import cfd
+    from solit2.engines.fds.slices import Slice
+
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    _fake_run(run_dir, "Total Time: 300.0 s\n ERROR: Numerical instability\n")
+    partial = Slice("TEMPERATURE", "C", np.linspace(-10.0, 10.0, 4), np.linspace(0.0, 6.0, 3),
+                    np.array([0.0, 150.0, 300.0]), np.zeros((3, 3, 4)))
+    monkeypatch.setattr(cfd, "_load_slice", lambda *a, **kw: partial)
+    at = run_view("cfd")
+
+    assert not at.exception
+    captions = [c.value for c in at.caption]
+    assert any("did not finish" in c for c in captions), captions
+    assert not any(c.startswith("Preliminary") for c in captions), captions
+    assert not any("frames to t =" in c for c in captions), captions
+
+
+def test_a_failed_run_with_no_slice_says_the_run_died_not_that_the_field_is_absent(
+        run_view, monkeypatch, tmp_path):
+    """Absence of a slice after a crash is not the same claim as a run that simply has none."""
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    _fake_run(run_dir, "Total Time: 300.0 s\n ERROR: Numerical instability\n")
+    at = run_view("cfd")
+
+    assert not at.exception
+    notes = [i.value for i in at.info]
+    assert any("did not finish and never wrote" in n for n in notes), notes
+    assert not any("holds no" in n for n in notes), notes
+
+
+def test_an_unreadable_slice_is_reported_without_taking_the_step_down(
+        run_view, monkeypatch, tmp_path):
+    """A real run can hold meshes the reader cannot stitch; that must not crash the page."""
+    from app.views import cfd
+
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    _fake_run(run_dir, "Total Time: 1200.0 s\nSTOP: FDS completed successfully\n")
+
+    def unreadable(*a, **kw):
+        raise ValueError("meshes on the centreline do not share a z grid")
+
+    monkeypatch.setattr(cfd, "_load_slice", unreadable)
+    monkeypatch.setattr(fds_reader, "read", lambda d, design, **kw: envelope.run(Design.load(EXAMPLE)))
+    at = run_view("cfd")
+
+    assert not at.exception
+    assert any("could not be read" in w.value for w in at.warning)
+
+
+def test_a_shortened_tier_two_window_is_named_beside_the_correlation(
+        run_view, monkeypatch, tmp_path):
+    """A truncated FDS run is biased toward passing; the table must say the windows differ.
+
+    Peak and dose criteria (max_air_temp_c, max_fed, max_co_ppm, exposure duration) are
+    evaluated over whatever trace exists, so comparing a 20-minute Tier 2 against a
+    full-length Tier 1 without saying so overstates the agreement.
+    """
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    _fake_run(run_dir, "Total Time: 1200.0 s\nSTOP: FDS completed successfully\n", t_end=1200.0)
+    monkeypatch.setattr(fds_reader, "read", lambda d, design, **kw: envelope.run(Design.load(EXAMPLE)))
+    at = run_view("cfd")
+
+    assert not at.exception
+    warnings = [w.value for w in at.warning]
+    assert any("not comparable" in w and "1200" in w for w in warnings), warnings
+
+
+def test_a_full_length_window_carries_no_caveat(monkeypatch, tmp_path):
+    from app.views import cfd
+
+    design = Design.load(EXAMPLE)
+    run_dir = tmp_path / "full"
+    run_dir.mkdir()
+    full_s = design.zones.duration_min * 60.0
+    (run_dir / "deck.fds").write_text(f"&HEAD CHID='x' /\n&TIME T_END={full_s} /\n")
+    assert cfd.window_caveat(run_dir, design) is None
+
+
+def test_only_the_selected_field_is_built(run_view, monkeypatch, tmp_path):
+    """st.tabs runs every tab body on every rerun; each figure costs seconds and megabytes.
+
+    This step reruns every few seconds while a run is live, so building the two fields
+    nobody is looking at is most of the work it does.
+    """
+    from app.views import cfd
+
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    _fake_run(run_dir, "Total Time: 1200.0 s\nSTOP: FDS completed successfully\n", t_end=1200.0)
+    monkeypatch.setattr(fds_reader, "read", lambda d, design, **kw: envelope.run(Design.load(EXAMPLE)))
+
+    asked: list[str] = []
+
+    def record(run_dir_str, quantity, stamp_key):
+        asked.append(quantity)
+        return None
+
+    monkeypatch.setattr(cfd, "_load_slice", record)
+    at = run_view("cfd")
+
+    assert not at.exception
+    assert asked == ["TEMPERATURE"], asked
+
+
+def test_the_cfd_chart_opts_out_of_streamlits_theme(run_view, monkeypatch, tmp_path):
+    """Same bug class as the fire-test twin: Streamlit rewrites a sequential
+    colourscale's near-black stop to an accent colour unless the chart carries
+    theme=None, which would make a cold cell read as the hottest thing on screen."""
+    import numpy as np
+
+    from app.views import cfd
+    from solit2.engines.fds.slices import Slice
+
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    _fake_run(run_dir, "Total Time: 1200.0 s\nSTOP: FDS completed successfully\n", t_end=1200.0)
+    partial = Slice("TEMPERATURE", "C", np.linspace(-10.0, 10.0, 4), np.linspace(0.0, 6.0, 3),
+                    np.array([0.0, 600.0, 1200.0]), np.zeros((3, 3, 4)))
+    monkeypatch.setattr(cfd, "_load_slice", lambda *a, **kw: partial)
+    at = run_view("cfd")
+    chart = next(e for e in at.get("plotly_chart") if e.key == "cfd_TEMPERATURE")
+    assert chart.proto.theme == ""
+
+
+def _heatmap(chart) -> dict:
+    import json
+    return next(tr for tr in json.loads(chart.proto.spec)["data"] if tr.get("type") == "heatmap")
+
+
+def _z_values(heat: dict) -> list[float]:
+    """Plotly ships a numeric array as base64 binary, not a nested list."""
+    import base64
+
+    import numpy as np
+    z = heat["z"]
+    if isinstance(z, dict):
+        return list(np.frombuffer(base64.b64decode(z["bdata"]), dtype=z["dtype"]))
+    return [v for row in z for v in row]
+
+
+def _control(at, key: str):
+    """A segmented control: AppTest exposes it as a button group."""
+    return next(c for c in at.get("button_group") if c.key == key)
+
+
+def _free_dir(run_dir: Path) -> Path:
+    from solit2.engines.fds import deck
+    return run_dir.parent / deck.chid(Design.load(EXAMPLE), suppression=False)
+
+
+def test_the_free_burn_scenario_launches_its_own_deck_without_a_mist_system(run_view, monkeypatch, tmp_path):
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    launched = []
+    monkeypatch.setattr(fds_runner, "run", lambda deck, out: launched.append(out) or out.name)
+    at = run_view("cfd")
+    _control(at, "cfd_scenario").set_value("Free burn").run()
+    at.button(key="fds_start_free").click().run()
+    free = _free_dir(run_dir)
+    assert launched == [free] and free != run_dir
+    text = (free / "deck.fds").read_text()
+    assert "&PART" not in text and "PROP_ID=" not in text
+    assert "SURF_IDS='FIRE0'" in text, "same fire, no water"
+
+
+def test_the_free_burn_field_selector_offers_no_mist_field(run_view, monkeypatch, tmp_path):
+    from app.views import cfd
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    _fake_run(_free_dir(run_dir), "Total Time: 1200.0 s\nSTOP: FDS completed successfully\n")
+    monkeypatch.setattr(cfd, "_load_slice", lambda *a, **kw: None)
+    at = run_view("cfd")
+    _control(at, "cfd_scenario").set_value("Free burn").run()
+    assert not at.exception
+    fields = _control(at, "cfd_quantity")
+    assert "Mist" not in fields.options and "Temperature" in fields.options
+
+
+def test_with_both_runs_the_difference_field_is_offered_and_drawn(run_view, monkeypatch, tmp_path):
+    import numpy as np
+
+    from app.views import cfd
+    from solit2.engines.fds.slices import Slice
+
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    done = "Total Time: 1200.0 s\nSTOP: FDS completed successfully\n"
+    _fake_run(run_dir, done)
+    _fake_run(_free_dir(run_dir), done)
+    x, z, t = np.linspace(-10.0, 10.0, 4), np.linspace(0.0, 6.0, 3), np.array([0.0, 600.0, 1200.0])
+    mist = Slice("TEMPERATURE", "C", x, z, t, np.full((3, 3, 4), 100.0))
+    free = Slice("TEMPERATURE", "C", x, z, t, np.full((3, 3, 4), 400.0))
+    monkeypatch.setattr(cfd, "_load_slice", lambda d, q, k: mist if d == str(run_dir) else free)
+    monkeypatch.setattr(fds_reader, "read", lambda d, design, **kw: envelope.run(Design.load(EXAMPLE)))
+    at = run_view("cfd")
+    assert not at.exception
+    assert any(e.key == "cfd_TEMPERATURE" for e in at.get("plotly_chart"))
+    at.checkbox(key="cfd_compare").check().run()
+    chart = next(e for e in at.get("plotly_chart") if e.key == "cfd_diff_TEMPERATURE")
+    assert chart.proto.theme == ""
+    heat = _heatmap(chart)
+    assert _z_values(heat)[0] == -300.0, "mist minus free burn: cooler with mist reads negative"
+    assert heat["zmin"] == -heat["zmax"], "a difference field is centred on zero"
+
+
+def test_the_hrr_comparison_draws_every_curve_that_exists_and_no_placeholder(run_view, monkeypatch, tmp_path):
+    import json
+
+    from app.views import cfd
+    from solit2.engines.fds import deck
+
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    done = "Total Time: 1200.0 s\nSTOP: FDS completed successfully\n"
+    _fake_run(run_dir, done)
+    design = Design.load(EXAMPLE)
+    (run_dir / f"{deck.chid(design)}_hrr.csv").write_text(
+        "s,kW\nTime,HRR\n0.0,0.0\n600.0,20000.0\n1200.0,30000.0\n")
+    monkeypatch.setattr(cfd, "_load_slice", lambda *a, **kw: None)
+    monkeypatch.setattr(fds_reader, "read", lambda d, design, **kw: envelope.run(design))
+    at = run_view("cfd")
+    assert not at.exception
+    chart = next(e for e in at.get("plotly_chart") if e.key == "cfd_hrr")
+    names = [tr["name"] for tr in json.loads(chart.proto.spec)["data"]]
+    assert "Tier 2 · with mist" in names and "Tier 2 · free burn" not in names
+    assert "Tier 1 · with mist" in names and "Tier 1 · free burn" in names
+
+
+def test_a_finished_free_burn_feeds_the_tier_two_reader(run_view, monkeypatch, tmp_path):
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    done = "Total Time: 1200.0 s\nSTOP: FDS completed successfully\n"
+    _fake_run(run_dir, done)
+    _fake_run(_free_dir(run_dir), done)
+    seen = {}
+
+    def fake_read(d, design, **kw):
+        seen.update(kw)
+        return envelope.run(design)
+
+    monkeypatch.setattr(fds_reader, "read", fake_read)
+    at = run_view("cfd")
+    assert not at.exception
+    assert seen.get("free_burn_dir") == _free_dir(run_dir)
+
+
+def test_switching_to_the_free_burn_while_the_mist_field_is_selected_does_not_break(
+        run_view, monkeypatch, tmp_path):
+    """The Mist field exists only for the suppressed run. A viewer who selects it
+    and then switches scenario leaves a held widget value that is no longer an
+    option -- the widget-state trap this project has been bitten by before."""
+    from app.views import cfd
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    done = "Total Time: 1200.0 s\nSTOP: FDS completed successfully\n"
+    _fake_run(run_dir, done)
+    _fake_run(_free_dir(run_dir), done)
+    asked: list[str] = []
+
+    def record(run_dir_str, quantity, stamp_key):
+        asked.append(quantity)
+        return None
+
+    monkeypatch.setattr(cfd, "_load_slice", record)
+    monkeypatch.setattr(fds_reader, "read", lambda d, design, **kw: envelope.run(Design.load(EXAMPLE)))
+    at = run_view("cfd")
+    _control(at, "cfd_quantity").set_value("Mist").run()
+    assert not at.exception and asked[-1] == "FINE MPUV"
+    _control(at, "cfd_scenario").set_value("Free burn").run()
+    assert not at.exception, "a held field that the new scenario does not offer must not crash"
+    assert asked[-1] != "FINE MPUV", "a free burn has no particles to show"
+
+
+def test_a_running_run_shows_what_it_is_actually_doing(run_view, monkeypatch, tmp_path):
+    """A bare percentage says nothing about whether a run is worth waiting for.
+    Everything on the panel is polled from the run's own output."""
+    from app.views import cfd
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    _fake_run(run_dir, "Time Step 10\n Total Time:  120.0 s\n", t_end=1200.0)
+    monkeypatch.setattr(cfd.fds_runner, "live", lambda d, t_end_s=None: {
+        "time_step": 4321, "simulated_s": 120.0, "t_end_s": 1200.0,
+        "step_size_s": 0.042, "elapsed_s": 3900.0, "rate_s_per_s": 0.05,
+        "eta_s": 21600.0, "hrr_mw": 6.8, "detect_s": 168.0, "activate_s": 228.0})
+    at = run_view("cfd")
+    assert not at.exception
+    shown = {m.label: m.value for m in at.get("metric")}
+    assert shown["Simulated"] == "120 s"
+    assert shown["Running for"] == "1h 05m"
+    assert shown["Speed"] == "3.0 s/min", "simulated seconds per minute, not per second"
+    assert shown["Left, at this speed"] == "6h 00m"
+    assert shown["Heat release"] == "6.8 MW"
+    assert shown["Time step"] == "42 ms"
+    assert "detected 168 s" in shown["Mist"] and "discharging from 228 s" in shown["Mist"]
+
+
+def test_the_panel_says_unknown_rather_than_guessing(run_view, monkeypatch, tmp_path):
+    from app.views import cfd
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    _fake_run(run_dir, "Time Step 1\n", t_end=1200.0)
+    monkeypatch.setattr(cfd.fds_runner, "live", lambda d, t_end_s=None: {
+        "time_step": None, "simulated_s": None, "t_end_s": 1200.0, "step_size_s": None,
+        "elapsed_s": None, "rate_s_per_s": None, "eta_s": None, "hrr_mw": None,
+        "detect_s": None, "activate_s": None})
+    at = run_view("cfd")
+    assert not at.exception
+    shown = {m.label: m.value for m in at.get("metric")}
+    assert shown["Speed"] == "—" and shown["Left, at this speed"] == "—"
+    assert shown["Heat release"] == "—"
+    assert shown["Mist"] == "not yet triggered"
+
+
+def _trace_for(design_path=EXAMPLE):
+    from solit2.engines.reduced.sim import run_once
+    design = Design.load(design_path)
+    result = envelope.run(design)
+    return run_once(design, result.worst_case["section"], result.worst_case["velocity_ms"])
+
+
+def test_the_live_heat_release_chart_sets_tier_2_beside_tier_1():
+    """The comparison is the point of running Tier 2, and it is more use while
+    the run is going than after it."""
+    from app.views import cfd
+    trace = _trace_for()
+    hrr = {"t_s": [0.0, 10.0], "HRR": [0.0, 5000.0], "Q_PART": [0.0, -1200.0]}
+    fig = cfd.heat_release_chart(hrr, trace)
+    names = [t.name for t in fig.data]
+    assert "Tier 2 · live" in names
+    assert "Tier 1 · predicted" in names and "Tier 1 · free burn" in names
+    live = next(t for t in fig.data if t.name == "Tier 2 · live")
+    assert list(live.y) == [0.0, 5.0], "kilowatts from FDS, megawatts on the axis"
+    spray = next(t for t in fig.data if t.name == "into the spray")
+    assert list(spray.y) == [0.0, 1.2], "FDS signs droplet energy negative; the chart does not"
+
+
+def test_the_flux_chart_marks_the_threshold_the_verdict_turns_on():
+    from app.views import cfd
+    from solit2.engines.reduced.criteria import FLAME_CONTACT_FLUX_KWM2
+    fig = cfd.exposure_chart({"t_s": [0.0, 1.0], "TARGET_FLUX": [0.0, 12.0]})
+    assert [t.name for t in fig.data] == ["at the target"]
+    lines = [s for s in fig.layout.shapes if s.type == "line"]
+    assert lines and lines[0].y0 == FLAME_CONTACT_FLUX_KWM2
+
+
+def test_no_chart_is_drawn_from_output_that_does_not_exist_yet():
+    from app.views import cfd
+    trace = _trace_for()
+    assert cfd.heat_release_chart({}, trace) is None
+    assert cfd.temperature_chart({}) is None
+    assert cfd.exposure_chart({}) is None
+    # and a run carrying only some of the devices charts only those
+    partial = cfd.temperature_chart({"t_s": [0.0], "CEIL13": [40.0]})
+    assert [t.name for t in partial.data] == ["ceiling, over the load"]
+
+
+def test_a_running_run_draws_the_live_statistics(run_view, monkeypatch, tmp_path):
+    from app.views import cfd
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    _fake_run(run_dir, "Time Step 10\n Total Time:  120.0 s\n", t_end=1200.0)
+
+    def fake_series(d, suffix, columns, max_points=400):
+        if suffix == "_hrr.csv":
+            return {"t_s": [0.0, 60.0], "HRR": [0.0, 8000.0], "Q_PART": [0.0, -2000.0]}
+        return {"t_s": [0.0, 60.0], "CEIL13": [30.0, 190.0], "TARGET_FLUX": [0.0, 3.0]}
+
+    monkeypatch.setattr(cfd.fds_runner, "series", fake_series)
+    monkeypatch.setattr(cfd, "_load_slice", lambda *a, **kw: None)
+    at = run_view("cfd")
+    assert not at.exception
+    keys = {e.key for e in at.get("plotly_chart")}
+    assert {"cfd_live_hrr", "cfd_live_temp", "cfd_live_flux"} <= keys
+
+
+def test_a_finished_run_shows_no_live_statistics(run_view, monkeypatch, tmp_path):
+    from app.views import cfd
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    _fake_run(run_dir, "Total Time: 1200.0 s\nSTOP: FDS completed successfully\n")
+    monkeypatch.setattr(cfd, "_load_slice", lambda *a, **kw: None)
+    monkeypatch.setattr(fds_reader, "read", lambda d, design, **kw: envelope.run(Design.load(EXAMPLE)))
+    at = run_view("cfd")
+    assert not at.exception
+    keys = {e.key for e in at.get("plotly_chart")}
+    assert "cfd_live_hrr" not in keys, "live charts belong to a live run"
+
+
+def test_a_running_run_offers_a_pause_and_a_paused_one_offers_resume(run_view, monkeypatch, tmp_path):
+    from app.views import cfd
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    _fake_run(run_dir, "Time Step 10\n Total Time:  120.0 s\n", t_end=1200.0)
+    (run_dir / "deck.fds").write_text("&HEAD CHID='x' /\n&TIME T_END=1200.0 /\n")
+    monkeypatch.setattr(cfd, "_load_slice", lambda *a, **kw: None)
+    monkeypatch.setattr(cfd.fds_runner, "series", lambda *a, **kw: {})
+
+    at = run_view("cfd")
+    assert not at.exception
+    assert any(b.key == "fds_pause" for b in at.button), "a running run can be stopped"
+    assert all(b.key != "fds_resume" for b in at.button)
+
+    at.button(key="fds_pause").click().run()
+    assert not at.exception
+    assert fds_runner.is_paused(run_dir), "the stop file is what FDS watches for"
+
+    at = run_view("cfd")
+    assert not at.exception
+    assert any(b.key == "fds_resume" for b in at.button), "a paused run can be resumed"
+    assert all(b.key != "fds_pause" for b in at.button)
+    assert not any("did not finish" in e.value for e in at.error), \
+        "paused is not failed, and must not be reported as it"
+
+
+def test_resume_is_offered_disabled_when_there_is_nothing_to_resume_from(
+        run_view, monkeypatch, tmp_path):
+    from app.views import cfd
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    _fake_run(run_dir, "Total Time: 120.0 s\n", t_end=1200.0)
+    (run_dir / "deck.fds").write_text("&HEAD CHID='x' /\n&TIME T_END=1200.0 /\n")
+    (run_dir / "x.stop").write_text("")
+    monkeypatch.setattr(cfd, "_load_slice", lambda *a, **kw: None)
+    at = run_view("cfd")
+    assert not at.exception
+    assert at.button(key="fds_resume").disabled, "no restart files exist"
+    (run_dir / "x.restart").write_text("")
+    at = run_view("cfd")
+    assert not at.button(key="fds_resume").disabled
+
+
+def test_the_simulated_window_reaches_past_an_hour():
+    """A 20-minute window is most of a day's wall clock on this machine, so the
+    long options are named in hours rather than buried in minutes."""
+    from app.views import cfd
+    assert cfd.DURATIONS["1 hour"] == 60.0
+    assert cfd.DURATIONS["2 hours"] == 120.0
+    assert max(v for v in cfd.DURATIONS.values() if v is not None) >= 120.0
+    assert cfd.DURATIONS["Full (design duration)"] is None
+
+
+def test_a_stop_that_could_not_find_the_run_says_so_and_does_not_badge_it(
+        run_view, monkeypatch, tmp_path):
+    """A run launched outside the app writes no pid file, so there is nothing
+    to signal. The button must report that rather than leave a stopped badge
+    over ranks that are still going."""
+    from app.views import cfd
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    _fake_run(run_dir, "Time Step 10\n Total Time:  120.0 s\n", t_end=1200.0, pid=None)
+    monkeypatch.setattr(cfd, "_load_slice", lambda *a, **kw: None)
+    monkeypatch.setattr(cfd.fds_runner, "series", lambda *a, **kw: {})
+    at = run_view("cfd")
+    at.button(key="fds_stop").click().run()
+    assert not at.exception
+    assert any("Could not stop" in e.value for e in at.error)
+    assert not fds_runner.was_stopped(run_dir)
+
+
+def test_a_running_run_offers_both_a_pause_and_a_hard_stop(run_view, monkeypatch, tmp_path):
+    """Pausing needs FDS to reach another time step to notice. A wedged run
+    never does -- one sat unmoving for seven hours with every process alive --
+    so there has to be a way out that does not depend on it."""
+    from app.views import cfd
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    _fake_run(run_dir, "Time Step 10\n Total Time:  120.0 s\n", t_end=1200.0, pid="4242")
+    (run_dir / "deck.fds").write_text("&HEAD CHID='x' /\n&TIME T_END=1200.0 /\n")
+    monkeypatch.setattr(cfd, "_load_slice", lambda *a, **kw: None)
+    monkeypatch.setattr(cfd.fds_runner, "series", lambda *a, **kw: {})
+    # Alive, with the kill itself stubbed: the button's job is to ask, and
+    # stop()'s own tests cover what the asking does. getpgid matches pid --
+    # the real invariant `run()`'s start_new_session=True gives every launch
+    # -- so the new I3 pid/cwd check (runner._pid_matches_run_dir) passes;
+    # /proc does not exist on the machine these tests run on, so that check
+    # is getpgid-only here regardless (see test_fds_runner.py for the parts
+    # of it that need a synthetic /proc to exercise).
+    monkeypatch.setattr(cfd.fds_runner, "_pid_alive", lambda pid: True)
+    monkeypatch.setattr(os, "getpgid", lambda pid: pid)
+    monkeypatch.setattr(os, "killpg", lambda pgid, sig: None)
+    monkeypatch.setattr(cfd.fds_runner.time, "sleep", lambda s: None)
+    at = run_view("cfd")
+    keys = {b.key for b in at.button}
+    assert {"fds_pause", "fds_stop"} <= keys
+
+    at.button(key="fds_stop").click().run()
+    assert not at.exception
+    assert fds_runner.was_stopped(run_dir)
+
+    at = run_view("cfd")
+    assert not at.exception
+    assert any("Stopped" in e.value for e in at.info)
+    assert not any("did not finish" in e.value for e in at.error), \
+        "a run you stopped is not a run that failed"
+    assert any(b.key == "fds_resume" for b in at.button), "checkpoints are kept"
+    assert any(b.key == "fds_start" for b in at.button), "and it can be started over"

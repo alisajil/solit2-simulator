@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from solit2.schema.design import Design
 from solit2.engines.reduced.geometry import SectionGeometry, section_geometry, nozzle_positions
@@ -103,3 +105,56 @@ def test_box_hydraulic_diameter_is_unaffected():
     """Regression guard: the box branch is untouched by the circle-case fix."""
     geom = SectionGeometry("cut_cover", 9.0, 6.5, 58.5, "box")
     assert geom.hydraulic_diameter_m == pytest.approx(4 * 58.5 / (2 * (9.0 + 6.5)))
+
+
+def test_the_fuel_load_must_fit_inside_the_carriageway_not_merely_its_centreline():
+    """An offset under half the load's width puts its near face past the wall.
+
+    Nothing downstream would say so: the FDS deck snaps the obstruction into the
+    wall solid and burns a surface that is buried, which reads as a quietly weak
+    fire rather than as an error. Annex 7 5.2.3 asks for under 1.5 m of clearance
+    at the near FACE, so an offset in that range is the plausible misreading.
+    """
+    from solit2.engines.reduced.geometry import fire_lateral_m, section_geometry
+    from solit2.schema.design import Design
+    design = Design.load("designs/og-dbr-rev0.json")
+    geom = section_geometry(design)
+    half = design.fire.footprint.width_m / 2.0
+
+    def with_offset(offset: float):
+        fire = design.fire.model_copy(update={"lane_centre_offset_from_wall_m": offset})
+        return design.model_copy(update={"fire": fire})
+
+    # the design's own value is eccentric and fits
+    y = fire_lateral_m(design, geom)
+    assert y < 0.0 and y - half >= -geom.road_width_m / 2.0
+
+    for bad in (half - 0.2, 0.5):
+        with pytest.raises(ValueError, match="outside the"):
+            fire_lateral_m(with_offset(bad), geom)
+    # exactly against each wall is allowed: the load touches it but does not cross,
+    # and Annex 7 sets no minimum clearance, only a 1.5 m maximum
+    assert fire_lateral_m(with_offset(half), geom) == pytest.approx(
+        half - geom.road_width_m / 2.0)
+    assert fire_lateral_m(with_offset(geom.road_width_m - half), geom) == pytest.approx(
+        geom.road_width_m / 2.0 - half)
+
+
+def test_every_shipped_design_seats_its_fuel_load_inside_the_carriageway():
+    """A guard on the guard: the check above is only worth having if the designs
+    this repo ships actually pass it."""
+    from pathlib import Path
+
+    from solit2.compliance.spec import is_design_payload
+    from solit2.engines.reduced.geometry import fire_lateral_m, section_geometry
+    from solit2.schema.design import Design
+    paths = sorted(Path("examples/designs").glob("*.json")) + sorted(Path("designs").glob("*.json"))
+    assert len(paths) > 3
+    for path in paths:
+        raw = json.loads(path.read_text())
+        # Compliance specs and project rule files live beside the designs but are
+        # not designs; skip them by their own markers, never by catching an error.
+        if not is_design_payload(raw):
+            continue
+        design = Design.load(path)
+        fire_lateral_m(design, section_geometry(design))

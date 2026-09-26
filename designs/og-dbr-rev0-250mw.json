@@ -1,0 +1,76 @@
+{
+  "meta": {
+    "name": "og-dbr-rev0-250mw",
+    "notes": "The Rev 0 system, unchanged, against a 250 MW Class A design fire instead of the Annex 7 minimum of 150 MW. ONLY the fire block differs from og-dbr-rev0: same nozzle, same K and pressure, same 3 x 30 m zoning, same 75 heads and 2175 lpm, same ventilation and detection. The question this design asks is whether the sized system still holds a larger fire, so nothing about the system may move without making it a different question. See solit2/presets/fire_hgv_250mw.json for what the 250 MW load is and what about it is this project's extrapolation rather than the standard's."
+  },
+  "tunnel": {
+    "preset": "twin_bore_11m",
+    "section": "bored",
+    "internal_diameter_m": 11.0,
+    "deck_below_centre_m": 2.125,
+    "length_m": 4240.0,
+    "gradient_pct": 0.0,
+    "ambient_temp_c": 33.0,
+    "ambient_rh_pct": 75.0
+  },
+  "fire": {
+    "preset": "hgv_250mw"
+  },
+  "nozzles": {
+    "preset": "single_mode_fine_example",
+    "k_factor_lpm_bar05": 4.1,
+    "pressure_bar": 50.0,
+    "modes": [
+      {
+        "id": "fine",
+        "fraction": 1.0,
+        "smd_um": 100.0,
+        "cone_half_angle_deg": 45.0,
+        "launch_velocity_ms": 15.0
+      }
+    ],
+    "mounting": {
+      "height_above_carriageway_m": 5.5,
+      "row_lateral_offsets_m": [
+        -2.75,
+        2.75
+      ]
+    }
+  },
+  "zones": {
+    "section_length_m": 30.0,
+    "sections_simultaneous": 3,
+    "heads_per_zone": 25,
+    "activation_delay_s": 60.0,
+    "pump_ramp_s": 30.0,
+    "duration_min": 60.0
+  },
+  "ventilation": {
+    "mode": "longitudinal",
+    "velocity_range_ms": [
+      3.88,
+      5.08
+    ]
+  },
+  "detection": {
+    "type": "linear_heat",
+    "threshold_c": 60.0,
+    "sensor_spacing_m": 25.0
+  },
+  "hydraulics": {
+    "preset": "example",
+    "pump_efficiency": 0.68,
+    "motor_efficiency": 0.93,
+    "loop_factor": 0.25,
+    "main_dn_mm": 150.0,
+    "zone_header_dn_mm": 65.0
+  },
+  "constraints": {
+    "note": "Site and procurement limits. NOT from SOLIT2 and not acceptance criteria."
+  },
+  "ahj": {
+    "note": "Only one acceptance limit is set, because only one is stated by an authority. HPWM-TECHNICAL SPEC_R2 section 6 requires a 150 MW minimum design fire load reduced to <= 50 MW. Every other Annex 7 criterion stays null and is reported 'unset': the tender defers tenability to 'SOLIT2 or NFPA 502 test protocols' without naming numbers, and Annex 7 7.1 leaves those to the authority having jurisdiction. Do not fill them from a vendor's test report -- see INDEPENDENCE.md rule 2.",
+    "tvs_design_fire_mw": 50.0
+  },
+  "criteria": {}
+}

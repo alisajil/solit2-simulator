@@ -459,13 +459,26 @@ def _geometry_key(design: Design, positions: tuple[NozzlePosition, ...],
             u_bucket_ms, gas_bucket_k, positions, envelope)
 
 
-def _geometry(design: Design, positions: tuple[NozzlePosition, ...],
-              envelope: FuelEnvelope, fire_top_m: float, u_eff_ms: float,
-              gas_excess_k: float) -> tuple[_ModeGeometry, ...]:
-    """Cached spray geometry for one quantised flight condition."""
-    drop_height_m = _drop_height_m(design, fire_top_m)
-    u_bucket_ms = _bucket(u_eff_ms, VELOCITY_BUCKET_MS)
-    gas_bucket_k = _bucket(gas_excess_k, GAS_EXCESS_BUCKET_K)
+def _blend(lo: _ModeGeometry, hi: _ModeGeometry, f: float) -> _ModeGeometry:
+    """`lo` and `hi` mixed `f` of the way from one to the other."""
+    def mix(a: float, b: float) -> float:
+        return a + (b - a) * f
+    return _ModeGeometry(
+        mode_id=lo.mode_id,
+        drift_m=mix(lo.drift_m, hi.drift_m),
+        surviving_fraction=mix(lo.surviving_fraction, hi.surviving_fraction),
+        footprint_radius_m=mix(lo.footprint_radius_m, hi.footprint_radius_m),
+        unit_top_per_lpm=mix(lo.unit_top_per_lpm, hi.unit_top_per_lpm),
+        unit_flank_per_lpm=mix(lo.unit_flank_per_lpm, hi.unit_flank_per_lpm),
+        # A mask is a set of cells and does not average; the nearer bucket's
+        # footprint is the honest one to carry.
+        coverage_mask=(lo if f < 0.5 else hi).coverage_mask,
+    )
+
+
+def _at_bucket(design: Design, positions: tuple[NozzlePosition, ...],
+               envelope: FuelEnvelope, drop_height_m: float, u_bucket_ms: float,
+               gas_bucket_k: float) -> tuple[_ModeGeometry, ...]:
     key = _geometry_key(design, positions, envelope, drop_height_m,
                         u_bucket_ms, gas_bucket_k)
     cached = _GEOMETRY_CACHE.get(key)
@@ -475,6 +488,39 @@ def _geometry(design: Design, positions: tuple[NozzlePosition, ...],
                                    u_bucket_ms, gas_bucket_k)
         _GEOMETRY_CACHE[key] = cached
     return cached
+
+
+def _geometry(design: Design, positions: tuple[NozzlePosition, ...],
+              envelope: FuelEnvelope, fire_top_m: float, u_eff_ms: float,
+              gas_excess_k: float) -> tuple[_ModeGeometry, ...]:
+    """Spray geometry for this flight condition, interpolated between two
+    cached gas temperatures.
+
+    The cache is quantised because computing a spectrum of trajectories is the
+    expensive part of a step. SNAPPING the physics to a bucket centre is a
+    different thing, and it put the engine into a period-2 limit cycle: gas
+    temperature drives evaporation, evaporation drives how much water lands,
+    and water landing drives gas temperature back down, so a step change in
+    delivery across a bucket edge is a feedback loop with a discontinuity in
+    it. On the twin-bore example the ceiling alternated 41.6 C and 55.8 C
+    every second for two thirds of the run -- a 14 C swing, entirely an
+    artefact of a 25 K bucket -- and every temperature-derived criterion
+    inherited it.
+
+    Reading BOTH bracketing buckets and interpolating costs one extra cache
+    lookup, keeps every entry self-consistent, and makes delivery continuous
+    in gas temperature, which is what removes the cycle.
+    """
+    drop_height_m = _drop_height_m(design, fire_top_m)
+    u_bucket_ms = _bucket(u_eff_ms, VELOCITY_BUCKET_MS)
+    lower = math.floor(gas_excess_k / GAS_EXCESS_BUCKET_K) * GAS_EXCESS_BUCKET_K
+    fraction = (gas_excess_k - lower) / GAS_EXCESS_BUCKET_K
+    lo = _at_bucket(design, positions, envelope, drop_height_m, u_bucket_ms, lower)
+    if fraction <= 0.0:
+        return lo
+    hi = _at_bucket(design, positions, envelope, drop_height_m, u_bucket_ms,
+                    lower + GAS_EXCESS_BUCKET_K)
+    return tuple(_blend(a, b, fraction) for a, b in zip(lo, hi))
 
 
 def _deliveries(design: Design, geometries: tuple[_ModeGeometry, ...],
@@ -520,18 +566,86 @@ def _coverage(geometries: tuple[_ModeGeometry, ...],
 
 
 def _cooling_fraction(design: Design, geometries: tuple[_ModeGeometry, ...], head_count: int,
-                      flow_fraction: float, q_conv_kw: float, cap: float) -> float:
-    """Only the water that evaporates in flight removes heat from the gas."""
+                      flow_fraction: float, q_conv_kw: float) -> float:
+    """Fraction of the fire's convective heat the evaporating spray removes.
+
+    The demand side is straightforward: the water that evaporates in flight
+    carries off its sensible heat plus its latent heat. On this system that
+    demand comes to about three times the fire's whole convective output.
+
+    It cannot have three times. Heat that is not there cannot be removed, and
+    the droplets cannot evaporate without it -- the two are the same energy.
+    The model used to resolve that by clipping the ratio at a fitted constant,
+    `mist.chi_cool_max`, which held it at exactly 0.558 for 94 % of every run
+    and at all three of 150, 200 and 250 MW. A term pinned to a constant is
+    not modelling anything: it cannot respond to a larger fire, to more water,
+    or to a better nozzle.
+
+    What actually limits it is a feedback the demand calculation leaves out.
+    Evaporation is driven by how far the gas is above the droplets, so as the
+    spray cools the gas it slows itself down. Taking the potential `ratio` as
+    computed at the UNCOOLED gas and correcting it to first order for the
+    cooling it causes:
+
+        chi = ratio * (1 - chi)   ->   chi = ratio / (1 + ratio)
+
+    which needs no constant, is smooth, and behaves correctly at both ends:
+    a weak spray removes `ratio` of the heat, and an overwhelming one
+    approaches all of it without ever exceeding it, because the gas it is
+    cooling runs out.
+    """
     if q_conv_kw <= 0:
         return 0.0
     sensible = WATER_CP_KJKGK * (WATER_BOILING_C - WATER_INLET_TEMP_C) + WATER_LATENT_HEAT_KJKG
-    total = 0.0
+    ratio = 0.0
     for g in geometries:
         evaporated = 1.0 - g.surviving_fraction
         mdot = (design.nozzles.mode_flow_lpm(g.mode_id) * head_count * flow_fraction
                 / LPM_PER_M3S * WATER_DENSITY_KGM3)
-        total += evaporated * mdot * sensible / q_conv_kw
-    return min(total, cap)
+        ratio += evaporated * mdot * sensible / q_conv_kw
+    return ratio / (1.0 + ratio)
+
+
+# The share of the active zone's spray that stands upstream of the fire, over
+# the path a backlayer has to take. The engine centres the zone on the fire --
+# `sim._Scene.half_active_length_m` is used both ways -- so half of it does.
+UPSTREAM_SPRAY_SHARE = 0.5
+
+
+def backlayer_heat_kw(q_conv_kw: float, chi_cool: float) -> float:
+    """Convective heat the smoke still carries once it has pushed upstream
+    through the spray -- what drives backlayering under an operating system.
+
+    `chi_cool` cools the fire's plume. The backlayer then has to travel
+    UPSTREAM under the same zone's upstream half, and is cooled again there.
+    Treating the plume stage as the whole effect was the defect behind the
+    backlayering misses: on c5 it left 2.5 MW of buoyancy at 1.25 m/s and a
+    49 m layer, where Annex 2 section 6.2 reports "Although the fire reached ~
+    20 MW with an air velocity of only 1-1,5 m/s, no back layering was
+    observed". The published finding this follows is that the critical Froude
+    number still governs with water mist, but "only when the mist cools the
+    rising hot plume and backlayering flow can the critical velocity be
+    reduced" (Tunnelling and Underground Space Technology, 2021, "Estimation
+    of the effects of water mist system on the tunnel critical velocity due to
+    smoke cooling").
+
+    No new constant. `_cooling_fraction` returns chi = ratio / (1 + ratio), so
+    the spray's full evaporative capacity is ratio = chi / (1 - chi) times the
+    plume's heat; the plume stage used chi of it, and the upstream share of
+    what is left meets the backlayer's remaining heat through the same
+    first-order closure. OUR ENGINEERING CHOICE, stated plainly: the second
+    stage acts on the heat entering the correlation rather than on a resolved
+    temperature profile along the layer, because the Li, Lei & Ingason
+    backlayering correlation takes a heat release and gives a length, and has
+    no profile to cool.
+    """
+    q_gas = q_conv_kw * (1.0 - chi_cool)
+    if q_gas <= 0 or chi_cool <= 0:
+        return max(q_gas, 0.0)
+    ratio = chi_cool / (1.0 - chi_cool)
+    spare = ratio - chi_cool
+    upstream_ratio = UPSTREAM_SPRAY_SHARE * spare * q_conv_kw / q_gas
+    return q_gas / (1.0 + upstream_ratio)
 
 
 def _curtain_transmissivity(design: Design, geom: SectionGeometry,
@@ -641,8 +755,7 @@ def evaluate(design: Design, geom: SectionGeometry, positions: tuple[NozzlePosit
                                   burning_fraction(hrr_mw, hrr_free_mw))
 
     head_count = len(positions)
-    chi_cool = _cooling_fraction(design, geometries, head_count, flow_fraction,
-                                 q_conv_kw, cal["chi_cool_max"]["value"])
+    chi_cool = _cooling_fraction(design, geometries, head_count, flow_fraction, q_conv_kw)
     tau_mist = _curtain_transmissivity(design, geom, geometries, head_count,
                                        flow_fraction, u_eff_ms)
 

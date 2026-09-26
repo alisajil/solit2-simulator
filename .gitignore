@@ -16,6 +16,14 @@ runs/
 *_devc.csv
 *_hrr.csv
 
+# ...but test fixtures with those extensions ARE committed on purpose
+!tests/fixtures/fds/
+!tests/fixtures/fds/**
+
+# issued decks are deliverables, not run output -- committed on purpose
+!decks/
+!decks/**
+
 # python
 .venv/
 __pycache__/
@@ -27,3 +35,12 @@ htmlcov/
 
 # os
 .DS_Store
+.serena/
+
+# generated assessments and their archives -- outputs, not source.
+# Anchored: an unanchored `reports/` also matches the SOURCE package
+# solit2/reports/, which silently dropped a new module from a commit.
+/reports/
+
+# the app's account store (password hashes) -- never committed. Anchored, like /reports/.
+/data/

@@ -314,11 +314,21 @@ def test_a_wider_spectrum_keeps_more_water_alive_through_hot_gas(monkeypatch):
     # so it moves with `evaporation_k_ref_m2s`, which the fit moves. A fixed 20x
     # went stale the first time that constant was refit. Asserted as a strict
     # ordering plus a margin that only has to be decisive.
-    assert wide > mid > narrow, (
-        f"a wider spectrum must land more water: {wide:.5f} / {mid:.5f} / {narrow:.5f}")
-    assert narrow > 1.5 * single, (
-        f"even the narrowest spectrum must beat the single drop outright: "
-        f"{narrow:.5f} against {single:.5f}")
+    #
+    # The narrowest spectrum is held to the ordering only. At n = 4 the coarse
+    # tail barely reaches 1.4 x the Sauter mean, and gas this hot kills that
+    # tail too: it sits on the same ~0.15 % floor as the single drop from about
+    # 150 K up, and beats it by 17x only in gas cool enough (100 K) to spare the
+    # tail. Demanding "1.5x the single drop" of it compared two floors, which
+    # held at one value of `evaporation_k_ref_m2s` and not the next. The claim
+    # that survives any calibration is that a spectrum with a real coarse tail
+    # beats one diameter decisively and one without it cannot do worse.
+    assert wide > mid > narrow > single, (
+        f"a wider spectrum must land more water: {wide:.5f} / {mid:.5f} / "
+        f"{narrow:.5f} / single {single:.5f}")
+    assert mid > 10.0 * single, (
+        f"a spectrum with a coarse tail must beat the single drop outright: "
+        f"{mid:.5f} against {single:.5f}")
 
 
 def test_the_spectrum_is_rejected_when_it_cannot_be_a_spray():

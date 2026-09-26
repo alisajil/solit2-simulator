@@ -55,10 +55,17 @@ def test_the_heat_flux_extractor_reads_the_downstream_station():
 
 def test_the_result_timeseries_carries_every_station_an_extractor_needs():
     """The extractors above are only correct if the series actually exist and
-    are drawn from the stations they are named for."""
+    are drawn from the stations they are named for.
+
+    Run on c6 because its pre-activation backlayer reaches U15 and stops short
+    of U45 (Annex 2 Figure 29), so the two upstream series genuinely differ.
+    c4 no longer serves: with the fire it was tested with, its layer never
+    reaches U15, and both stations read ambient throughout -- as Figure 11 says
+    the test's did.
+    """
     from solit2.engines.reduced import sim
 
-    design = compare.load_anchors(("c4",))[0].design
+    design = compare.load_anchors(("c6",))[0].design
     trace = sim.run_once(design, "test", design.ventilation.velocity_ms)
     sampled = trace.steps[::envelope.TIMESERIES_STRIDE_S]
     series = envelope._timeseries(sampled)
@@ -172,3 +179,19 @@ def test_the_class_a_anchors_carry_a_target_outcome_and_the_class_b_one_does_not
         assert by_id[anchor_id].tolerances["target_ignited"] == {"kind": "exact"}
     assert "target_ignited" not in by_id["c6"].measured
     assert by_id["c6"].design.fire.fire_class == "B"
+
+
+def test_backlayering_is_judged_where_the_tests_judged_it():
+    """Annex 2 reads backlayering off the U15 thermocouple tree (Figures 11, 20
+    and 29). A 3 m layer that never leaves the mock-up is not what those tests
+    could have seen; one that reaches 15 m is."""
+    from types import SimpleNamespace
+
+    def result(length_m):
+        return SimpleNamespace(events={"backlayering": {"occurred": length_m > 0,
+                                                         "max_length_m": length_m}})
+
+    judge = compare.EXTRACTORS["backlayering"]
+    assert judge(result(3.0)) is False
+    assert judge(result(15.0)) is True
+    assert judge(result(0.0)) is False

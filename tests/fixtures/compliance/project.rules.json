@@ -1,0 +1,9 @@
+{
+  "source_document": "fixture project specification",
+  "rules": [
+    {"id": "hrr", "source": "fixture §1", "requirement": "Reduced HRR at most 50 MW.",
+     "quantity": "installation.peak_hrr_mw", "comparator": "<=", "limit": 50.0},
+    {"id": "report", "source": "fixture §2", "requirement": "A correlation CFD report supplied.",
+     "requires_fact": "correlation_cfd_report"}
+  ]
+}

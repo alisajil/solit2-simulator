@@ -421,10 +421,27 @@ def test_all_fine_split_loses_fuel_wetting_at_tunnel_velocity():
     assert fine.w_fuel_mm_min < base.w_fuel_mm_min
 
 
-def test_cooling_fraction_is_capped():
-    cap = load_calibration()["mist"]["chi_cool_max"]["value"]
-    _, _, _, _, effect = _setup(gas_excess_k=900.0)
-    assert effect.chi_cool <= cap + 1e-9
+def test_cooling_fraction_cannot_remove_more_heat_than_the_fire_makes():
+    """It used to be clipped at a fitted constant, `mist.chi_cool_max`, which
+    pinned it to exactly 0.558 for 94 % of every run and at every fire size --
+    a term stuck on a constant models nothing. It is now self-limiting:
+    evaporation is driven by how far the gas sits above the droplets, so the
+    spray slows itself as it cools the gas, and the fraction approaches one
+    without reaching it."""
+    _, _, _, _, overwhelmed = _setup(gas_excess_k=900.0)
+    assert 0.0 <= overwhelmed.chi_cool < 1.0, "cannot remove heat that is not there"
+
+    # and it must still MOVE, which the cap is what stopped it doing
+    _, _, _, _, mild = _setup(gas_excess_k=50.0)
+    assert mild.chi_cool != overwhelmed.chi_cool
+    assert mild.chi_cool < overwhelmed.chi_cool, "a hotter gas evaporates more spray"
+
+
+def test_the_cooling_fraction_has_no_fitted_cap_left_to_pin_it():
+    from solit2.schema.presets import load_calibration
+    assert "chi_cool_max" not in load_calibration()["mist"], (
+        "the cap is retired; its own note recorded that it had no surviving "
+        "reference case behind it")
 
 
 def test_shielding_does_not_widen_the_geometry_cache_key():
@@ -760,3 +777,79 @@ def test_reloading_calibration_busts_the_geometry_cache_for_the_spectrum_too(
     assert wide != narrow, (
         "the second call was served trajectories computed under the FIRST "
         "droplet_size_spread, not the value just reloaded")
+
+
+def test_spray_delivery_is_continuous_in_gas_temperature():
+    """The cache is quantised because trajectories are expensive. Snapping the
+    PHYSICS to a bucket centre is a different thing, and it put the engine in a
+    period-2 limit cycle: gas temperature drives evaporation, evaporation
+    drives how much water lands, and that drives gas temperature back -- so a
+    step in delivery across a bucket edge is a feedback loop with a
+    discontinuity in it."""
+    from solit2.engines.reduced import mist as mist_mod
+    from solit2.engines.reduced.geometry import nozzle_positions, section_geometry
+    from solit2.schema.design import Design
+
+    design = Design.load("examples/designs/road-tunnel-twin-bore.json")
+    geom = section_geometry(design)
+    positions = nozzle_positions(design, geom, 0.0)
+    fp = design.fire.footprint
+    envelope = mist_mod.fuel_envelope(0.0, 0.0, fp.length_m, fp.width_m,
+                                      mist_mod.flank_reach_m(fp.top_height_m))
+    width = mist_mod.GAS_EXCESS_BUCKET_K
+
+    def surviving(excess_k):
+        g = mist_mod._geometry(design, positions, envelope, fp.top_height_m, 4.0, excess_k)
+        return sum(m.surviving_fraction for m in g) / len(g)
+
+    # straddle a bucket edge by a tenth of a kelvin
+    edge = 2 * width
+    below, above = surviving(edge - 0.05), surviving(edge + 0.05)
+    assert abs(above - below) < 0.01, (
+        f"delivery jumps {abs(above - below):.3f} across a bucket edge at {edge} K")
+    # and the response is monotone and smooth across a whole bucket
+    samples = [surviving(edge - width / 2 + i * width / 20) for i in range(21)]
+    steps = [abs(b - a) for a, b in zip(samples, samples[1:])]
+    assert max(steps) < 0.02, f"largest step within a bucket {max(steps):.3f}"
+
+
+def test_the_engine_does_not_oscillate_step_to_step():
+    """The symptom this was found by: the ceiling at D03 alternated 41.6 C and
+    55.8 C every second for two thirds of the run, which is what a 25 K
+    quantisation looks like inside a feedback loop."""
+    from solit2.engines.reduced import envelope as env
+    from solit2.engines.reduced.sim import run_once
+    from solit2.schema.design import Design
+
+    design = Design.load("examples/designs/road-tunnel-twin-bore.json")
+    result = env.run(design)
+    trace = run_once(design, result.worst_case["section"], result.worst_case["velocity_ms"])
+    tops = [s.stations["D03"].temps_c[-1] for s in trace.steps]
+    jumps = [abs(b - a) for a, b in zip(tops, tops[1:])]
+    assert max(jumps) < 2.0, f"largest one-second change {max(jumps):.1f} C"
+    # and the cooling fraction that drives it, once the pumps are at full
+    # pressure. Before that the valves opening and the pumps ramping are real
+    # step changes in the system, not artefacts of the model.
+    settled = trace.events["t_full_pressure_s"]
+    chis = [s.mist.chi_cool for s in trace.steps if s.t_s >= settled]
+    chi_jumps = [abs(b - a) for a, b in zip(chis, chis[1:])]
+    assert max(chi_jumps) < 0.02, (
+        f"cooling fraction jumps {max(chi_jumps):.3f} in one second after full pressure")
+
+
+def test_backlayer_heat_is_the_plume_heat_when_no_spray_runs():
+    assert mist.backlayer_heat_kw(10_000.0, 0.0) == 10_000.0
+
+
+def test_backlayer_heat_is_cooled_again_by_the_upstream_spray():
+    """chi = 0.5 means the spray could take ratio = 1 times the plume's heat;
+    the plume stage used 0.5 of it, and half the 0.5 left over stands upstream.
+    Against the 0.5 q the smoke still carries that is a ratio of 0.5, so the
+    closure leaves 0.5 q / 1.5 = q / 3."""
+    q = 9_000.0
+    assert mist.backlayer_heat_kw(q, 0.5) == pytest.approx(q / 3.0)
+    assert mist.backlayer_heat_kw(q, 0.5) < q * (1.0 - 0.5)
+
+
+def test_backlayer_heat_vanishes_when_the_plume_is_fully_cooled():
+    assert mist.backlayer_heat_kw(9_000.0, 1.0) == 0.0

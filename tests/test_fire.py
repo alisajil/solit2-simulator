@@ -99,3 +99,28 @@ def test_suppression_relaxes_symmetrically_when_eta_drops_to_zero():
     # a single 1 s step at tau=90 s moves it only slightly toward 1.0, not a jump
     assert st.suppression == pytest.approx(before, abs=0.02)
     assert st.suppression < 0.5
+
+
+def test_the_flame_extinction_share_follows_from_the_two_flame_temperatures():
+    # (2274 - 1700) / (2274 - 293): FDS's 1427 C critical flame temperature
+    # against stoichiometric n-heptane's adiabatic flame temperature.
+    assert fire.FLAME_EXTINCTION_HEAT_FRACTION == pytest.approx(0.290, abs=0.001)
+
+
+def test_class_b_pools_go_out_by_flame_cooling_with_no_water_on_the_fuel():
+    """A fine mist that evaporates before reaching the pools can still put them
+    out: Annex 2 section 6.3's pools went out 'pool by pool' under exactly such
+    a spray. Nothing lands here, and the flame loses 0.5 * 0.7 = 35 % of its
+    heat release to the spray, above the 29 % it can lose and burn on."""
+    mist = MistEffect(eta=0.0, w_fuel_mm_min=0.0, f_cov=0.0, chi_cool=0.5, tau_mist=0.6)
+    hist = _march(Design.load(POOL), 1200, mist)
+    remaining = [h.pools_remaining for h in hist]
+    assert remaining[-1] == 0
+    assert all(b - a in (0, -1) for a, b in zip(remaining, remaining[1:]))
+
+
+def test_class_b_pools_keep_burning_when_the_flame_loses_just_under_its_limit():
+    just_under = 0.99 * fire.FLAME_EXTINCTION_HEAT_FRACTION / (1.0 - fire.RADIATIVE_FRACTION_CLASS_B)
+    mist = MistEffect(eta=0.0, w_fuel_mm_min=0.0, f_cov=0.0, chi_cool=just_under, tau_mist=0.6)
+    hist = _march(Design.load(POOL), 1200, mist)
+    assert hist[-1].pools_remaining == 7

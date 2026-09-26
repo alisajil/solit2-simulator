@@ -61,6 +61,45 @@ class SectionGeometry:
             perimeter = 2 * (self.road_width_m + self.crown_height_m)
         return 4 * self.free_area_m2 / perimeter
 
+    @property
+    def max_width_m(self) -> float:
+        """The widest the free cross-section ever gets, at any height.
+
+        NOT the road width. A bored tunnel's carriageway is a chord BELOW the
+        centre, so the bore keeps widening above it and reaches its full
+        diameter at centre height -- 11.00 m against a 10.15 m carriageway on
+        the reference section. Anything sized to the road width clips the
+        widest part of the tunnel off.
+        """
+        if self.shape == "box":
+            return self.road_width_m
+        # the circle is widest at its centre, which sits above the carriageway
+        return max(self.road_width_m, 2.0 * self.radius_m)
+
+    def area_between(self, z_lo_m: float, z_hi_m: float, samples: int = 256) -> float:
+        """True open area of the band z_lo..z_hi, by midpoint rule on `width_at`."""
+        top = min(z_hi_m, self.crown_height_m)
+        if top <= z_lo_m:
+            return 0.0
+        step = (top - z_lo_m) / samples
+        return sum(self.width_at(z_lo_m + (k + 0.5) * step)
+                   for k in range(samples)) * step
+
+    def band_width_m(self, z_lo_m: float, z_hi_m: float) -> float:
+        """The constant width that gives a z_lo..z_hi slab the band's TRUE area.
+
+        A stair-step taking its width at one edge of a layer is wrong by the
+        curvature across it, worst where the bore turns over near the crown --
+        2.85 m of width in that layer on the reference section. Spreading the
+        band's real area over the slab's full height instead makes every step
+        carry exactly the area it stands for, including the last one, whose
+        slab runs past the crown because the mesh is whole cells and the crown
+        is not.
+        """
+        if z_hi_m <= z_lo_m:
+            return 0.0
+        return self.area_between(z_lo_m, z_hi_m) / (z_hi_m - z_lo_m)
+
     def width_at(self, height_above_carriageway_m: float) -> float:
         """Clear width at a height above the carriageway; 0.0 above the crown."""
         if height_above_carriageway_m < 0:
@@ -134,3 +173,36 @@ def nozzle_positions(design: Design, geom: SectionGeometry,
         )
         for i in range(n)
     )
+
+
+def fire_lateral_m(design: Design, geom: SectionGeometry) -> float:
+    """The fuel load's centreline across the tunnel, in the deck's y (0 = tunnel centre).
+
+    Annex 7 section 5.2.3 sites the mock-up eccentric to the tunnel centreline,
+    near one side wall, precisely because a centred load flatters the system.
+    `lane_centre_offset_from_wall_m` is that offset measured from the near wall;
+    the standard names no side, so ONE convention is fixed here for every
+    consumer -- the Tier 1 mist envelope, the FDS deck and every drawing: the
+    near wall is the -y wall (the left wall looking downstream). The tunnel is
+    mirror-symmetric about y = 0, so the choice changes no physics, only which
+    way the picture is drawn.
+    """
+    offset = design.fire.lane_centre_offset_from_wall_m
+    half_load = design.fire.footprint.width_m / 2.0
+    # The whole load, not just its centreline. `lane_centre_offset_from_wall_m`
+    # is measured to the load's CENTRE, so an offset under half its width puts
+    # its near face beyond the wall. Nothing downstream would say so: FDS snaps
+    # the obstruction into the wall solid and burns a surface that is buried,
+    # which reads as a quietly weak fire rather than as an error. Annex 7 5.2.3
+    # asks for under 1.5 m of clearance at the near FACE, so an offset in that
+    # range is exactly the plausible misreading this catches.
+    if not half_load <= offset <= geom.road_width_m - half_load:
+        raise ValueError(
+            f"lane_centre_offset_from_wall_m={offset} m puts the "
+            f"{design.fire.footprint.width_m} m wide fuel load outside the "
+            f"{geom.road_width_m:.2f} m carriageway: the offset is measured to the load's "
+            f"CENTRE, so it must be between {half_load:.2f} and "
+            f"{geom.road_width_m - half_load:.2f} m. Annex 7 5.2.3's 'less than 1.5 m' is "
+            f"the clearance at the load's near face, which is this offset minus "
+            f"{half_load:.2f} m")
+    return offset - geom.road_width_m / 2.0
