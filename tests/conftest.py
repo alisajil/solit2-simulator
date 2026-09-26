@@ -19,6 +19,12 @@ TEST_NOZZLE_FIELDS = {"d_k": 4.1, "d_pressure": 50.0, "d_smd": 100.0, "d_dv50": 
                       "d_dv90": 207.891648, "d_cone": 45.0, "d_launch": 20.0,
                       "d_mount_h": 5.0, "d_rows": 2, "d_pitch": 2.4, "d_tilt": 0.0}
 TEST_NOZZLE_OFFSETS = "-2.75, 2.75"
+# The SOLIT2 protocol example: its template head sits at 5.0 m, inside the 5.2 m gallery.
+PROTOCOL_DESIGN = "examples/designs/solit2-test-protocol.json"
+# TEST VALUES, NOT DATA, typed into the Fire test step's Annex 7 fields: the
+# conditions Annex 7 leaves to the AHJ or the test day.
+TEST_ANNEX7_WIDGETS = {"a7_class": "A", "a7_activation": 150.0, "a7_ambient": 20.0,
+                       "a7_rh": 60.0, "a7_alpha": 0.1876, "a7_incubation": 243.0}
 
 
 def fill_nozzle(at: AppTest) -> AppTest:
@@ -109,10 +115,12 @@ def view_script(view: str, seed_design: bool, design_path: str = EXAMPLE_DESIGN)
 @pytest.fixture
 def run_view():
     def _run(view: str, seed_design: bool = True, timeout: float = 90.0,
-             design_path: str = EXAMPLE_DESIGN) -> AppTest:
+             design_path: str = EXAMPLE_DESIGN, session: dict | None = None) -> AppTest:
         at = AppTest.from_string(view_script(view, seed_design, design_path),
                                  default_timeout=timeout)
         sign_in(at)
+        for key, value in (session or {}).items():
+            at.session_state[key] = value
         at.run()
         return at
     return _run
