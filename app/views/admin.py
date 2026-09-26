@@ -7,6 +7,7 @@ app.accounts.service, which checks again that the one acting is an approved admi
 """
 from __future__ import annotations
 
+import sqlite3
 from collections.abc import Callable
 from datetime import UTC, datetime
 from functools import partial
@@ -23,6 +24,7 @@ FLASH_KEY = "adm_flash"
 CONFIRM_REJECT_KEY = "adm_confirm_reject"
 PENDING_COLUMNS = (4, 1.4, 1.6, 1.2)
 ACCOUNT_COLUMNS = (3, 3, 1.2, 1.8)
+STORE_UNAVAILABLE = "The account store is unavailable; try again in a moment."
 
 
 def render(user: User) -> None:
@@ -42,11 +44,15 @@ def render(user: User) -> None:
 
 def _act(action: Callable[[], object], message: str) -> None:
     """Run one account action. On success flash `message` and rerun, so every list shows
-    the change; a refusal is shown where the button was."""
+    the change; a refusal, or a store error, is shown where the button was rather than
+    surfacing as a traceback."""
     try:
         action()
     except service.AccountError as exc:
         st.error(str(exc))
+        return
+    except sqlite3.Error:
+        st.error(STORE_UNAVAILABLE)
         return
     st.session_state[FLASH_KEY] = message
     st.rerun()
@@ -57,6 +63,8 @@ def _pending(db: Path, admin: User, pending: list[User]) -> None:
     if not pending:
         st.caption("No sign-ups are waiting.")
         return
+    st.caption("Sign-ups are not verified. Confirm each one with the person, through a "
+              "channel you already trust, before you approve it.")
     for user in pending:
         with st.container(border=True):
             info, team, customer, reject = st.columns(PENDING_COLUMNS,
@@ -66,11 +74,11 @@ def _pending(db: Path, admin: User, pending: list[User]) -> None:
             if team.button("Approve as team", key=f"adm_team_{user.id}", type="primary",
                            width="stretch"):
                 _act(partial(service.approve, db, admin.id, user.id, "team"),
-                     f"Approved {user.email} as team.")
+                     f"Approved `{user.email}` as team.")
             if customer.button("Approve as customer", key=f"adm_customer_{user.id}",
                                width="stretch"):
                 _act(partial(service.approve, db, admin.id, user.id, "customer"),
-                     f"Approved {user.email} as customer.")
+                     f"Approved `{user.email}` as customer.")
             _reject(db, admin, user, reject)
 
 
@@ -81,12 +89,12 @@ def _reject(db: Path, admin: User, user: User, column) -> None:
             st.session_state[CONFIRM_REJECT_KEY] = user.id
             st.rerun()
         return
-    st.warning(f"Reject {user.email}? A rejected account cannot be approved later.")
+    st.warning(f"Reject `{user.email}`? A rejected account cannot be approved later.")
     confirm, cancel, _ = st.columns((1, 1, 4))
     if confirm.button("Confirm reject", key=f"adm_reject_confirm_{user.id}", type="primary",
                       width="stretch"):
         st.session_state.pop(CONFIRM_REJECT_KEY, None)
-        _act(partial(service.reject, db, admin.id, user.id), f"Rejected {user.email}.")
+        _act(partial(service.reject, db, admin.id, user.id), f"Rejected `{user.email}`.")
     if cancel.button("Cancel", key=f"adm_reject_cancel_{user.id}", width="stretch"):
         st.session_state.pop(CONFIRM_REJECT_KEY, None)
         st.rerun()
@@ -105,14 +113,14 @@ def _accounts(db: Path, admin: User, users: list[User]) -> None:
             elif user.state == "approved":
                 if first.button("Disable", key=f"adm_disable_{user.id}", width="stretch"):
                     _act(partial(service.disable, db, admin.id, user.id),
-                         f"Disabled {user.email}.")
+                         f"Disabled `{user.email}`.")
                 if second.button("Temporary password", key=f"adm_temp_{user.id}",
                                  width="stretch"):
                     _temporary_password(db, admin, user)
             elif user.state == "disabled":
                 if first.button("Re-enable", key=f"adm_enable_{user.id}", width="stretch"):
                     _act(partial(service.enable, db, admin.id, user.id),
-                         f"Re-enabled {user.email}.")
+                         f"Re-enabled `{user.email}`.")
 
 
 def _status(user: User) -> str:
@@ -134,7 +142,7 @@ def _temporary_password(db: Path, admin: User, user: User) -> None:
     except service.AccountError as exc:
         st.error(str(exc))
         return
-    st.warning(f"Temporary password for {user.email}, shown only now: pass it on privately. "
+    st.warning(f"Temporary password for `{user.email}`, shown only now: pass it on privately. "
                "The account must choose its own password at its next login.")
     st.code(temporary, language=None)
 

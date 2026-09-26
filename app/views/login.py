@@ -71,7 +71,7 @@ def _log_in(db: Path) -> None:
         email = st.text_input("Email", key="login_email", max_chars=service.EMAIL_MAX_CHARS,
                               autocomplete="username")
         password = st.text_input("Password", key="login_password", type="password",
-                                 max_chars=passwords.MAX_CHARS, autocomplete="current-password")
+                                 autocomplete="current-password")
         submitted = st.form_submit_button("Log in", key="login_submit", type="primary")
     if not submitted:
         return
@@ -101,9 +101,9 @@ def _sign_up(db: Path) -> None:
                               autocomplete="email")
         password = st.text_input(f"Password (at least {passwords.MIN_CHARS} characters)",
                                  key="signup_password", type="password",
-                                 max_chars=passwords.MAX_CHARS, autocomplete="new-password")
+                                 autocomplete="new-password")
         confirm = st.text_input("Password again", key="signup_confirm", type="password",
-                                max_chars=passwords.MAX_CHARS, autocomplete="new-password")
+                                autocomplete="new-password")
         submitted = st.form_submit_button("Sign up", key="signup_submit", type="primary")
     if not submitted:
         return
@@ -119,14 +119,14 @@ def _sign_up(db: Path) -> None:
 def _change_password(db: Path, user: User) -> None:
     with st.columns(CARD_COLUMNS)[1]:
         st.title("Choose a new password")
-        st.write(f"You logged in as {user.email} with a temporary password. "
+        st.write(f"You logged in as `{user.email}` with a temporary password. "
                  "Choose your own to continue.")
         with st.form("change_form"):
             password = st.text_input(f"New password (at least {passwords.MIN_CHARS} characters)",
                                      key="change_password", type="password",
-                                     max_chars=passwords.MAX_CHARS, autocomplete="new-password")
+                                     autocomplete="new-password")
             confirm = st.text_input("New password again", key="change_confirm", type="password",
-                                    max_chars=passwords.MAX_CHARS, autocomplete="new-password")
+                                    autocomplete="new-password")
             submitted = st.form_submit_button("Set password", key="change_submit",
                                               type="primary")
         if st.button("Log out", key="change_logout"):
@@ -135,10 +135,11 @@ def _change_password(db: Path, user: User) -> None:
         if not submitted:
             return
         try:
-            service.change_password(db, user.id, password, confirm)
+            updated = service.change_password(db, user.id, password, confirm)
         except service.AccountError as exc:
             st.error(str(exc))
             return
+        auth.sign_in(updated)
         st.rerun()
 
 

@@ -79,6 +79,8 @@ def _clear_pending() -> None:
 
 @st.dialog("Pause this run?")
 def _confirm_pause(run_dir: Path, state_dir: Path) -> None:
+    if not auth.guard_fragment():
+        return
     st.write(f"Asks FDS to finish its current step, write its restart files and exit "
              f"cleanly for `{run_dir}`. Not a kill: it can be resumed from where it stops "
              f"afterwards. A wedged run may not notice until it is stopped instead.")
@@ -98,6 +100,8 @@ def _confirm_pause(run_dir: Path, state_dir: Path) -> None:
 
 @st.dialog("Stop this run?")
 def _confirm_stop(run_dir: Path, state_dir: Path) -> None:
+    if not auth.guard_fragment():
+        return
     st.write(f"Kills every process for `{run_dir}` outright. Whatever restart files it "
              f"already wrote are kept, but the step it was on when this fires is lost. "
              f"For a run that has stopped responding and will not see a pause.")
