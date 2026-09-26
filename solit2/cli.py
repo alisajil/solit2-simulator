@@ -507,8 +507,8 @@ def _cmd_accounts_create_admin(args: argparse.Namespace) -> int:
     except (sqlite3.Error, OSError) as exc:
         return _fail(f"the account store at {db} is unavailable: {exc}", store.DATA_DIR_ENV,
                      "point SOLIT2_DATA_DIR at a directory this user can write", EXIT_ENGINE)
-    json.dump({"created": "admin", "id": admin.id, "email": admin.email, "store": str(db)},
-              sys.stdout)
+    json.dump({"created": "admin", "id": admin.id, "email": admin.email,
+              "store": str(db.resolve())}, sys.stdout)
     sys.stdout.write("\n")
     return EXIT_OK
 
