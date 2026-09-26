@@ -18,8 +18,13 @@ EXPORT_COLUMNS = 3
 
 def ensure_twin_result(design: Design) -> tuple[Design, Result] | None:
     """The test-facility twin and its Tier 1 result, or None after reporting why not."""
+    inputs = state.get_annex7_inputs()
+    if inputs is None:
+        st.info("Enter the Annex 7 test inputs on the Fire test step first: SOLIT2 leaves "
+                "the activation time, test-day ambient and design-fire growth to the AHJ.")
+        return None
     try:
-        twin_design = twin.test_facility_twin(design)
+        twin_design = twin.test_facility_twin(design, inputs)
     except ValueError as exc:
         st.error(f"The test-facility twin could not be built: {exc}")
         return None

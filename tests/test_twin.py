@@ -1,4 +1,4 @@
-"""The twin keeps the system under test and swaps everything else for the Annex 7 gallery."""
+"""The twin keeps the system under test and takes everything else from Annex 7."""
 import json
 
 import pytest
@@ -8,6 +8,13 @@ from solit2.reports import twin
 from solit2.schema.design import Design
 
 EXAMPLE = "examples/designs/road-tunnel-twin-bore.json"
+# Test values for the conditions Annex 7 leaves to the AHJ or the test day.
+INPUTS = twin.Annex7Inputs("A", activation_s=150.0, ambient_c=20.0, ambient_rh_pct=60.0,
+                           growth_alpha_kw_s2=0.1876, incubation_s=243.0)
+
+
+def _inputs(fire_class: str = "A", activation_s: float = 150.0) -> twin.Annex7Inputs:
+    return twin.Annex7Inputs(fire_class, activation_s, 20.0, 60.0, 0.1876, 243.0)
 
 
 def _design_with_mount(height_m: float) -> Design:
@@ -21,34 +28,77 @@ def _without_mount(block: dict) -> dict:
     return {k: v for k, v in block.items() if k != "mounting"}
 
 
-def test_twin_keeps_nozzles_and_hydraulics_and_swaps_in_the_gallery_protocol():
+def test_twin_keeps_the_testers_system_and_carries_it_into_the_gallery():
     site = _design_with_mount(4.5)
-    t = twin.test_facility_twin(site)
+    t = twin.test_facility_twin(site, INPUTS)
     assert t.tunnel.preset == twin.GALLERY_TUNNEL and t.tunnel.section == "test"
-    assert t.fire.covered is True and t.fire.preset == site.fire.preset
-    assert t.ventilation.velocity_range_ms == (1.5, 3.0) or list(t.ventilation.velocity_range_ms) == [1.5, 3.0]
-    assert (t.zones.section_length_m, t.zones.sections_simultaneous, t.zones.duration_min) == (20.0, 3, 35.0)
-    assert t.detection.sensor_spacing_m == 12.0
     assert _without_mount(t.nozzles.model_dump(mode="json", by_alias=True)) == \
         _without_mount(site.nozzles.model_dump(mode="json", by_alias=True))
     assert t.hydraulics.model_dump(mode="json") == site.hydraulics.model_dump(mode="json")
+    assert t.detection.model_dump(mode="json") == site.detection.model_dump(mode="json")
+    assert (t.zones.section_length_m, t.zones.sections_simultaneous, t.zones.pump_ramp_s) == \
+        (site.zones.section_length_m, site.zones.sections_simultaneous, site.zones.pump_ramp_s)
     assert t.ahj.model_dump(mode="json") == site.ahj.model_dump(mode="json")
-    assert t.meta.name == f"{site.meta.name}-test-facility"
+    assert t.meta.name == f"{site.meta.name}-annex7-class-a"
+
+
+def test_twin_takes_the_annex7_mockup_not_the_sites_fire():
+    t = twin.test_facility_twin(_design_with_mount(4.5), INPUTS)
+    assert t.fire.preset == "hgv_150mw" and t.fire.design_hrr_mw == 150.0
+    assert t.fire.covered is True
+    assert tuple(t.ventilation.velocity_range_ms) == (1.5, 3.0)
+    assert t.zones.manual_activation_s == 150.0 and t.zones.activation_delay_s == 0.0
+    assert t.zones.duration_min >= (150.0 + 30 * 60) / 60
+    assert (t.tunnel.ambient_temp_c, t.tunnel.ambient_rh_pct) == (20.0, 60.0)
+    assert t.fire.alpha == 0.1876 and t.fire.incubation_s == 243.0
+
+
+def test_class_b_takes_the_annex7_pool_mockup():
+    t = twin.test_facility_twin(_design_with_mount(4.5), _inputs("B", 100.0))
+    assert t.fire.preset == "pool_60mw" and t.fire.covered is False
+    assert t.zones.manual_activation_s == 100.0
+
+
+def test_class_a_activation_before_one_minute_is_refused():
+    with pytest.raises(ValueError, match="5.2.8"):
+        twin.test_facility_twin(_design_with_mount(4.5), _inputs("A", 45.0))
+
+
+def test_class_b_activation_after_two_minutes_is_refused():
+    with pytest.raises(ValueError, match="5.3.7"):
+        twin.test_facility_twin(_design_with_mount(4.5), _inputs("B", 150.0))
+
+
+def test_activation_area_shorter_than_three_mockups_is_refused():
+    site = _design_with_mount(4.5)
+    short = site.model_copy(update={"zones": site.zones.model_copy(
+        update={"section_length_m": 8.0, "sections_simultaneous": 1})})
+    with pytest.raises(ValueError, match="3 times the length"):
+        twin.test_facility_twin(short, INPUTS)
 
 
 def test_a_site_height_that_fits_the_gallery_is_kept():
-    height, reason = twin.gallery_mount_height_m(_design_with_mount(4.5))
-    assert height == 4.5 and "site's own" in reason
+    height, reason = twin.gallery_mount_height_m(_design_with_mount(4.5), 4.0)
+    assert height == 4.5 and "own" in reason
 
 
 def test_a_site_height_above_the_gallery_ceiling_is_refused_not_substituted():
     """SOLIT2 publishes no mounting height for its reference system, so there is
     no standard value to put the heads at instead; the tester must enter one."""
     with pytest.raises(ValueError, match="enter the height the heads will be tested at"):
-        twin.gallery_mount_height_m(_design_with_mount(6.5))
+        twin.gallery_mount_height_m(_design_with_mount(6.5), 4.0)
 
 
 def test_the_twin_validates_and_runs_in_tier_one():
-    result = envelope.run(twin.test_facility_twin(_design_with_mount(4.5)))
-    assert result.meta["design_name"].endswith("-test-facility")
+    result = envelope.run(twin.test_facility_twin(_design_with_mount(4.5), INPUTS))
+    assert result.meta["design_name"].endswith("-annex7-class-a")
     assert result.worst_case["velocity_ms"] in (1.5, 3.0)
+
+
+def test_class_b_horizon_covers_the_whole_fire():
+    """5.3.7 runs Class B until the fire is out or the fuel is gone; the run
+    horizon is only how long the engine runs, so it must reach that point."""
+    from solit2.engines.reduced.sim import run_once
+    t = twin.test_facility_twin(_design_with_mount(4.5), _inputs("B", 100.0))
+    trace = run_once(t, "test", 3.0)
+    assert trace.steps[-1].hrr_mw < 0.01 * max(s.hrr_mw for s in trace.steps)

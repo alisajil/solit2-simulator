@@ -289,8 +289,12 @@ def target_exposure_s(previous_s: float, target_flux_kwm2: float, dt_s: float) -
 
 
 def _require_detection(design: Design, events: dict) -> None:
-    """A run in which the detector never trips has not modelled the system at all."""
-    if events["t_detect_s"] is not None:
+    """A run in which the detector never trips has not modelled the system at all.
+
+    Unless activation is manual: Annex 7 5.2.8 and 5.3.7 have the operator start
+    the system at a fixed time, so a detector that never trips changes nothing.
+    """
+    if events["t_detect_s"] is not None or design.zones.manual_activation_s is not None:
         return
     raise RuntimeError(
         f"the fire never reached the {design.detection.threshold_c} C detection "

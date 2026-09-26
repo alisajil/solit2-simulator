@@ -44,11 +44,10 @@ def test_every_step_renders_and_none_asks_for_a_file(monkeypatch, tmp_path):
         assert not at.exception, i
         assert at.session_state["step"] == i
         assert not at.get("file_uploader"), i
-    # The form's example heads sit at 5.75 m, above the 5.2 m SOLIT2 gallery, and
-    # SOLIT2 publishes no reference height to substitute: the twin is refused, said
-    # so on screen, and the rest of the step still renders.
+    # No Annex 7 test inputs were entered on the way through, and SOLIT2 leaves them
+    # to the AHJ: the twin is not built, the step says why, and the rest renders.
     assert "twin_result" not in at.session_state
-    assert any("enter the height the heads will be tested at" in e.value for e in at.error)
+    assert any("Annex 7 test inputs" in i.value for i in at.info)
     assert at.get("download_button")            # exports live on the last step only
 
 
