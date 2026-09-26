@@ -42,6 +42,7 @@ CREATE TABLE IF NOT EXISTS users (
     approved_at          TEXT,
     approved_by          INTEGER REFERENCES users (id),
     last_login_at        TEXT,
+    session_epoch        INTEGER NOT NULL DEFAULT 0,
     -- an approved or disabled account has a role; a pending or rejected one has none
     CHECK ((state IN ('approved', 'disabled')) = (role IS NOT NULL))
 );
@@ -55,7 +56,8 @@ CREATE TABLE IF NOT EXISTS admin_actions (
 );
 """
 _USER_COLUMNS = ("id, email, name, organisation, role, state, must_change_password, "
-                 "failed_logins, locked_until, created_at, approved_at, approved_by, last_login_at")
+                 "failed_logins, locked_until, created_at, approved_at, approved_by, "
+                 "last_login_at, session_epoch")
 _UPDATABLE = frozenset({"name", "organisation", "password_hash", "must_change_password", "role",
                         "state", "failed_logins", "locked_until", "approved_at", "approved_by",
                         "last_login_at"})
@@ -76,6 +78,7 @@ class User:
     approved_at: datetime | None
     approved_by: int | None
     last_login_at: datetime | None
+    session_epoch: int
 
 
 @dataclass(frozen=True)
@@ -110,7 +113,11 @@ def connect(db: Path) -> Iterator[sqlite3.Connection]:
 
 def init(db: Path) -> None:
     """Create the store if it is missing -- directory, file, tables -- and keep the file
-    owner-only. Cheap and safe to call on every run of the app."""
+    owner-only. Cheap and safe to call on every run of the app.
+
+    Never stamps the schema version backwards: a store already at a newer version than
+    this code knows about is refused outright, rather than silently rewound to a version
+    whose migration would then run again."""
     db.parent.mkdir(parents=True, exist_ok=True, mode=DIR_MODE)
     if not db.exists():
         db.touch(mode=FILE_MODE)
@@ -118,7 +125,12 @@ def init(db: Path) -> None:
     with connect(db) as conn:
         conn.execute("PRAGMA journal_mode = WAL")
         conn.executescript(_SCHEMA)
-        if conn.execute("PRAGMA user_version").fetchone()[0] != SCHEMA_VERSION:
+        stored_version = conn.execute("PRAGMA user_version").fetchone()[0]
+        if stored_version > SCHEMA_VERSION:
+            raise sqlite3.DatabaseError(
+                f"the account store is at schema version {stored_version}, newer than "
+                f"this code's {SCHEMA_VERSION}; upgrade the app before it opens this store")
+        if stored_version < SCHEMA_VERSION:
             conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
 
 
@@ -137,7 +149,7 @@ def _user(row: sqlite3.Row) -> User:
                 failed_logins=row["failed_logins"], locked_until=_dt(row["locked_until"]),
                 created_at=datetime.fromisoformat(row["created_at"]),
                 approved_at=_dt(row["approved_at"]), approved_by=row["approved_by"],
-                last_login_at=_dt(row["last_login_at"]))
+                last_login_at=_dt(row["last_login_at"]), session_epoch=row["session_epoch"])
 
 
 def insert_user(conn: sqlite3.Connection, *, email: str, name: str, organisation: str,
@@ -175,31 +187,50 @@ def list_users(conn: sqlite3.Connection) -> list[User]:
     return [_user(row) for row in rows]
 
 
-def update_user(conn: sqlite3.Connection, user_id: int, **fields: object) -> None:
+def update_user(conn: sqlite3.Connection, user_id: int, *, expected_state: str | None = None,
+               **fields: object) -> bool:
     """Set the named columns. Only the columns in _UPDATABLE may be named, so a column
-    name never comes from anywhere else into the SQL."""
+    name never comes from anywhere else into the SQL.
+
+    When `expected_state` is given, the UPDATE only applies if the row's current state
+    still matches it -- so a caller that read the row, decided what to write, and now
+    writes it back is not silently overwriting a state it never saw. The return value
+    says whether a row actually changed; a caller that needed `expected_state` to hold
+    should treat False as "look at the account again", not as a no-op."""
     unknown = sorted(set(fields) - _UPDATABLE)
     if unknown or not fields:
         raise ValueError(f"cannot update {unknown or 'nothing'}")
     values = [_iso(v) if isinstance(v, datetime) else int(v) if isinstance(v, bool) else v
               for v in fields.values()]
     assignments = ", ".join(f"{name} = ?" for name in fields)
-    conn.execute(f"UPDATE users SET {assignments} WHERE id = ?", (*values, user_id))
+    where, params = "WHERE id = ?", [*values, user_id]
+    if expected_state is not None:
+        where += " AND state = ?"
+        params.append(expected_state)
+    cursor = conn.execute(f"UPDATE users SET {assignments} {where}", params)
+    return cursor.rowcount == 1
 
 
-def record_failed_login(conn: sqlite3.Connection, user_id: int, *, limit: int,
-                        lock_until: datetime) -> None:
-    """Count one failed login inside the database, so two at once cannot both slip under
-    the limit. The `limit`-th failure in a row locks the account until `lock_until` and
-    starts the count again."""
-    conn.execute(
+def bump_session_epoch(conn: sqlite3.Connection, user_id: int) -> None:
+    """End every session the account has open: each one checks the epoch it signed in with."""
+    conn.execute("UPDATE users SET session_epoch = session_epoch + 1 WHERE id = ?", (user_id,))
+
+
+def claim_login_attempt(conn: sqlite3.Connection, user_id: int, *, limit: int,
+                        lock_until: datetime, now: datetime) -> bool:
+    """Count one login attempt before its password is checked, in one UPDATE that also refuses a
+    locked account, so attempts arriving at once cannot all slip under the limit. False means the
+    account is locked and nothing was counted. The `limit`-th attempt in a row locks the account
+    until `lock_until` and starts the count again; a successful login clears both."""
+    cursor = conn.execute(
         "UPDATE users SET"
         " locked_until = CASE WHEN failed_logins + 1 >= :max_failed"
         "                THEN :until ELSE locked_until END,"
         " failed_logins = CASE WHEN failed_logins + 1 >= :max_failed"
         "                 THEN 0 ELSE failed_logins + 1 END"
-        " WHERE id = :id",
-        {"max_failed": limit, "until": _iso(lock_until), "id": user_id})
+        " WHERE id = :id AND (locked_until IS NULL OR locked_until <= :now)",
+        {"max_failed": limit, "until": _iso(lock_until), "id": user_id, "now": _iso(now)})
+    return cursor.rowcount == 1
 
 
 def record_action(conn: sqlite3.Connection, *, admin_id: int, action: str,

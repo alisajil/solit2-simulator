@@ -23,8 +23,11 @@ NAME_MAX_CHARS = 100
 EMAIL_MAX_CHARS = 254
 AUDIT_ROWS = 200
 APPROVAL_ROLES = ("team", "customer")
-# A conservative address shape. It also keeps every stored email free of the characters
-# markdown acts on, so an email is safe inside an on-screen message.
+# A conservative address shape. It keeps out everything that could inject HTML, a link
+# with its own text, an image or a code span -- but not everything markdown acts on: `_`
+# can still italicise part of an address, and the renderer auto-links every email as a
+# mailto: (GFM literal autolinks). A message that interpolates one wraps it in backticks,
+# which escapes the `_` and blocks the autolink.
 _EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}")
 # action -> (the state it applies to, the state it leaves the account in)
 _TRANSITIONS = {"approve": ("pending", "approved"), "reject": ("pending", "rejected"),
@@ -104,8 +107,10 @@ def sign_up(db: Path, *, name: str, organisation: str, email: str, password: str
 
 def log_in(db: Path, email: str, password: str, *, now: datetime | None = None) -> LoginResult:
     """Check a login. Only a correct password learns the account's state; a wrong password
-    and an unknown email get the same answer, and every wrong password counts toward
-    the lockout."""
+    and an unknown email get the same answer. Before the password is verified, the attempt
+    is claimed -- counted, and checked against the lockout -- in one short UPDATE that is
+    committed right away, so a burst of attempts arriving at once cannot all slip under the
+    limit, and no write lock is held through the slow argon2 verify that follows."""
     moment = _now(now)
     with store.connect(db) as conn:
         found = store.credentials_by_email(conn, normalise_email(email))
@@ -113,12 +118,13 @@ def log_in(db: Path, email: str, password: str, *, now: datetime | None = None) 
             passwords.verify_dummy(password)
             return LoginResult("wrong")
         user, stored = found
-        if user.locked_until is not None and user.locked_until > moment:
-            return LoginResult("locked", locked_until=user.locked_until)
+        claimed = store.claim_login_attempt(conn, user.id, limit=MAX_FAILED_LOGINS,
+                                            lock_until=moment + LOCKOUT, now=moment)
+        conn.commit()
+        if not claimed:
+            return LoginResult("locked", locked_until=store.user_by_id(conn, user.id).locked_until)
         if not passwords.verify(stored, password):
-            store.record_failed_login(conn, user.id, limit=MAX_FAILED_LOGINS,
-                                      lock_until=moment + LOCKOUT)
-            return LoginResult("wrong")
+            return LoginResult("wrong")  # already counted by the claim above
         fields: dict[str, object] = {"failed_logins": 0, "locked_until": None}
         if passwords.needs_rehash(stored):
             fields["password_hash"] = passwords.hash_password(password)
@@ -174,7 +180,11 @@ def _transition(db: Path, admin_id: int, user_id: int, action: str, *,
         fields: dict[str, object] = {"state": after}
         if action == "approve":
             fields.update(role=role, approved_at=moment, approved_by=admin.id)
-        store.update_user(conn, target.id, **fields)
+        changed = store.update_user(conn, target.id, expected_state=before, **fields)
+        if not changed:
+            raise AccountError("This account changed a moment ago; look at it again.")
+        if action == "disable":
+            store.bump_session_epoch(conn, target.id)  # ends every session already open
         store.record_action(conn, admin_id=admin.id, action=action, target_user_id=target.id,
                             detail=f"role={role}" if role else "", now=moment)
         return store.user_by_id(conn, target.id)
@@ -203,7 +213,9 @@ def issue_temporary_password(db: Path, admin_id: int, user_id: int, *,
                              now: datetime | None = None) -> str:
     """A new temporary password for an approved account, returned once for the admin to
     pass on. It is stored only as a hash, never in the audit trail; the account must
-    choose its own at its next login; issuing one also clears a lockout."""
+    choose its own at its next login; issuing one also clears a lockout and ends every
+    session already signed in to the account, so a reset actually evicts whoever it was
+    meant to lock out."""
     moment = _now(now)
     temporary = passwords.temporary_password()
     with store.connect(db) as conn:
@@ -212,17 +224,23 @@ def issue_temporary_password(db: Path, admin_id: int, user_id: int, *,
         if target.state != "approved":
             raise AccountError(f"This account is {target.state}; "
                                "only approved accounts get a temporary password.")
-        store.update_user(conn, target.id, password_hash=passwords.hash_password(temporary),
-                          must_change_password=True, failed_logins=0, locked_until=None)
+        changed = store.update_user(conn, target.id, expected_state="approved",
+                                    password_hash=passwords.hash_password(temporary),
+                                    must_change_password=True, failed_logins=0,
+                                    locked_until=None)
+        if not changed:
+            raise AccountError("This account changed a moment ago; look at it again.")
+        store.bump_session_epoch(conn, target.id)
         store.record_action(conn, admin_id=admin.id, action="temporary_password",
                             target_user_id=target.id,
                             detail="must choose a new password at the next login", now=moment)
     return temporary
 
 
-def change_password(db: Path, user_id: int, password: str, confirm: str) -> None:
-    """Set the account's own new password. It may not be the one it has now -- a
-    temporary password is known to the admin who issued it."""
+def change_password(db: Path, user_id: int, password: str, confirm: str) -> User:
+    """Set the account's own new password, and end every session of the account -- the
+    caller re-signs its own session in with the account this returns. It may not be the
+    one it has now -- a temporary password is known to the admin who issued it."""
     _checked_password(password, confirm)
     with store.connect(db) as conn:
         user = store.user_by_id(conn, user_id)
@@ -234,6 +252,8 @@ def change_password(db: Path, user_id: int, password: str, confirm: str) -> None
                                "password")
         store.update_user(conn, user_id, password_hash=passwords.hash_password(password),
                           must_change_password=False)
+        store.bump_session_epoch(conn, user_id)
+        return store.user_by_id(conn, user_id)
 
 
 def create_admin(db: Path, *, email: str, name: str, organisation: str, password: str,
