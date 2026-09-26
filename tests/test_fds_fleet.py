@@ -292,6 +292,17 @@ def test_enqueue_appends_by_default(tmp_path):
     assert scheduler_mod.load_queue(tmp_path / "state") == [str(a), str(b)]
 
 
+def test_enqueue_clears_an_existing_failure_count(tmp_path):
+    """I6: a human choosing to re-enqueue this run is a deliberate "try it
+    again" -- the strikes from before must not carry over and put it one
+    poll from being skipped in place, or already there."""
+    run_dir = _write_deck(tmp_path / "run")
+    scheduler_mod._record_failure(run_dir)
+    scheduler_mod._record_failure(run_dir)
+    fleet.enqueue(run_dir, tmp_path / "state")
+    assert scheduler_mod._failure_count(run_dir) == 0
+
+
 def test_enqueue_never_duplicates_an_entry(tmp_path):
     tmp_path = tmp_path.resolve()
     run = _write_deck(tmp_path / "run" / "a")

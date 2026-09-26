@@ -11,6 +11,16 @@ from solit2.engines.fds import runner as runner_mod
 from solit2.engines.fds import scheduler
 
 
+@pytest.fixture(autouse=True)
+def _ready(monkeypatch):
+    """I6: step() now checks preflight() once per poll before launching
+    anything, and this machine has no real fds/mpiexec on PATH -- every
+    test below that expects a launch to happen needs preflight to say the
+    machine is ready, the same way it needs runner.run itself stubbed.
+    Tests exercising the I6 behaviour itself override this explicitly."""
+    monkeypatch.setattr(runner_mod, "preflight", lambda: [])
+
+
 # --- parse_blocks -------------------------------------------------------------
 
 def test_parse_blocks_splits_the_default_spec():
@@ -474,6 +484,24 @@ def test_reacquire_locks_logs_when_it_cannot_get_one(tmp_path, fake_run_dir):
         assert "could not re-acquire" in (tmp_path / scheduler.LOG_NAME).read_text()
     finally:
         held.close()
+
+
+def test_step_never_launches_or_charges_a_failure_when_preflight_has_problems(
+        tmp_path, fake_run_dir, monkeypatch):
+    """I6: a setup problem (no fds binary, low disk) is a fact about the
+    MACHINE, not about whichever run happens to be at the front of the
+    queue -- charging it as that run's own failure hit the whole queue's
+    MAX_FAILURES cap within three polls of, say, the disk filling up."""
+    monkeypatch.setattr(runner_mod, "preflight", lambda: ["less than 10 GB of free disk"])
+    monkeypatch.setattr(runner_mod, "run", lambda *a, **k: pytest.fail("must not launch"))
+    scheduler.save_queue(tmp_path, [str(fake_run_dir)])
+
+    state = scheduler.step(tmp_path, ("0-9",), {"0-9": None}, {}, set())
+
+    assert state == {"0-9": None}
+    assert scheduler.load_queue(tmp_path) == [str(fake_run_dir)], "left queued, untouched"
+    assert scheduler._failure_count(fake_run_dir) == 0, "a machine problem is not this run's fault"
+    assert "less than 10 GB" in (tmp_path / scheduler.LOG_NAME).read_text()
 
 
 def test_step_skips_a_run_that_has_failed_too_many_times_and_logs_once(tmp_path, fake_run_dir,

@@ -454,6 +454,18 @@ def step(state_dir: Path, blocks: tuple[str, ...], state: dict[str, str | None],
     free_blocks = [b for b in blocks if state[b] is None]
     if not free_blocks:
         return state
+    # I6: a setup problem (no fds binary, less than 10 GB free) is a fact
+    # about THIS MACHINE, not about whichever run dir happens to be next in
+    # the queue -- checked once per step(), before ever touching an entry,
+    # so it is never charged as that run's own failure. Without this, the
+    # very first launch attempt after, say, the disk filled up recorded a
+    # failure against the run at the front of the queue, then the next, then
+    # the next, and the whole queue hit MAX_FAILURES and sat skipped within
+    # three polls of a problem that had nothing to do with any of them.
+    problems = runner_mod.preflight()
+    if problems:
+        _log(state_dir, f"skipping this poll, nothing launched: {'; '.join(problems)}")
+        return state
     with queue_lock(state_dir):
         queue = load_queue(state_dir)
         # Entries this call has already tried and put back -- a lock held

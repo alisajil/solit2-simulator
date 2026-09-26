@@ -342,6 +342,11 @@ def enqueue(run_dir: Path, state_dir: Path, position: int | None = None) -> None
         else:
             queue.insert(max(0, min(position, len(queue))), entry)
         scheduler_mod.save_queue(state_dir, queue)
+    # I6: a human choosing to enqueue (or resume, which calls this) this run
+    # again is a deliberate "try it again" -- the failure count from before
+    # must not follow it back in and let it get skipped in place on its very
+    # next turn, or worse, be one strike from there already.
+    scheduler_mod._clear_failures(run_dir)
     _log_action(state_dir, "enqueue", run_dir, "ok")
 
 
