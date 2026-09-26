@@ -6,7 +6,7 @@ from streamlit.testing.v1 import AppTest
 
 from app import auth
 from app.accounts import service, store
-from tests.conftest import sign_in
+from tests.conftest import make_account, sign_in
 
 WHO = ("import streamlit as st\n"
        "from app import auth\n"
@@ -133,6 +133,22 @@ def test_a_timed_fragment_with_no_session_shows_nothing():
     at.run()
     assert not at.exception
     assert _written(at) == ["page", "after"]
+
+
+def test_a_must_change_session_shows_no_fragment_content():
+    """Item 4: a session that still must change its password gets no fragment content,
+    the same as an ended one -- but it is not signed out, and no rerun is forced; the
+    fragment just renders nothing this refresh, and its next full run shows the change
+    form instead."""
+    at = AppTest.from_string(GUARDED)
+    user = make_account(role="team", must_change_password=True)
+    at.session_state[auth.USER_ID_KEY] = user.id
+    at.session_state[auth.LAST_SEEN_KEY] = time.time()
+    at.session_state[auth.EPOCH_KEY] = user.session_epoch
+    at.run()
+    assert not at.exception
+    assert _written(at) == ["page", "after"]
+    assert auth.USER_ID_KEY in at.session_state  # not signed out
 
 
 def test_guard_fragment_fails_closed_on_a_store_error(monkeypatch):

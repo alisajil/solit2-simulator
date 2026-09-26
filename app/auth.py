@@ -81,6 +81,12 @@ def guard_fragment() -> bool:
     stopped -- so every one of them must make this same check itself, or a session that
     has ended could still keep rendering, or acting on, one it registered earlier.
 
+    True only for a signed-in account that does not still have to change its password.
+    A session with must_change_password set gets False too, the same as an ended one,
+    but is not signed out and no rerun is forced -- the fragment just renders nothing
+    this refresh; its next full run shows the change form instead, in place of whatever
+    the fragment would have shown.
+
     A timed refresh is not activity either, yet it must not keep showing data to a
     session that has ended. A session that just ended reruns the whole app, which shows
     the login. A run with no session at all gets False, so the fragment renders nothing
@@ -93,8 +99,8 @@ def guard_fragment() -> bool:
         user = current_user(touch=False)
     except sqlite3.Error:
         return False
-    if user is not None:
-        return True
-    if had_session:
-        st.rerun()
-    return False
+    if user is None:
+        if had_session:
+            st.rerun()
+        return False
+    return not user.must_change_password
