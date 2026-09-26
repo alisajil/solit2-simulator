@@ -82,11 +82,14 @@ def test_apply_vector_keeps_the_rest_of_the_calibration_intact(restored_calibrat
                 assert after[group][name] == entry, f"{group}.{name} was not being fitted"
 
 
-def test_fitted_keys_includes_the_ceiling_excess_coefficient(restored_calibration):
-    """Task 18 adds thermal.ceiling_excess_coefficient, and it must round-trip
-    through current_vector/apply_vector like every other one."""
-    assert ("thermal", "ceiling_excess_coefficient", 0.3, 2.0) in fit.FITTED_KEYS
+def test_ceiling_excess_coefficient_is_published_not_fitted():
+    """The fit may not move the ceiling correlation: at its 0.3 floor it was
+    buying suppressed HRR with 3x-low temperatures (accuracy-roadmap item 3)."""
+    assert all(name != "ceiling_excess_coefficient" for _, name, _, _ in fit.FITTED_KEYS)
+    assert load_calibration()["thermal"]["ceiling_excess_coefficient"]["value"] == 1.0
 
+
+def test_fitted_keys_round_trip_through_the_calibration_file(restored_calibration):
     vector = fit.current_vector()
     fit.apply_vector(vector)
     assert fit.current_vector() == pytest.approx(vector)

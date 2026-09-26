@@ -488,3 +488,14 @@ def test_a_flame_that_fits_under_the_ceiling_is_not_deflected_at_any_coefficient
                           fire_top_m=4.0, fire_base_m=1.5, fire_length_m=10.0,
                           fire_width_m=2.4, ambient_c=20.0)
     assert field.flame_tip_x_m == pytest.approx(0.0)
+
+
+def test_ceiling_excess_is_the_published_li_ingason_correlation_unscaled():
+    """Region II of Li & Ingason (2012): dT = Q / (V b^(1/3) H^(5/3)), no multiplier.
+
+    The fitted 0.314 made every plotted temperature 3x low against SOLIT2
+    Annex 2 (c4 201 C vs 830 C measured); see docs/accuracy-roadmap.md item 3.
+    """
+    hrr_kw, q_conv_kw, u_ms, b_m, h_m = 14_500.0, 9_425.0, 5.08, 2.764, 6.125
+    expected = hrr_kw / (u_ms * b_m ** (1 / 3) * h_m ** (5 / 3))
+    assert thermal.max_ceiling_excess_k(hrr_kw, q_conv_kw, u_ms, b_m, h_m) == pytest.approx(expected)

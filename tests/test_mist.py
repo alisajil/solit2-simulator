@@ -824,13 +824,16 @@ def test_the_engine_does_not_oscillate_step_to_step():
     design = Design.load("examples/designs/road-tunnel-twin-bore.json")
     result = env.run(design)
     trace = run_once(design, result.worst_case["section"], result.worst_case["velocity_ms"])
-    tops = [s.stations["D03"].temps_c[-1] for s in trace.steps]
+    # Judged once the pumps are at full pressure. Before that the valves opening
+    # and the pumps ramping are real step changes in the system, not artefacts
+    # of the model: at the published ceiling correlation the first second of
+    # spray drops D03 by about 9 C, once, monotonically, where the 0.314
+    # multiplier had compressed the same step under 2 C.
+    settled = trace.events["t_full_pressure_s"]
+    tops = [s.stations["D03"].temps_c[-1] for s in trace.steps if s.t_s >= settled]
     jumps = [abs(b - a) for a, b in zip(tops, tops[1:])]
     assert max(jumps) < 2.0, f"largest one-second change {max(jumps):.1f} C"
-    # and the cooling fraction that drives it, once the pumps are at full
-    # pressure. Before that the valves opening and the pumps ramping are real
-    # step changes in the system, not artefacts of the model.
-    settled = trace.events["t_full_pressure_s"]
+    # and the cooling fraction that drives it, over the same window.
     chis = [s.mist.chi_cool for s in trace.steps if s.t_s >= settled]
     chi_jumps = [abs(b - a) for a, b in zip(chis, chis[1:])]
     assert max(chi_jumps) < 0.02, (
