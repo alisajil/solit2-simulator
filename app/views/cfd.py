@@ -22,8 +22,10 @@ from app.components import twin_canvas
 from app.views.fire_test import ensure_trace
 from app.views.result import ensure_result
 from solit2.engines.fds import deck as fds_deck
+from solit2.engines.fds import fleet as fds_fleet
 from solit2.engines.fds import reader as fds_reader
 from solit2.engines.fds import runner as fds_runner
+from solit2.engines.fds import scheduler as fds_scheduler
 from solit2.engines.fds import slices
 from solit2.engines.fds.exec_run import DESIGN_NAME
 from solit2.engines.reduced.criteria import FLAME_CONTACT_FLUX_KWM2
@@ -85,18 +87,25 @@ def _pause_controls(run_dir: Path) -> None:
 
     Pausing asks FDS to stop and needs it to reach another time step to
     notice. A wedged run never does, and then only a kill ends it.
+
+    Goes through `fleet.pause`/`fleet.stop`, not `runner.pause`/`runner.stop`
+    directly: this step is one of two surfaces that can act on a run (the
+    "CFD runs" manager page is the other), and fleet's own audit trail in
+    `actions.jsonl` is only complete if every surface writes to it -- a
+    pause or a stop from here used to leave no record at all.
     """
+    state_dir = fds_scheduler.resolve_state_dir()
     pause_col, stop_col = st.columns(2)
     if pause_col.button("Pause this run", key="fds_pause"):
         try:
-            fds_runner.pause(run_dir)
+            fds_fleet.pause(run_dir, state_dir)
         except OSError as exc:
             st.error(f"Could not ask the run to stop: {exc}")
             return
         st.rerun(scope="app")
     if stop_col.button("Stop it now", key="fds_stop"):
         try:
-            killed = fds_runner.stop(run_dir)
+            killed = fds_fleet.stop(run_dir, state_dir)
         except OSError as exc:
             # Refusing is the honest answer when the run's processes cannot be
             # identified or are not this session's to signal. Reporting it as
@@ -135,6 +144,18 @@ def _start_controls(design: Design, run_dir: Path, verb: str, suppression: bool)
     st.caption("A Tier 2 run takes hours. It runs in the background; this page keeps up with it."
                + ("" if suppression else
                   " The free burn carries no droplets, so it is the cheaper of the two."))
+    # Known limit: this step launches directly (runner.run below), unpinned
+    # to any scheduler core block -- it does not go through fleet.enqueue
+    # and the scheduler queue the way a resume from the "CFD runs" page
+    # does. On a server where solit2 fds-scheduler is also managing pinned
+    # runs, a run started here competes with them for whichever cores the
+    # OS scheduler happens to give it, rather than getting a reserved block.
+    # fleet.summarise() does count it once running (by its own mesh/rank
+    # count), so it is visible on the runs page, just never pinned.
+    if fds_scheduler.is_running(fds_scheduler.resolve_state_dir()):
+        st.caption("Note: this launches directly, not through the core-block scheduler "
+                   "that is currently running -- it will compete for CPU with pinned runs "
+                   "rather than reserving its own cores. See the \"CFD runs\" page.")
     choice = st.radio("Simulated window", list(DURATIONS), horizontal=True,
                       key=f"fds_minutes{_suffix(suppression)}",
                       index=list(DURATIONS).index(DEFAULT_DURATION),

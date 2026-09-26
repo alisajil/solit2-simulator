@@ -72,7 +72,8 @@ _STOPPED_BY_USER = "STOP: FDS stopped by user"
 # below ever gets a look. A genuine "STOP: Numerical instability..." or any
 # other STOP/ERROR line still matches and is still reported failed.
 _ERROR = re.compile(
-    r"^[ \t]*(?:ERROR|STOP: (?!FDS completed successfully|FDS stopped by user))",
+    r"^[ \t]*(?:ERROR|STOP: (?!" + re.escape(_DONE.removeprefix("STOP: ")) + "|"
+    + re.escape(_STOPPED_BY_USER.removeprefix("STOP: ")) + r"))",
     re.MULTILINE)
 # FDS banners its build as "Revision : FDS6.9.1-0-g..." or "Version : FDS 6.7.0".
 _VERSION = re.compile(r"(?:FDS|Version\s*:)\s*v?(\d+\.\d+(?:\.\d+)?)")

@@ -47,6 +47,27 @@ def test_with_fds_ready_the_start_button_names_the_default_window(run_view, monk
     assert at.button(key="fds_start").label == "Start FDS run (20 min)"
 
 
+def test_start_warns_when_a_pinning_scheduler_is_running(run_view, monkeypatch, tmp_path):
+    """Known limit, documented rather than fixed in this round: this step
+    launches unpinned, never through the scheduler's own queue -- worth
+    saying out loud only when there is a scheduler actually pinning OTHER
+    runs to reserved cores for this one to compete with."""
+    from app.views import cfd
+    _isolate(monkeypatch, tmp_path, [])
+    monkeypatch.setattr(cfd.fds_scheduler, "is_running", lambda state_dir: True)
+    at = run_view("cfd")
+    assert any("core-block scheduler" in c.value for c in at.caption)
+
+
+def test_start_says_nothing_about_pinning_with_no_scheduler_running(run_view, monkeypatch,
+                                                                    tmp_path):
+    from app.views import cfd
+    _isolate(monkeypatch, tmp_path, [])
+    monkeypatch.setattr(cfd.fds_scheduler, "is_running", lambda state_dir: False)
+    at = run_view("cfd")
+    assert not any("core-block scheduler" in c.value for c in at.caption)
+
+
 def test_start_writes_the_shortened_deck_and_launches(run_view, monkeypatch, tmp_path):
     run_dir = _isolate(monkeypatch, tmp_path, [])
     launched = []
