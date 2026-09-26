@@ -31,6 +31,7 @@ from pathlib import Path
 from solit2.engines.fds import deck as deck_mod
 from solit2.engines.fds import reader as reader_mod
 from solit2.engines.fds import runner as runner_mod
+from solit2.engines.fds.exec_run import DESIGN_NAME
 from solit2.schema.design import Design
 
 # The quantities a grid study checks, in report order -- whichever of these
@@ -58,7 +59,12 @@ def write_decks(design: Design, dx_values: tuple[float, ...], t_end_s: float,
     """One suppressed deck per dx, all under the design's own CHID so the
     three grids of one study sit under a single parent directory. Each dx
     must be one `deck.generate` accepts (it validates tiling); its ValueError,
-    naming which dx failed and why, is left to surface as-is."""
+    naming which dx failed and why, is left to surface as-is.
+
+    `design.json` is written beside every deck too -- the run manager and
+    `runner.resume`/`prepare_resume` need it to regenerate a RESTART=.TRUE.
+    deck if a grid point is ever paused or interrupted and resumed later.
+    """
     chid = deck_mod.chid(design)
     written = []
     for dx_m in dx_values:
@@ -66,6 +72,10 @@ def write_decks(design: Design, dx_values: tuple[float, ...], t_end_s: float,
         run_dir.mkdir(parents=True, exist_ok=True)
         deck_path = run_dir / "deck.fds"
         deck_path.write_text(deck_mod.generate(design, dx_m=dx_m, t_end_s=t_end_s))
+        # by_alias=True -- see fleet.adopt_design for why this must not be the bare
+        # field-name dump: Design.load rejects it once a block sets a field with an
+        # alias (Fire.fire_class / "class") explicitly.
+        (run_dir / DESIGN_NAME).write_text(design.model_dump_json(indent=2, by_alias=True))
         written.append(deck_path)
     return written
 

@@ -83,6 +83,19 @@ def test_write_decks_lays_out_one_deck_per_dx_under_the_designs_chid(tmp_path):
         assert "T_END=300.0" in expected.read_text()
 
 
+def test_write_decks_writes_design_json_beside_every_deck(tmp_path):
+    from solit2.engines.fds import deck as deck_mod
+    from solit2.engines.fds.exec_run import DESIGN_NAME
+
+    design = Design.load(BASELINE)
+    grid.write_decks(design, (1.2, 0.6), 300.0, tmp_path)
+    chid = deck_mod.chid(design)
+    for dx in (1.2, 0.6):
+        design_path = tmp_path / chid / f"dx_{dx:.2f}" / DESIGN_NAME
+        assert design_path.exists()
+        assert Design.load(design_path) == design
+
+
 def test_write_decks_surfaces_a_bad_dx_as_the_generators_own_error(tmp_path):
     design = Design.load(BASELINE)
     with pytest.raises(ValueError, match="does not tile"):
