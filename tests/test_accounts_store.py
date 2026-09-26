@@ -49,6 +49,26 @@ def test_init_again_keeps_what_is_stored(db):
         assert len(store.list_users(conn)) == 1
 
 
+def test_init_stamps_a_store_below_the_current_version(db):
+    with store.connect(db) as conn:
+        conn.execute("PRAGMA user_version = 0")
+    store.init(db)
+    with store.connect(db) as conn:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == store.SCHEMA_VERSION
+
+
+def test_init_refuses_a_store_stamped_newer_than_this_code(db):
+    newer = store.SCHEMA_VERSION + 1
+    with store.connect(db) as conn:
+        conn.execute(f"PRAGMA user_version = {newer}")
+    with pytest.raises(sqlite3.DatabaseError) as excinfo:
+        store.init(db)
+    message = str(excinfo.value)
+    assert str(newer) in message and str(store.SCHEMA_VERSION) in message
+    with store.connect(db) as conn:
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == newer  # left untouched
+
+
 def test_a_user_round_trips_with_aware_times_and_has_no_hash_field(db):
     with store.connect(db) as conn:
         user = store.user_by_id(conn, _add(conn, must_change_password=True))
@@ -89,24 +109,55 @@ def test_update_names_only_updatable_columns(db):
         with pytest.raises(ValueError), store.connect(db) as conn:
             store.update_user(conn, user_id, **bad)
     with store.connect(db) as conn:
-        store.update_user(conn, user_id, state="approved", role="team", approved_at=T0,
-                          must_change_password=False)
+        changed = store.update_user(conn, user_id, state="approved", role="team", approved_at=T0,
+                                    must_change_password=False)
         user = store.user_by_id(conn, user_id)
+    assert changed is True
     assert (user.state, user.role, user.approved_at, user.email) == (
         "approved", "team", T0, "a@example.test")
 
 
-def test_the_fifth_failed_login_locks_and_restarts_the_count(db):
+def test_update_user_with_expected_state_only_applies_when_it_still_matches(db):
+    with store.connect(db) as conn:
+        user_id = _add(conn, state="pending")
+        stale = store.update_user(conn, user_id, expected_state="approved", state="rejected")
+        assert stale is False
+        assert store.user_by_id(conn, user_id).state == "pending"
+        fresh = store.update_user(conn, user_id, expected_state="pending", state="rejected")
+        assert fresh is True
+        assert store.user_by_id(conn, user_id).state == "rejected"
+
+
+def test_session_epoch_defaults_to_zero_and_bump_increments_it(db):
+    with store.connect(db) as conn:
+        user_id = _add(conn)
+        assert store.user_by_id(conn, user_id).session_epoch == 0
+        store.bump_session_epoch(conn, user_id)
+        store.bump_session_epoch(conn, user_id)
+        assert store.user_by_id(conn, user_id).session_epoch == 2
+
+
+def test_claim_login_attempt_counts_locks_at_the_limit_and_refuses_while_locked(db):
     until = T0 + timedelta(minutes=15)
     with store.connect(db) as conn:
         user_id = _add(conn)
         for _ in range(4):
-            store.record_failed_login(conn, user_id, limit=5, lock_until=until)
+            assert store.claim_login_attempt(
+                conn, user_id, limit=5, lock_until=until, now=T0) is True
         user = store.user_by_id(conn, user_id)
         assert (user.failed_logins, user.locked_until) == (4, None)
-        store.record_failed_login(conn, user_id, limit=5, lock_until=until)
+        # the 5th claim in a row locks the account and restarts the count
+        assert store.claim_login_attempt(conn, user_id, limit=5, lock_until=until, now=T0) is True
         user = store.user_by_id(conn, user_id)
-    assert (user.failed_logins, user.locked_until) == (0, until)
+        assert (user.failed_logins, user.locked_until) == (0, until)
+        # a claim while still locked is refused and changes nothing
+        assert store.claim_login_attempt(conn, user_id, limit=5, lock_until=until, now=T0) is False
+        user = store.user_by_id(conn, user_id)
+        assert (user.failed_logins, user.locked_until) == (0, until)
+        # once locked_until has passed, a claim succeeds again
+        after = until + timedelta(seconds=1)
+        assert store.claim_login_attempt(
+            conn, user_id, limit=5, lock_until=after + timedelta(minutes=15), now=after) is True
 
 
 def test_a_block_that_raises_leaves_nothing_behind(db):

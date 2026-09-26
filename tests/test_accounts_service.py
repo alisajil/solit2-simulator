@@ -1,6 +1,7 @@
 """The account rules: sign-up, login and lockout, the admin's state machine, temporary passwords."""
 import ast
 import logging
+import threading
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -152,6 +153,52 @@ def test_a_hash_under_old_parameters_is_replaced_at_the_next_login(db, admin):
     assert fresh != old and not passwords.needs_rehash(fresh)
 
 
+# --- I2 regression: the lockout must hold under concurrent logins ------------
+
+def _run_concurrently(targets: list) -> list[str | None]:
+    """Every callable in `targets` starts together, released by one shared barrier --
+    the same way concurrent Streamlit sessions would each call service.log_in."""
+    barrier = threading.Barrier(len(targets))
+    results: list[str | None] = [None] * len(targets)
+
+    def _run(index: int, target) -> None:
+        barrier.wait()
+        results[index] = target()
+
+    threads = [threading.Thread(target=_run, args=(i, t)) for i, t in enumerate(targets)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    return results
+
+
+def test_concurrent_wrong_logins_cannot_all_slip_under_the_lockout_limit(db, admin):
+    """The review's reproduction: 20 threads racing service.log_in with a wrong password,
+    as 20 Streamlit sessions might. The claim happens before the slow argon2 verify, so
+    at most MAX_FAILED_LOGINS of them are ever evaluated; the rest are told the account
+    is locked without their password being checked at all."""
+    user = _approved(db, admin)
+    statuses = _run_concurrently(
+        [lambda: service.log_in(db, user.email, WRONG, now=T0).status for _ in range(20)])
+    assert statuses.count("wrong") <= service.MAX_FAILED_LOGINS
+    assert statuses.count("wrong") + statuses.count("locked") == 20
+
+
+def test_a_correct_password_in_a_concurrent_burst_is_not_exempt_from_the_limit(db, admin):
+    """19 wrong guesses and the right password, all at once: the right one is not
+    guaranteed to win a race for one of the limited slots, but the TOTAL number of
+    attempts actually evaluated (wrong or ok) must still be bounded by the limit."""
+    user = _approved(db, admin)
+    guesses = [PASSWORD] + [WRONG] * 19
+    statuses = _run_concurrently(
+        [(lambda guess=guess: service.log_in(db, user.email, guess, now=T0).status)
+         for guess in guesses])
+    evaluated = statuses.count("wrong") + statuses.count("ok")
+    assert evaluated <= service.MAX_FAILED_LOGINS
+    assert statuses.count("locked") == 20 - evaluated
+
+
 # --- the admin's state machine ------------------------------------------------
 
 def test_approving_sets_the_role_and_who_approved_it(db, admin):
@@ -174,6 +221,27 @@ def test_a_rejected_account_stays_rejected(db, admin):
         service.approve(db, admin.id, user.id, "team", now=T0)
 
 
+def test_a_stale_transition_leaves_the_account_as_the_other_admin_left_it(db, admin, monkeypatch):
+    """M2 regression: two admins reading the same pending account at almost the same
+    moment must not let the second one's write silently clobber the first's. Simulated
+    by mutating the row, through a second connection, right after this call's own read
+    of it -- exactly the race two admins acting at once could hit."""
+    user = _sign_up(db)
+    real_target = service._target
+
+    def racing_target(conn, acting_admin, user_id):
+        target = real_target(conn, acting_admin, user_id)
+        if target.id == user.id:  # simulates the other admin's reject landing in between
+            with store.connect(db) as other_conn:
+                store.update_user(other_conn, user.id, state="rejected")
+        return target
+
+    monkeypatch.setattr(service, "_target", racing_target)
+    with pytest.raises(AccountError, match="changed a moment ago"):
+        service.approve(db, admin.id, user.id, "team", now=T0)
+    assert _by_email(db, user.email).state == "rejected"
+
+
 def test_disable_and_re_enable_keep_the_role(db, admin):
     user = _approved(db, admin, role="customer")
     assert service.disable(db, admin.id, user.id, now=T0).state == "disabled"
@@ -181,6 +249,21 @@ def test_disable_and_re_enable_keep_the_role(db, admin):
         service.disable(db, admin.id, user.id, now=T0)
     enabled = service.enable(db, admin.id, user.id, now=T0)
     assert (enabled.state, enabled.role) == ("approved", "customer")
+
+
+def test_disable_bumps_the_session_epoch_but_approve_and_enable_do_not(db, admin):
+    """I1 regression: only a change that must evict an existing session bumps the
+    epoch. Approving a fresh sign-up and re-enabling a disabled account do not --
+    neither one is ending a session the account already has open."""
+    signed_up = _sign_up(db)
+    approved = service.approve(db, admin.id, signed_up.id, "team", now=T0)
+    assert approved.session_epoch == signed_up.session_epoch == 0
+
+    disabled = service.disable(db, admin.id, approved.id, now=T0)
+    assert disabled.session_epoch == approved.session_epoch + 1
+
+    enabled = service.enable(db, admin.id, approved.id, now=T0)
+    assert enabled.session_epoch == disabled.session_epoch
 
 
 def test_an_admin_cannot_change_their_own_account(db, admin):
@@ -239,6 +322,14 @@ def test_a_temporary_password_is_for_approved_accounts_only(db, admin):
         service.issue_temporary_password(db, admin.id, user.id, now=T0)
 
 
+def test_issuing_a_temporary_password_bumps_the_session_epoch(db, admin):
+    """I1: a password reset must end every session the account already has open."""
+    user = _approved(db, admin)
+    epoch = user.session_epoch
+    service.issue_temporary_password(db, admin.id, user.id, now=T0)
+    assert _by_email(db, user.email).session_epoch == epoch + 1
+
+
 def test_changing_the_password_clears_the_must_change_flag(db, admin):
     user = _approved(db, admin)
     temporary = service.issue_temporary_password(db, admin.id, user.id, now=T0)
@@ -250,6 +341,16 @@ def test_changing_the_password_clears_the_must_change_flag(db, admin):
     result = service.log_in(db, user.email, NEW_PASSWORD, now=T0)
     assert (result.status, result.user.must_change_password) == ("ok", False)
     assert service.log_in(db, user.email, temporary, now=T0).status == "wrong"
+
+
+def test_changing_the_password_bumps_the_epoch_and_returns_the_updated_account(db, admin):
+    """I1: change_password returns the fresh account (must_change_password cleared and
+    the bumped epoch) so the caller can re-sign its own session in with it."""
+    user = _approved(db, admin)
+    epoch = user.session_epoch
+    updated = service.change_password(db, user.id, NEW_PASSWORD, NEW_PASSWORD)
+    assert updated.must_change_password is False
+    assert updated.session_epoch == epoch + 1
 
 
 # --- the first admin ----------------------------------------------------------

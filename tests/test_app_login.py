@@ -160,7 +160,7 @@ def test_an_approved_login_opens_the_app(monkeypatch, tmp_path):
     _log_in(at, " T@Example.test ", TEST_PASSWORD)
     assert not at.exception
     assert {"nav_simulator", "nav_wizard", "nav_runs", "nav_logout"} <= _keys(at)
-    assert "Signed in as t@example.test" in [c.value for c in at.caption]
+    assert "Signed in as `t@example.test`" in [c.value for c in at.caption]
     assert any("CFD runs" in h.value for h in at.header)
 
 
@@ -200,6 +200,58 @@ def test_a_temporary_password_is_replaced_before_anything_else(monkeypatch, tmp_
     assert "nav_runs" in _keys(at)
     result = service.log_in(store.db_path(), "t@example.test", NEW_PASSWORD)
     assert result.user.must_change_password is False
+
+
+def test_a_temporary_password_ends_the_accounts_other_live_sessions(monkeypatch, tmp_path):
+    """I1 regression -- the review's own reproduction: before the fix, a session that was
+    already signed in when the admin issued a temporary password could finish the forced
+    change on its NEXT run with no login and no knowledge of the temporary password at
+    all. The fix must show that session the login instead, with REVOKED_NOTICE, and
+    never the change form."""
+    user = make_account(role="team", email="t@example.test")
+    admin = make_account(role="admin", email="admin@example.test")
+    session = _app(monkeypatch, tmp_path)
+    session.session_state[auth.USER_ID_KEY] = user.id
+    session.session_state[auth.LAST_SEEN_KEY] = time.time()
+    session.session_state[auth.EPOCH_KEY] = user.session_epoch
+    session.run()
+    assert "nav_runs" in _keys(session)  # the session starts out live
+
+    service.issue_temporary_password(store.db_path(), admin.id, user.id)
+    session.run()
+    assert not session.exception
+    assert "change_submit" not in _keys(session)
+    assert "login_submit" in _keys(session)
+    assert auth.REVOKED_NOTICE in [i.value for i in session.info]
+
+
+def test_changing_the_password_keeps_the_changing_session_in_and_ends_the_others(monkeypatch,
+                                                                                 tmp_path):
+    """I1: the session that makes the change stays signed in, with the new epoch; a
+    second, separate session of the same account -- signed in with the same temporary
+    password -- is ended at its next run instead of being allowed to finish the change
+    itself."""
+    user = make_account(role="team", email="t@example.test", must_change_password=True)
+
+    def _seeded_session() -> AppTest:
+        session = _app(monkeypatch, tmp_path)
+        session.session_state[auth.USER_ID_KEY] = user.id
+        session.session_state[auth.LAST_SEEN_KEY] = time.time()
+        session.session_state[auth.EPOCH_KEY] = user.session_epoch
+        return session
+
+    changing, other = _seeded_session(), _seeded_session()
+    changing.run()
+    other.run()
+    assert "change_submit" in _keys(changing) and "change_submit" in _keys(other)
+
+    _change(changing, NEW_PASSWORD, NEW_PASSWORD)
+    assert not changing.exception
+    assert "nav_runs" in _keys(changing)  # the changing session stays signed in
+
+    other.run()
+    assert "login_submit" in _keys(other)
+    assert auth.REVOKED_NOTICE in [i.value for i in other.info]
 
 
 def test_an_unreadable_store_shows_that_and_nothing_else(monkeypatch, tmp_path):

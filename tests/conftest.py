@@ -48,6 +48,7 @@ def sign_in(at: AppTest, role: str = "team", email: str | None = None) -> store.
     user = make_account(role=role, email=email)
     at.session_state[auth.USER_ID_KEY] = user.id
     at.session_state[auth.LAST_SEEN_KEY] = time.time()
+    at.session_state[auth.EPOCH_KEY] = user.session_epoch
     return user
 
 

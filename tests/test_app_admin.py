@@ -1,9 +1,12 @@
 """The Admin screen, headless: approvals, account actions and the trail they leave."""
+import sqlite3
+from datetime import UTC, datetime
+
 import streamlit as st
 from streamlit.testing.v1 import AppTest
 
 from app.accounts import service, store
-from app.views import cfd, simulator
+from app.views import admin, cfd, simulator
 from solit2 import history
 from tests.conftest import TEST_PASSWORD, make_account, screen_text, sign_in
 
@@ -56,13 +59,21 @@ def test_an_admin_has_the_nav_entry_and_the_three_sections(monkeypatch, tmp_path
     assert [s.value for s in at.subheader] == ["Waiting for approval", "Accounts", "Admin actions"]
 
 
+def test_the_pending_list_warns_that_sign_ups_are_unverified(monkeypatch, tmp_path):
+    """M4: sign-ups are not verified, so the admin must be told to check with the person
+    before approving one."""
+    make_account(role=None, state="pending", email="p@example.test")
+    at, _ = _app(monkeypatch, tmp_path)
+    assert any("Sign-ups are not verified" in c.value for c in at.caption)
+
+
 def test_approving_a_sign_up_as_team(monkeypatch, tmp_path):
     pending = make_account(role=None, state="pending", email="p@example.test")
     at, _ = _app(monkeypatch, tmp_path)
     at.button(key=f"adm_team_{pending.id}").click().run()
     assert not at.exception
     assert (_user("p@example.test").state, _user("p@example.test").role) == ("approved", "team")
-    assert [s.value for s in at.success] == ["Approved p@example.test as team."]
+    assert [s.value for s in at.success] == ["Approved `p@example.test` as team."]
     assert f"adm_team_{pending.id}" not in _keys(at)
     assert f"adm_disable_{pending.id}" in _keys(at)
 
@@ -117,3 +128,36 @@ def test_the_admin_screen_lists_accounts_and_never_shows_a_hash(monkeypatch, tmp
     text = screen_text(at)
     assert "p@example.test" in text and "m@example.test" in text
     assert "$argon2" not in text and TEST_PASSWORD not in text
+
+
+def test_a_crafted_name_shows_verbatim_in_text_and_never_in_markdown(monkeypatch, tmp_path):
+    """Ruling 9 (M7): names are typed by visitors and read by the admin, so one crafted
+    to look like markdown must render as literal text -- never an emphasis, a link, or a
+    caption that a markdown renderer would act on."""
+    crafted = "**x** [y](z)"
+    db = store.db_path()
+    store.init(db)
+    with store.connect(db) as conn:
+        store.insert_user(conn, email="crafted@example.test", name=crafted,
+                          organisation="Org", password_hash="$argon2id$fake", state="pending",
+                          now=datetime.now(UTC))
+    at, _ = _app(monkeypatch, tmp_path)
+    assert any(crafted in t.value for t in at.text)
+    assert not any(crafted in m.value for m in at.markdown)
+    assert not any(crafted in c.value for c in at.caption)
+
+
+def test_an_admin_action_that_hits_a_store_error_is_shown_not_raised(monkeypatch, tmp_path):
+    """M8: a sqlite3.Error from an admin action (for example "database is locked" under
+    load) must be shown where the button was, not surfaced as a traceback."""
+    pending = make_account(role=None, state="pending", email="p@example.test")
+    at, _ = _app(monkeypatch, tmp_path)
+
+    def raise_operational_error(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(service, "approve", raise_operational_error)
+    at.button(key=f"adm_team_{pending.id}").click().run()
+    assert not at.exception
+    assert admin.STORE_UNAVAILABLE in [e.value for e in at.error]
+    assert _user("p@example.test").state == "pending"

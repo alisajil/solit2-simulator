@@ -1,10 +1,11 @@
 """The signed-in session: who it is, when it ends, and timed fragments that respect it."""
+import sqlite3
 import time
 
 from streamlit.testing.v1 import AppTest
 
 from app import auth
-from app.accounts import store
+from app.accounts import service, store
 from tests.conftest import sign_in
 
 WHO = ("import streamlit as st\n"
@@ -78,6 +79,19 @@ def test_an_account_no_longer_approved_ends_its_session():
     assert at.session_state[auth.NOTICE_KEY] == auth.NO_ACCESS_NOTICE
 
 
+def test_a_session_whose_account_epoch_moved_on_ends_with_the_revoked_notice():
+    """I1: a password reset (or any other change that bumps the epoch) ends every
+    session of the account that is not the one that made the change."""
+    at = AppTest.from_string(WHO)
+    user = sign_in(at)
+    with store.connect(store.db_path()) as conn:
+        store.bump_session_epoch(conn, user.id)
+    at.run()
+    assert _written(at) == ["user None"]
+    assert at.session_state[auth.NOTICE_KEY] == auth.REVOKED_NOTICE
+    assert auth.USER_ID_KEY not in at.session_state
+
+
 def test_sign_out_keeps_only_its_notice():
     at = AppTest.from_string(SIGN_OUT)
     sign_in(at)
@@ -118,4 +132,19 @@ def test_a_timed_fragment_with_no_session_shows_nothing():
     at = AppTest.from_string(GUARDED)
     at.run()
     assert not at.exception
+    assert _written(at) == ["page", "after"]
+
+
+def test_guard_fragment_fails_closed_on_a_store_error(monkeypatch):
+    """M8: a store error (for example "database is locked" under load) must not surface
+    as a traceback from inside a fragment; guard_fragment reports False instead."""
+    def raise_operational_error(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(service, "get_user", raise_operational_error)
+    at = AppTest.from_string(GUARDED)
+    sign_in(at)
+    at.run()
+    assert not at.exception
+    assert "panel" not in _written(at)
     assert _written(at) == ["page", "after"]
