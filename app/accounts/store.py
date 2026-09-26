@@ -181,6 +181,10 @@ def password_hash(conn: sqlite3.Connection, user_id: int) -> str | None:
     return None if row is None else row["password_hash"]
 
 
+def has_admin(conn: sqlite3.Connection) -> bool:
+    return conn.execute("SELECT 1 FROM users WHERE role = 'admin' LIMIT 1").fetchone() is not None
+
+
 def list_users(conn: sqlite3.Connection) -> list[User]:
     rows = conn.execute(
         f"SELECT {_USER_COLUMNS} FROM users ORDER BY created_at DESC, id DESC").fetchall()
