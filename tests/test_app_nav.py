@@ -34,6 +34,11 @@ def test_the_nav_opens_the_wizard_and_comes_back(monkeypatch, tmp_path):
     assert not at.exception
     assert "step_1" in _keys(at)
     at.button(key="nav_simulator").click().run()
+    # C-1: the round trip itself must not crash (Streamlit drops the velocity
+    # slider's keyed state on the run that doesn't render it) and must land back
+    # on the simulator, not silently stay on the wizard's own view.
+    assert not at.exception
+    assert at.session_state["view"] == "simulator"
     assert "step_1" not in _keys(at)
 
 

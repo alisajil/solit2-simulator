@@ -120,6 +120,24 @@ def _seed(design: Design) -> None:
     st.session_state[_SEEDED_FROM] = design
 
 
+def _needs_seed(design: Design) -> bool:
+    """True when the sliders must be rewritten from `design` before they render.
+
+    Streamlit deletes a keyed widget's state at the end of any run that does not
+    render that widget -- which is exactly what happens to every slider here while
+    another view is showing. `_SEEDED_FROM` is a plain key (not a widget's), so it
+    survives that deletion and still equals the unchanged design on return, which
+    would skip reseeding: the velocity range slider would then have no state and
+    return a single number, not a `(low, high)` pair, crashing the unpack in
+    `_sidebar` -- and had that not crashed, every OTHER slider would have silently
+    reinitialised at its own minimum, corrupting the shared design underneath it.
+    """
+    if st.session_state.get(_SEEDED_FROM) != design:
+        return True
+    return any(slider.key not in st.session_state for slider in SLIDERS) or (
+        VELOCITY_KEY not in st.session_state)
+
+
 def _presets() -> None:
     files = preset_files()
     labels = [p.stem for p in files]
@@ -127,8 +145,18 @@ def _presets() -> None:
     if chosen is None:
         st.session_state[_APPLIED_PRESET] = None
     elif st.session_state.get(_APPLIED_PRESET) != chosen:
+        path = files[labels.index(chosen)]
+        try:
+            design = Design.load(path)
+        except (OSError, ValueError) as exc:   # pydantic's ValidationError is a ValueError
+            # Load first, mark applied only on success (M-4): marking it before the
+            # load left a schema-invalid file's traceback on screen AND the pill
+            # marked applied against the design that failed to load, so a later
+            # rerun would not even retry it.
+            st.error(f"Could not load {path}: {exc}. The screen keeps the current design.")
+            return
         st.session_state[_APPLIED_PRESET] = chosen
-        state.set_design(Design.load(files[labels.index(chosen)]))
+        state.set_design(design)
         st.rerun()
 
 
@@ -220,7 +248,7 @@ def render() -> None:
     if design is None:
         design = Design.load(DEFAULT_PRESET)
         state.set_design(design)
-    if st.session_state.get(_SEEDED_FROM) != design:
+    if _needs_seed(design):
         _seed(design)
     changes = _sidebar(design)
     if changes:

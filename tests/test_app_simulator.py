@@ -1,6 +1,8 @@
 """The landing screen, headless: live readings of the engine's own output."""
+import pytest
 from streamlit.testing.v1 import AppTest
 
+from app.components import readings
 from app.views import cfd, simulator
 from solit2 import history
 from solit2.engines.fds import deck
@@ -87,6 +89,74 @@ def test_a_preset_loads_that_design_file(monkeypatch, tmp_path):
     at.run()
     expected = Design.load("examples/designs/solit2-test-protocol-class-b.json")
     assert at.session_state["design"] == expected
+
+
+def _slider_values(at: AppTest) -> dict:
+    return {s.key: s.value for s in at.sidebar.slider}
+
+
+def _expected_slider_values(design: Design) -> dict:
+    raw = design.model_dump(by_alias=True, mode="json")
+    values = {s.key: simulator._current(design, raw, s) for s in simulator.SLIDERS}
+    lo, hi = simulator._get(raw, simulator.VELOCITY_PATH)
+    values[simulator.VELOCITY_KEY] = (float(lo), float(hi))
+    return values
+
+
+@pytest.mark.parametrize("away", ["nav_wizard", "nav_runs"])
+def test_returning_to_the_simulator_does_not_crash_or_corrupt_the_design(
+        monkeypatch, tmp_path, away):
+    """C-1: Streamlit deletes a keyed widget's state at the end of any run that does
+    not render it, so the velocity slider has no state by the time the simulator
+    renders again -- and, unfixed, `_seed` is skipped because `_SEEDED_FROM` (a plain
+    key) survives and still equals the unchanged design. Reproduced for every way
+    back: the top-level nav, the sidebar's own "Open the wizard" button, and the
+    runs manager."""
+    monkeypatch.delenv("SOLIT2_RUN_ROOTS", raising=False)
+    at = _app(monkeypatch, tmp_path)
+    design = at.session_state["design"]
+    at.button(key=away).click().run()
+    assert not at.exception
+    at.button(key="nav_simulator").click().run()
+    assert not at.exception, [str(e.value) for e in at.exception]
+    assert at.session_state["design"] == design
+    assert _slider_values(at) == _expected_slider_values(design)
+
+
+def test_returning_via_the_sidebars_open_the_wizard_button_does_not_crash(
+        monkeypatch, tmp_path):
+    """The third way back (see C-1 above): the sidebar's own button, not the header nav."""
+    at = _app(monkeypatch, tmp_path)
+    design = at.session_state["design"]
+    at.sidebar.button(key="sim_open_wizard").click().run()
+    assert not at.exception
+    at.button(key="nav_simulator").click().run()
+    assert not at.exception, [str(e.value) for e in at.exception]
+    assert at.session_state["design"] == design
+    assert _slider_values(at) == _expected_slider_values(design)
+
+
+def test_a_preset_that_fails_to_load_reports_the_file_and_reason_and_keeps_the_design(
+        monkeypatch, tmp_path):
+    """M-4: `_presets()` used to mark the pill applied BEFORE the unguarded
+    `Design.load`, so a schema-invalid file left a traceback and the pill marked
+    on the OLD design. It must load first, and only mark the preset applied on
+    success."""
+    bad = tmp_path / "bad.json"
+    bad.write_text("{}")   # valid JSON, not a valid Design: fails schema validation
+    monkeypatch.setattr(simulator, "preset_files", lambda: [bad])
+    at = _app(monkeypatch, tmp_path)
+    before = at.session_state["design"]
+    at.session_state["sim_preset"] = "bad"
+    at.run()
+    assert not at.exception
+    assert any(str(bad) in e.value for e in at.error)
+    assert at.session_state["design"] == before
+    assert at.session_state.get(simulator._APPLIED_PRESET) != "bad"
+    # A later rerun with nothing changed must not get stuck retrying silently --
+    # the pill stays selectable and the same error is reported again.
+    at.run()
+    assert any(str(bad) in e.value for e in at.error)
 
 
 def test_open_the_wizard_lands_on_the_result_step_with_the_same_design(monkeypatch, tmp_path):
