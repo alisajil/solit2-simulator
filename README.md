@@ -186,17 +186,28 @@ screen until customer workspaces open.
 The **Admin** screen (admins only) lists the sign-ups waiting for approval — approve as team or
 customer, or reject — and every account with its role, state and last login, with Disable,
 Re-enable and Temporary password. A temporary password is shown once, to pass on privately.
-Every admin action is kept in the trail at the bottom of the screen.
+Every admin action is kept in the trail at the bottom of the screen. Sign-ups are not verified:
+confirm each one with the person, through a channel you already trust, before you approve it.
 
 Create the first admin on the server, from the app's checkout and with the same
-`SOLIT2_DATA_DIR` the app's service uses. It asks for the password twice; the password is
-never an argument:
+`SOLIT2_DATA_DIR` the app's service uses:
+
+- Run the command as the OS user the app's service runs as — the store is owner-only (0600), so
+  one created or first opened by another user, root included, becomes unavailable to the app.
+- Set `SOLIT2_DATA_DIR` explicitly in the app's service unit; the default `data/` depends on the
+  working directory the service happens to start from.
+- Run it from the app's checkout with its editable install. It imports `app.accounts`, which the
+  published wheel does not carry (the wheel packages only `solit2`).
+
+It asks for the password twice; the password is never an argument:
 
     SOLIT2_DATA_DIR=/path/to/app-data uv run solit2 accounts create-admin \
         --email you@example.com --name "Your Name" --organisation "Your organisation"
 
 Accounts live in one SQLite file, `$SOLIT2_DATA_DIR/accounts.db` (default `data/accounts.db`,
-never committed), readable by its owner only. Back it up with
+never committed), readable by its owner only. Back it up into a directory that is owner-only
+too — the backup file's own permissions depend on the sqlite3 build and the umask, not on the
+original file's mode:
 `sqlite3 "$SOLIT2_DATA_DIR/accounts.db" ".backup accounts-backup.db"`.
 
 A forgotten password is reset by an admin, who issues a temporary one; the account must choose

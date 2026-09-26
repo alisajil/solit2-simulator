@@ -58,7 +58,8 @@ which asks for the password twice (never an argument, never a default).
 **Storage:** SQLite (stdlib `sqlite3`) at `$SOLIT2_DATA_DIR/accounts.db` (default `data/accounts.db`, git-ignored),
 WAL mode, one short connection per operation. Tables: `users` (id, email unique case-insensitively, name,
 organisation, password_hash, must_change_password, role, state, failed_logins, locked_until, created_at,
-approved_at, approved_by, last_login_at), `admin_actions` (id, admin_id, action, target_user_id, detail, at).
+approved_at, approved_by, last_login_at, session_epoch), `admin_actions` (id, admin_id, action, target_user_id,
+detail, at).
 
 **Code layout:** pure logic with no Streamlit import in `app/accounts/` (`passwords.py`, `store.py`,
 `service.py`: sign-up, login, approve, reject, disable, temporary password), screens in `app/views/login.py` and
