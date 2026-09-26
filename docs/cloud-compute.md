@@ -230,6 +230,176 @@ not estimate it.
 
 ---
 
+## 13. The CFD run manager: a proper scheduler, and a live page to watch it
+
+Steps 1-12 above are `cfd_queue.sh` + `solit2-cfd.service`: a queue run to
+completion, `SOLIT2_CFD_PARALLEL` at a time, with `I_MPI_PIN=0` leaving core
+placement to the OS scheduler. That is still the right tool for "run this
+batch of decks and stop" (a grid study, an E sweep). For a server that is
+meant to stay busy indefinitely -- the live deployment, in practice -- pin
+each concurrent run to its own block of cores and watch progress from the
+app instead: `solit2 fds-scheduler`, `solit2 fds-fleet`, and the "CFD runs"
+page in the Streamlit app (a header button switches to it from any wizard
+step and back).
+
+**What it is.** `solit2 fds-scheduler` is a foreground daemon loop that keeps
+a fixed set of core blocks busy (`SOLIT2_CFD_BLOCKS`, default
+`0-9,10-19,20-29` -- three ten-core blocks on this deployment's 32-vCPU box)
+from a queue of run directories, launching each one with
+`I_MPI_PIN_PROCESSOR_LIST` set to its own block so concurrent runs never
+fight over the same cores. It keeps its state under `SOLIT2_CFD_STATE_DIR`
+(default `/var/lib/solit2-scheduler` -- deliberately NOT
+`/var/lib/solit2-cfd`, which is `cfd_queue.sh`/`solit2-cfd.service`'s own
+directory and queue.txt; sharing it would have the two mechanisms consuming
+and rewriting the same file): `state.json` (which run, if any, is on each
+block), `queue.txt` (one run dir per line, next-to-run first),
+`scheduler.log` (an IST-stamped line per state change). `solit2 fds-fleet`
+discovers every run directory under `SOLIT2_RUN_ROOTS` (colon-separated) and
+reports state, progress, speed, ETA, core block, queue position and the
+run's last ERROR/WARNING line; its `pause`/`stop`/`resume`/`enqueue`/
+`dequeue`/`move` subcommands are what the web page's buttons call, and every
+one of them is also logged, to `actions.jsonl` beside the scheduler's own
+files.
+
+**The web app needs two more environment variables.** Beyond whatever it
+already needs to run, set on the box (or wherever the Streamlit process
+runs) so the "CFD runs" page can find the same runs and the same scheduler
+state the CLI sees:
+
+```
+SOLIT2_RUN_ROOTS=/opt/solit2/runs:/opt/solit2-app/runs
+SOLIT2_CFD_STATE_DIR=/var/lib/solit2-scheduler
+```
+
+Both are read fresh on every page load, so changing them needs no restart of
+anything except the Streamlit process itself.
+
+**I9: run Streamlit as the same user the scheduler runs as (root, on this
+deployment, since the unit does).** Every page action -- pause, stop,
+resume, a queue edit -- reads and writes `SOLIT2_CFD_STATE_DIR` and signals
+run processes directly; a Streamlit process running as a different, less
+privileged user will find every one of those either permission-denied or
+silently unable to see what the scheduler sees.
+
+**I9: a run the web app itself launches (its CFD step, unpinned -- see the
+limitation noted below) is a child of the web app's OWN process, in the web
+app's OWN control group, not the scheduler's.** If the web app runs under
+its own systemd unit, give that unit `KillMode=process` too, for exactly
+the C1 reason: restarting the web app (which the env-var step above asks
+for) would otherwise kill any FDS run it had launched, along with itself.
+This repo does not ship that unit (the web app's own deployment is outside
+its scope), so this is a note for whoever writes it, not a file to copy.
+
+**Fresh install** (no interim scheduler running yet):
+
+```
+ssh root@<server-ip>
+cd /opt/solit2
+uv sync --frozen
+mkdir -p /var/lib/solit2-scheduler
+cp deploy/systemd/solit2-scheduler.service /etc/systemd/system/
+systemctl daemon-reload
+systemctl enable --now solit2-scheduler.service
+journalctl -u solit2-scheduler.service -f
+```
+
+With nothing in `queue.txt` yet, add runs the same way `fds-fleet enqueue`
+does from the CLI, or from the web page's queue panel:
+
+```
+cd /opt/solit2 && uv run solit2 fds-fleet enqueue runs/<study>/dx_0.60
+```
+
+**Taking over from the interim scheduler.** If `/opt/cfd-sched.py` (a plain
+nohup process, predating this tool) is already keeping the three core
+blocks busy, this is an 8-step checklist, not a one-liner -- read all of it
+before running any of it, and stop after step 4 if this must go live in a
+hurry (see the note at the end).
+
+1. **Read-only checks first.** Nothing here changes anything:
+   ```
+   cd /opt/solit2
+   cat /opt/cfd-sched.json /opt/cfd-queue.txt
+   systemctl is-enabled solit2-cfd.service; systemctl is-active solit2-cfd.service
+   lscpu -e   # hyperthread sibling layout -- confirms what SOLIT2_CFD_BLOCKS should be
+   ```
+   For each run directory `/opt/cfd-sched.json` lists as occupying a block:
+   ```
+   cat <run_dir>/fds.pid
+   ps -o pid,pgid,etime,args -p $(cat <run_dir>/fds.pid)
+   grep -E '^&TIME|CHID' <run_dir>/deck.fds
+   ```
+   For each `fds` pid found via `pgrep -x fds`: `/proc/<pid>/cwd` (which run
+   dir it actually belongs to), `taskset -cp <pid>` (which cores it is
+   pinned to today), `/proc/<pid>/cgroup` (whose control group it is in --
+   this is what tells you whether it would die with the interim script's
+   own process, or is already independent of it). Compare one campaign
+   `fds` pid's `/proc/<pid>/environ` and `/proc/<pid>/limits` against this
+   unit's own `Environment=`/`Limit*` lines.
+2. **Disable `solit2-cfd.service`, but only if step 1 showed it inactive.**
+   `systemctl disable solit2-cfd.service` (do not `stop` a unit step 1 found
+   genuinely mid-queue; finish or drain it first through its own means).
+   This is I1's fix in practice: the two mechanisms must never both be
+   consuming `/var/lib/solit2-cfd/queue.txt` at once.
+3. **Deploy to `/opt/solit2`** with `uv sync --frozen`. This only updates
+   the checked-out code and the venv; it does not touch any running FDS
+   process.
+4. **Add a drop-in**, not a straight `enable --now` of the shipped unit, so
+   the blocks it claims are the ones step 1 showed as actually free -- and
+   restates `KillMode=process`/`LimitSTACK=infinity` explicitly, in case the
+   installed unit file predates this document's own copy of them:
+   ```
+   systemctl edit solit2-scheduler.service
+   ```
+   ```ini
+   [Service]
+   KillMode=process
+   LimitSTACK=infinity
+   Environment=SOLIT2_CFD_BLOCKS=10-19,20-29
+   ```
+   (or whatever step 1's `taskset -cp` output shows is free of the interim
+   script's own runs). Then `daemon-reload` and `systemctl start` --
+   deliberately no `--adopt-*` yet, and not `enable` yet either. Check
+   `solit2 fds-fleet status` and `scheduler.log`.
+5. **Resume the calibration/E-sweep runs first** (`ecal` in this
+   deployment's own layout): `solit2 fds-adopt <run_dir> --anchor <id>`,
+   then `solit2 fds-fleet resume <run_dir>`. Confirm with `taskset -cp` that
+   its ranks land on the blocks from step 4, not on whatever the interim
+   script had pinned.
+6. **Resume the grid-study runs only now that C3 (dx/T_END/suppression
+   preserved on resume) is the code actually running** -- confirmed by this
+   being deploy step 3, above, having happened first. `solit2 fds-adopt
+   <run_dir> --design <the grid's own design.json>`, then resume, and
+   confirm the regenerated deck's `T_END` matches the run's original
+   window, not the design's full discharge duration.
+7. **Give the web app** `SOLIT2_RUN_ROOTS` and `SOLIT2_CFD_STATE_DIR` (see
+   above). Restart it only once step 1's `/proc/<pid>/cgroup` check showed
+   the interim script's priority run is not inside the web app's own
+   control group, or wait until that run finishes.
+8. **Only once the interim script's own runs have all finished**, widen
+   `SOLIT2_CFD_BLOCKS` back to the full `0-9,10-19,20-29` (remove the
+   drop-in, or edit it), restart the scheduler (safe now that `KillMode=
+   process` is in the unit that runs), and `systemctl enable` it.
+
+**If this must go live before working through every step**: do steps 1-2,
+then step 4's drop-in (config only, do not skip past it to a bare `enable
+--now`), then step 5 for the calibration runs only. Do not resume a
+grid-study or free-burn run through the manager until step 3 has actually
+happened. Never Resume a run within a minute of having Paused it -- FDS
+checks its stop file once per time step, and a resume that races the
+original process still finishing can start a second one in the same
+directory (this is why `runner._launcher_alive` now guards every resume
+and every launch; it does not make racing it a good idea). Do not use Stop
+on a paused/stopped row unless `fds-fleet status` or `ps` shows it still
+has a live process to stop.
+
+**Nothing here replaces steps 1-11 above** for writing decks, bringing the
+repo over, or pulling results back -- only step 8's manual queue-file-and-
+`solit2-cfd.service` combination is what this section supersedes for a
+server meant to stay busy.
+
+---
+
 ## Reference
 
 - `solit2 fds-exec RUN_DIR [--t-end S]` -- runs FDS for one run directory in
@@ -254,5 +424,22 @@ not estimate it.
   otherwise kill an hours-long run), `StartLimitIntervalSec`/
   `StartLimitBurst` to bound the unit's own restarts, and `I_MPI_PIN=0` so
   concurrent runs do not all pin to the same cores.
+- `solit2 fds-scheduler [--blocks ...] [--state-dir ...] [--adopt-state PATH --adopt-queue PATH] [--once]`
+  -- the foreground daemon loop from section 13. `SOLIT2_CFD_BLOCKS` (default
+  `0-9,10-19,20-29`) and `SOLIT2_CFD_STATE_DIR` (default
+  `/var/lib/solit2-scheduler`) are the env-var equivalents of
+  `--blocks`/`--state-dir`. See
+  `solit2/engines/fds/scheduler.py`.
+- `solit2 fds-fleet {status,pause,stop,resume,enqueue,dequeue,move}` --
+  discovers every run directory under `SOLIT2_RUN_ROOTS` (colon-separated)
+  and acts on one. `status --json` is what the web page and any other
+  tooling should read rather than parsing the plain-text table. See
+  `solit2/engines/fds/fleet.py`.
+- `solit2 fds-adopt RUN_DIR (--design PATH | --anchor ID)` -- writes
+  `design.json` beside an existing run's `deck.fds`, for a run dir that
+  predates the writers doing this themselves, or lost its copy. Needed
+  before `fds-fleet resume` (or the scheduler) can resume it.
+- `deploy/systemd/solit2-scheduler.service` -- the unit template section 13
+  installs; read the comments at its top before changing paths.
 - This server exposes SSH only. Nothing in this deployment opens another
   port, and nothing here needs one.

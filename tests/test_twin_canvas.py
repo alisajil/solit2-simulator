@@ -53,7 +53,7 @@ def _spraying_but_not_steaming(trace):
 
 def _exposed_target_step(trace):
     return next(s for s in trace.steps
-               if 0.0 < tc._target_ignition_progress(s) < 1.0)
+               if 0.0 < tc.target_ignition_progress(s) < 1.0)
 
 
 def _shapes_of_type(shapes, kind):
@@ -284,7 +284,7 @@ def test_target_fill_builds_up_with_real_exposure_before_it_fully_ignites(design
     assert target_fill != "rgba(0,0,0,0)"
     assert "196,69,43" in target_fill, target_fill
 
-    progress = tc._target_ignition_progress(step)
+    progress = tc.target_ignition_progress(step)
     assert 0.0 < progress < 1.0
     # An explicit override still wins outright, regardless of the step's own progress.
     _, forced = tc.tunnel_layer(design, geom, tc.WINDOW_M, step, target_ignited=True)

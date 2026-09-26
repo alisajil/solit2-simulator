@@ -53,9 +53,10 @@ CORE_WINDOW_M = CORE_M      # fallback only -- callers zooming to a real design 
 CORE_WINDOW_MARGIN_M = 10.0
 
 __all__ = ["Layer", "WINDOW_M", "CORE_WINDOW_M", "core_window_m", "TEMP_SCALE", "TEMP_MIN_C",
+           "BREATHING_HEIGHT_M", "BACKLAYER_MIN_M", "FIRE_MARKER_MIN_PX", "FIRE_MARKER_MAX_PX",
            "TWIN_FRAME_STRIDE_S", "temp_max_c", "tunnel_layer", "instrument_layer", "fire_layer",
            "mist_layer", "CFD_SCALES", "CFD_MAX_FRAMES", "mmss", "sample_steps", "nearest_step",
-           "cfd_layer",
+           "cfd_layer", "target_ignition_progress", "play_menu", "time_slider",
            "figure"]
 
 
@@ -90,7 +91,7 @@ def _line(x0: float, x1: float, z0: float, z1: float, **style: Any) -> dict:
     return {"type": "line", "x0": x0, "x1": x1, "y0": z0, "y1": z1, "layer": "below", **style}
 
 
-def _target_ignition_progress(step: StepRecord) -> float:
+def target_ignition_progress(step: StepRecord) -> float:
     """How close the wood target sits to Annex 7 section 7.2.1's ignition rule, right now.
 
     The same two paths `_target_ignited` checks trace-wide -- flame-contact flux, or
@@ -110,7 +111,7 @@ def tunnel_layer(design: Design, geom: SectionGeometry, window_m: tuple[float, f
     crown, fp = geom.crown_height_m, design.fire.footprint
     half_active = design.active_length_m / 2.0
     structure = {"color": STRUCTURE_COLOUR}
-    progress = _target_ignition_progress(step)
+    progress = target_ignition_progress(step)
     if target_ignited:
         target_fill = palette.rgba(FAIL_COLOUR, 0.5)
     elif progress > 0:
@@ -419,10 +420,10 @@ def _cfd_indices(n_frames: int) -> list[int]:
     return sorted({round(i * (n_frames - 1) / (CFD_MAX_FRAMES - 1)) for i in range(CFD_MAX_FRAMES)})
 
 
-def _play_menu() -> dict:
+def play_menu(x: float = 0.0, y: float = 1.30) -> dict:
     # Laid out horizontally and above the slider: stacked vertically they overlap it.
     return {"type": "buttons", "direction": "right", "showactive": False,
-            "x": 0.0, "y": 1.30, "xanchor": "left", "yanchor": "top", "pad": {"b": 4},
+            "x": x, "y": y, "xanchor": "left", "yanchor": "top", "pad": {"b": 4},
             "buttons": [
                 {"label": "▶ Play", "method": "animate",
                  "args": [None, {"frame": {"duration": FRAME_MS, "redraw": True},
@@ -432,8 +433,8 @@ def _play_menu() -> dict:
                                    "mode": "immediate"}]}]}
 
 
-def _slider(names: list[str], active: int) -> dict:
-    return {"active": active, "x": 0.0, "len": 1.0, "y": 1.16, "pad": {"t": 0, "b": 0},
+def time_slider(names: list[str], active: int, y: float = 1.16) -> dict:
+    return {"active": active, "x": 0.0, "len": 1.0, "y": y, "pad": {"t": 0, "b": 0},
             "currentvalue": {"prefix": "t = ", "visible": True},
             "steps": [{"label": n, "method": "animate",
                        "args": [[n], {"frame": {"duration": 0, "redraw": True},
@@ -481,6 +482,6 @@ def figure(design: Design, trace: RunTrace, *, cfd: Slice | None = None, initial
         shapes=shapes0, height=560, margin={"l": 60, "r": 10, "t": 110, "b": 10},
         xaxis={"title": "distance from mock-up centre (m)", "range": list(window_m), "zeroline": False},
         yaxis={"title": "height (m)", "range": [-0.3, geom.crown_height_m + 1.0]},
-        legend={"orientation": "h", "y": -0.2}, updatemenus=[_play_menu()],
-        sliders=[_slider(names, k0)])
+        legend={"orientation": "h", "y": -0.2}, updatemenus=[play_menu()],
+        sliders=[time_slider(names, k0)])
     return fig

@@ -144,7 +144,14 @@ recommendations, and safe to ignore.
 
     uv run streamlit run app/streamlit_app.py
 
-Opens a five-step wizard, each step computed from the one before it -- nothing
+The app opens on the **Simulator**: presets and design knobs in the sidebar, the run's peaks in
+tiles, and one figure that replays the Tier 1 virtual fire test — press ▶ Play and six gauges,
+a 3D tunnel and three charts move together. Every value is the engine's own; a gauge has a red
+band only where the design's `ahj` block sets that criterion's limit. The **Wizard** keeps the
+formal record (fire test, CFD, compliance, reports) and **CFD runs** manages the FDS fleet.
+The app follows your computer's light or dark setting — the dark palette on a dark system, the light one on a light system — and Streamlit's settings menu can switch it either way.
+
+The Wizard is a five-step flow, each step computed from the one before it -- nothing
 is downloaded or uploaded in between:
 
 1. **Design** -- pick presets and the parameters an engineer varies, with a live

@@ -1,6 +1,15 @@
 from solit2 import history
 
 
+def test_the_trace_cache_is_bounded():
+    """I-2: one cached `RunTrace` is 4-7 MB, and the simulator makes one per
+    slider release, shared by every session on the server -- an unbounded cache
+    would grow without limit."""
+    from app.views import fire_test
+
+    assert fire_test._trace._info.max_entries == 16
+
+
 def test_fire_test_step_renders_hmi_canvas_timeline_and_station_chart(run_view, monkeypatch, tmp_path):
     monkeypatch.setattr(history, "DEFAULT_PATH", tmp_path / "h.jsonl")
     at = run_view("fire_test")

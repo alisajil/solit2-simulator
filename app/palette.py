@@ -18,6 +18,7 @@ UNSET = "#C98A1E"
 PRIMARY = "#1D8F8A"      # the mist, and the app's accent
 GREY = "#8A94A6"         # tunnel structure, and anything idle
 STEAM = "#D8EEEC"        # evaporated water, near the ceiling -- pale, not the mist's own teal
+FLAME = "#F28C28"        # the fire itself -- warm, and apart from FAIL's red so a burning mock-up does not read as a failed check
 TRANSPARENT = "rgba(0,0,0,0)"
 
 

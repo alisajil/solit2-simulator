@@ -20,6 +20,7 @@ from pathlib import Path
 from solit2.engines.fds import deck as deck_mod
 from solit2.engines.fds import reader as reader_mod
 from solit2.engines.fds import runner as runner_mod
+from solit2.engines.fds.exec_run import DESIGN_NAME
 from validation.compare import Anchor
 
 MEASURED_KEY = "peak_hrr_mw"
@@ -54,7 +55,11 @@ def write_decks(anchors: tuple[Anchor, ...], e_values: tuple[float, ...],
     """Every deck the sweep needs. Deterministic and idempotent -- calling this
     again (as `--report` alone does, ahead of reading) rewrites byte-identical
     files for anything already on disk and touches nothing else in a run's
-    directory."""
+    directory.
+
+    `design.json` is written beside every deck too, from the anchor's own
+    design -- see `write_decks` in grid.py for why the run manager needs it.
+    """
     written = []
     for anchor in anchors:
         for e in e_values:
@@ -62,6 +67,9 @@ def write_decks(anchors: tuple[Anchor, ...], e_values: tuple[float, ...],
             run_dir.mkdir(parents=True, exist_ok=True)
             deck_path = run_dir / "deck.fds"
             deck_path.write_text(deck_mod.generate(anchor.design, dx_m=dx_m, e_coefficient=e))
+            # by_alias=True -- see fleet.adopt_design for why (Fire.fire_class's alias).
+            (run_dir / DESIGN_NAME).write_text(
+                anchor.design.model_dump_json(indent=2, by_alias=True))
             written.append(deck_path)
     return written
 

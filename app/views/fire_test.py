@@ -5,7 +5,7 @@ from __future__ import annotations
 import plotly.graph_objects as go
 import streamlit as st
 
-from app import state
+from app import plot_theme, state
 from app.components import cross_section, hmi, timeline, twin_canvas
 from app.views.result import ensure_result
 from solit2.engines.reduced.criteria import INSTRUMENTS, STATIONS
@@ -17,9 +17,14 @@ from solit2.schema.design import Design
 from solit2.schema.result import Result
 
 CHART_HEIGHT = 300
+# One cached `RunTrace` is 4-7 MB, and the simulator makes one per slider release
+# -- a distinct design every time a slider settles -- shared by every session on
+# the remote server. Unbounded, that grows without limit; 16 is enough recent
+# designs to hold without paying for every one a session has ever touched (I-2).
+TRACE_CACHE_MAX_ENTRIES = 16
 
 
-@st.cache_data(show_spinner="Replaying the worst case…")
+@st.cache_data(show_spinner="Replaying the worst case…", max_entries=TRACE_CACHE_MAX_ENTRIES)
 def _trace(design: Design, section: str, velocity_ms: float) -> RunTrace:
     return run_once(design, section, velocity_ms)
 
@@ -57,8 +62,9 @@ def _station_chart(design: Design, geom: SectionGeometry, trace: RunTrace,
     st.plotly_chart(fig, key="station_chart")
     st.caption(_kit_caption(name))
 
-    st.plotly_chart(cross_section.figure(design, geom, step, name, cmax_c),
-                    key="cross_section", theme=None)
+    fig = cross_section.figure(design, geom, step, name, cmax_c)
+    fig.update_layout(template=plot_theme.current())
+    st.plotly_chart(fig, key="cross_section", theme=None)
     st.caption("Thermocouples sit where Annex 7 Figure 16 puts them — two on each side wall "
                "bracketing the load, one at the ceiling, two on the load — at the same "
                "positions the CFD deck measures at. Their COLOURS are a vertical profile: "
@@ -90,6 +96,7 @@ def render() -> None:
     window = twin_canvas.core_window_m(design) if zoom else twin_canvas.WINDOW_M
     fig = twin_canvas.figure(design, trace, initial_frame=k, window_m=window,
                              target_ignited=bool(result.criteria["target_ignited"].value))
+    fig.update_layout(template=plot_theme.current())
     st.plotly_chart(fig, key="twin_canvas", theme=None)
     st.caption("▶ Play runs the twin on its own clock inside the picture; the Test clock "
                "slider above sets the instant the readouts describe.")

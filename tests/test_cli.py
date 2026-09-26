@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import sys
 
@@ -338,3 +339,154 @@ def test_fds_campaign_refuses_without_a_binary_before_writing_anything(tmp_path)
     err = json.loads(proc.stderr)
     assert "fds" in err["error"]
     assert not out.exists(), "preflight must refuse before any deck is written"
+
+
+# --- fds-scheduler / fds-fleet / fds-adopt: never a real FDS process --------
+
+def test_fds_scheduler_once_with_an_empty_queue_writes_no_fds_call(tmp_path):
+    # An empty queue means _launch() -- the only place that would touch a
+    # real fds/mpiexec binary -- is never reached, so this is safe to run as
+    # a real subprocess with no fake binaries on PATH.
+    state_dir = tmp_path / "state"
+    proc = _run(["fds-scheduler", "--state-dir", str(state_dir), "--blocks", "0-9,10-19",
+                "--once"])
+    assert proc.returncode == 0, proc.stderr
+    assert not (state_dir / "scheduler.pid").exists(), "the pid file must be removed on exit"
+    assert json.loads((state_dir / "state.json").read_text()) == {"0-9": None, "10-19": None}
+
+
+def test_fds_scheduler_rejects_a_malformed_blocks_spec(tmp_path):
+    proc = _run(["fds-scheduler", "--state-dir", str(tmp_path), "--blocks", "not-a-range",
+                "--once"])
+    assert proc.returncode == 2
+    err = json.loads(proc.stderr)
+    assert "--blocks" in err["field"]
+
+
+def test_fds_scheduler_adopt_needs_both_flags_together(tmp_path):
+    proc = _run(["fds-scheduler", "--state-dir", str(tmp_path), "--adopt-state",
+                str(tmp_path / "s.json"), "--once"])
+    assert proc.returncode == 2
+    err = json.loads(proc.stderr)
+    assert "adopt-state" in err["error"] and "adopt-queue" in err["error"]
+
+
+def test_fds_scheduler_adopts_an_interim_states_state_and_queue(tmp_path):
+    interim_state = tmp_path / "interim_state.json"
+    interim_state.write_text(json.dumps({"0-9": "runs/a", "10-19": None}))
+    interim_queue = tmp_path / "interim_queue.txt"
+    interim_queue.write_text("runs/b\n")
+    state_dir = tmp_path / "state"
+    proc = _run(["fds-scheduler", "--state-dir", str(state_dir), "--blocks", "0-9,10-19",
+                "--adopt-state", str(interim_state), "--adopt-queue", str(interim_queue),
+                "--once"])
+    assert proc.returncode == 0, proc.stderr
+    assert "adopted state" in (state_dir / "scheduler.log").read_text()
+
+
+def test_fds_fleet_status_with_no_roots_says_so(tmp_path):
+    proc = _run(["fds-fleet", "status"], env={**os.environ, "SOLIT2_RUN_ROOTS": ""})
+    assert proc.returncode == 0, proc.stderr
+    assert "no run directories" in proc.stdout
+
+
+def test_fds_fleet_status_json_reports_an_empty_fleet(tmp_path):
+    proc = _run(["fds-fleet", "status", "--json"],
+               env={**os.environ, "SOLIT2_RUN_ROOTS": "", "SOLIT2_CFD_STATE_DIR": str(tmp_path)})
+    assert proc.returncode == 0, proc.stderr
+    payload = json.loads(proc.stdout)
+    assert payload["runs"] == []
+    assert payload["summary"]["cores_total"] == 30, "three 10-core blocks, by width not count"
+
+
+def test_fds_fleet_enqueue_and_status_round_trip(tmp_path):
+    tmp_path = tmp_path.resolve()   # enqueue() resolves; compare against the same form
+    state_dir = tmp_path / "state"
+    run_dir = tmp_path / "runs" / "x"
+    run_dir.mkdir(parents=True)
+    (run_dir / "deck.fds").write_text("&HEAD CHID='x' /\n&TAIL /\n")
+    proc = _run(["fds-fleet", "enqueue", str(run_dir)],
+               env={**os.environ, "SOLIT2_CFD_STATE_DIR": str(state_dir)})
+    assert proc.returncode == 0, proc.stderr
+    assert (state_dir / "queue.txt").read_text().strip() == str(run_dir)
+
+
+def test_fds_fleet_enqueue_refuses_a_directory_with_no_deck(tmp_path):
+    proc = _run(["fds-fleet", "enqueue", str(tmp_path / "empty")],
+               env={**os.environ, "SOLIT2_CFD_STATE_DIR": str(tmp_path / "state")})
+    assert proc.returncode == 2
+    err = json.loads(proc.stderr)
+    assert "deck.fds" in err["error"]
+
+
+def test_fds_fleet_dequeue_a_run_not_queued_exits_two(tmp_path):
+    proc = _run(["fds-fleet", "dequeue", str(tmp_path / "nope")],
+               env={**os.environ, "SOLIT2_CFD_STATE_DIR": str(tmp_path / "state")})
+    assert proc.returncode == 2
+    err = json.loads(proc.stderr)
+    assert "not in the queue" in err["error"]
+
+
+def test_fds_fleet_pause_on_a_run_with_no_deck_exits_three(tmp_path):
+    proc = _run(["fds-fleet", "pause", str(tmp_path / "nope")],
+               env={**os.environ, "SOLIT2_CFD_STATE_DIR": str(tmp_path / "state")})
+    assert proc.returncode == 3
+    err = json.loads(proc.stderr)
+    assert "CHID" in err["error"] or "no deck" in err["error"].lower()
+
+
+def test_fds_fleet_resume_without_restart_files_exits_two(tmp_path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    proc = _run(["fds-fleet", "resume", str(run_dir)],
+               env={**os.environ, "SOLIT2_CFD_STATE_DIR": str(tmp_path / "state")})
+    assert proc.returncode == 2
+    err = json.loads(proc.stderr)
+    assert "restart files" in err["error"]
+
+
+def test_fds_fleet_resume_with_live_process_exits_two(tmp_path):
+    from solit2.schema.design import Design
+    from solit2.engines.fds import scheduler as scheduler_mod
+
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "deck.fds").write_text("&HEAD CHID='x' /\n&TAIL /\n")
+    # Create a restart file so has_restart_files will pass
+    (run_dir / "x.restart").write_text("")
+    # Create a PID file pointing to a process that definitely exists (PID 1)
+    # This makes _launcher_alive() return True in the subprocess
+    (run_dir / "fds.pid").write_text("1\n")
+    design = Design.load("designs/og-dbr-rev0.json")
+    (run_dir / scheduler_mod.DESIGN_NAME).write_text(design.model_dump_json(by_alias=True))
+    proc = _run(["fds-fleet", "resume", str(run_dir)],
+               env={**os.environ, "SOLIT2_CFD_STATE_DIR": str(tmp_path / "state")})
+    assert proc.returncode == 2
+    err = json.loads(proc.stderr)
+    assert "live process" in err["error"]
+    assert err["field"] == "run_dir"
+
+
+def test_fds_adopt_writes_design_json(tmp_path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    (run_dir / "deck.fds").write_text("&HEAD CHID='x' /\n&TAIL /\n")
+    proc = _run(["fds-adopt", str(run_dir), "--design", "designs/og-dbr-rev0.json"])
+    assert proc.returncode == 0, proc.stderr
+    assert (run_dir / "design.json").exists()
+
+
+def test_fds_adopt_needs_exactly_one_of_design_or_anchor(tmp_path):
+    proc = _run(["fds-adopt", str(tmp_path / "run")])
+    assert proc.returncode == 2
+    err = json.loads(proc.stderr)
+    assert "exactly one" in err["error"]
+
+
+def test_fds_adopt_refuses_a_run_dir_with_no_deck(tmp_path):
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    proc = _run(["fds-adopt", str(run_dir), "--anchor", "c4"])
+    assert proc.returncode == 2
+    err = json.loads(proc.stderr)
+    assert "deck.fds" in err["error"]

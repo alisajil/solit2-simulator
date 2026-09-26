@@ -20,10 +20,21 @@ from solit2.schema.result import Result
 PEAK_TILES = 4
 SERIES_DEFAULT = 3
 LEADERBOARD_TOP = 20
+_RECORDED_SHA_KEY = "_result_recorded_sha"   # the design whose result this session already appended to the history
 
 
-def ensure_result(design: Design) -> Result:
-    """The Tier 1 result for `design`, computing and recording it on first use."""
+def ensure_result(design: Design, record: bool = True) -> Result:
+    """The Tier 1 result for `design`, computing it on first use and recording once per design per session.
+
+    `record=False` (the simulator's own slider exploration) never appends to
+    `runs/history.jsonl` -- the simulator makes one run per slider release, and
+    recording every one of them would flood the leaderboard with slider-drag
+    noise. The wizard's Result step keeps `record=True` (the default): a design
+    reaching that step is the one the engineer is actually considering (I-3).
+
+    When `record=True`, the result is recorded to history once per design SHA
+    per session, whether it was just computed or served from the cache.
+    """
     result = state.get_result()
     if result is None:
         try:
@@ -34,7 +45,13 @@ def ensure_result(design: Design) -> Result:
             st.error(f"The engine could not finish this design: {exc}")
             st.stop()
         state.set_result(result)
+
+    # Record once per design SHA per session when record=True, whether the result
+    # was just computed or served from the cache.
+    if record and st.session_state.get(_RECORDED_SHA_KEY) != result.meta["design_sha"]:
         history.append(result, history.DEFAULT_PATH)
+        st.session_state[_RECORDED_SHA_KEY] = result.meta["design_sha"]
+
     return result
 
 
