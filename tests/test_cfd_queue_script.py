@@ -38,8 +38,24 @@ case "$sub" in
     ;;
   fds-exec)
     echo "$run_dir" >> "$CALL_LOG"
+    # Concurrency, counted, not timed: a marker directory per fake fds-exec,
+    # named after this process's own pid so it never collides with a
+    # sibling's. The count of marker dirs present the instant this one joins
+    # IS how many are running right now; recorded to CONC_LOG so the test
+    # can assert on the observed maximum directly, instead of inferring
+    # "ran in parallel" from wall-clock elapsed time against an assumed
+    # ideal -- flaky by nature with bash, flock and several fake-uv
+    # invocations between the clock starting and stopping.
+    if [[ -n "${CONC_DIR:-}" ]]; then
+      mkdir -p "$CONC_DIR"
+      mkdir "$CONC_DIR/$$"
+      find "$CONC_DIR" -mindepth 1 -maxdepth 1 -type d | wc -l >> "$CONC_LOG"
+    fi
     if [[ -n "${FAKE_SLEEP:-}" ]]; then
       sleep "$FAKE_SLEEP"
+    fi
+    if [[ -n "${CONC_DIR:-}" ]]; then
+      rmdir "$CONC_DIR/$$"
     fi
     if [[ -f "$run_dir/FAIL_MARKER" ]]; then
       exit 7
@@ -68,7 +84,7 @@ def _fake_bin(tmp_path: Path) -> Path:
 
 
 def _run(tmp_path: Path, run_dirs: list[Path], *, parallel: int | None = None,
-         sleep: float | None = None):
+         sleep: float | None = None, count_concurrency: bool = False):
     bindir = _fake_bin(tmp_path)
     call_log = tmp_path / "calls.log"
     call_log.unlink(missing_ok=True)  # a test may call _run() more than once
@@ -77,6 +93,13 @@ def _run(tmp_path: Path, run_dirs: list[Path], *, parallel: int | None = None,
         env["SOLIT2_CFD_PARALLEL"] = str(parallel)
     if sleep is not None:
         env["FAKE_SLEEP"] = str(sleep)
+    if count_concurrency:
+        # Read back via tmp_path / "concurrency.log" -- kept out of _run's
+        # own return value so every OTHER test's `proc, call_log = _run(...)`
+        # stays a two-tuple.
+        (tmp_path / "concurrency.log").unlink(missing_ok=True)
+        env["CONC_DIR"] = str(tmp_path / "concurrency")
+        env["CONC_LOG"] = str(tmp_path / "concurrency.log")
     proc = subprocess.run(["bash", str(SCRIPT), *[str(d) for d in run_dirs]],
                           capture_output=True, text=True, env=env)
     return proc, call_log
@@ -160,21 +183,26 @@ def test_a_reboot_style_rerun_only_touches_what_is_still_pending(tmp_path):
 
 
 def test_at_most_parallel_runs_execute_concurrently(tmp_path):
-    # Four run dirs, each fds-exec sleeping 0.3s, capped at 2 at a time:
-    # strictly serial would take >= 1.2s; two full batches take ~0.6s. The
-    # threshold is generous on both sides to avoid CI flakiness while still
-    # distinguishing "ran in parallel" from "ran one at a time".
+    """Counted, not timed: each fake fds-exec registers itself (a marker dir
+    named after its own pid) and records how many are registered the instant
+    it joins, before sleeping. The MAXIMUM observed count is the actual peak
+    concurrency -- direct evidence of "ran in parallel, capped at 2", where
+    the previous version inferred it from wall-clock elapsed time against an
+    assumed ideal (flaky by nature with bash, flock and four fake-uv
+    invocations between the clock starting and stopping)."""
     run_dirs = []
     for i in range(4):
         d = tmp_path / f"r{i}"
         d.mkdir()
         run_dirs.append(d)
-    start = time.monotonic()
-    proc, call_log = _run(tmp_path, run_dirs, parallel=2, sleep=0.3)
-    elapsed = time.monotonic() - start
+    proc, call_log = _run(tmp_path, run_dirs, parallel=2, sleep=0.3, count_concurrency=True)
     assert proc.returncode == 0, proc.stderr
     assert len(call_log.read_text().splitlines()) == 4
-    assert elapsed < 1.0, f"took {elapsed:.2f}s, looks serial rather than parallel"
+    observed = [int(ln) for ln in (tmp_path / "concurrency.log").read_text().splitlines()]
+    assert observed, "the fake fds-exec never recorded its own concurrency count"
+    peak = max(observed)
+    assert peak <= 2, f"peak concurrency was {peak}, over the SOLIT2_CFD_PARALLEL cap of 2"
+    assert peak == 2, f"peak concurrency was only {peak} -- looks serial, not parallel"
 
 
 @pytest.mark.skipif(not _HAS_FLOCK, reason="flock is not installed on this machine "

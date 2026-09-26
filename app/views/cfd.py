@@ -22,9 +22,12 @@ from app.components import twin_canvas
 from app.views.fire_test import ensure_trace
 from app.views.result import ensure_result
 from solit2.engines.fds import deck as fds_deck
+from solit2.engines.fds import fleet as fds_fleet
 from solit2.engines.fds import reader as fds_reader
 from solit2.engines.fds import runner as fds_runner
+from solit2.engines.fds import scheduler as fds_scheduler
 from solit2.engines.fds import slices
+from solit2.engines.fds.exec_run import DESIGN_NAME
 from solit2.engines.reduced.criteria import FLAME_CONTACT_FLUX_KWM2
 from solit2.engines.reduced.state import RunTrace
 from solit2.schema.design import Design
@@ -84,18 +87,25 @@ def _pause_controls(run_dir: Path) -> None:
 
     Pausing asks FDS to stop and needs it to reach another time step to
     notice. A wedged run never does, and then only a kill ends it.
+
+    Goes through `fleet.pause`/`fleet.stop`, not `runner.pause`/`runner.stop`
+    directly: this step is one of two surfaces that can act on a run (the
+    "CFD runs" manager page is the other), and fleet's own audit trail in
+    `actions.jsonl` is only complete if every surface writes to it -- a
+    pause or a stop from here used to leave no record at all.
     """
+    state_dir = fds_scheduler.resolve_state_dir()
     pause_col, stop_col = st.columns(2)
     if pause_col.button("Pause this run", key="fds_pause"):
         try:
-            fds_runner.pause(run_dir)
+            fds_fleet.pause(run_dir, state_dir)
         except OSError as exc:
             st.error(f"Could not ask the run to stop: {exc}")
             return
         st.rerun(scope="app")
     if stop_col.button("Stop it now", key="fds_stop"):
         try:
-            killed = fds_runner.stop(run_dir)
+            killed = fds_fleet.stop(run_dir, state_dir)
         except OSError as exc:
             # Refusing is the honest answer when the run's processes cannot be
             # identified or are not this session's to signal. Reporting it as
@@ -134,6 +144,18 @@ def _start_controls(design: Design, run_dir: Path, verb: str, suppression: bool)
     st.caption("A Tier 2 run takes hours. It runs in the background; this page keeps up with it."
                + ("" if suppression else
                   " The free burn carries no droplets, so it is the cheaper of the two."))
+    # Known limit: this step launches directly (runner.run below), unpinned
+    # to any scheduler core block -- it does not go through fleet.enqueue
+    # and the scheduler queue the way a resume from the "CFD runs" page
+    # does. On a server where solit2 fds-scheduler is also managing pinned
+    # runs, a run started here competes with them for whichever cores the
+    # OS scheduler happens to give it, rather than getting a reserved block.
+    # fleet.summarise() does count it once running (by its own mesh/rank
+    # count), so it is visible on the runs page, just never pinned.
+    if fds_scheduler.is_running(fds_scheduler.resolve_state_dir()):
+        st.caption("Note: this launches directly, not through the core-block scheduler "
+                   "that is currently running -- it will compete for CPU with pinned runs "
+                   "rather than reserving its own cores. See the \"CFD runs\" page.")
     choice = st.radio("Simulated window", list(DURATIONS), horizontal=True,
                       key=f"fds_minutes{_suffix(suppression)}",
                       index=list(DURATIONS).index(DEFAULT_DURATION),
@@ -146,6 +168,11 @@ def _start_controls(design: Design, run_dir: Path, verb: str, suppression: bool)
         deck_path.write_text(fds_deck.generate(
             design, t_end_s=None if minutes is None else minutes * 60.0,
             suppression=suppression))
+        # Beside the deck, so a paused or interrupted run can resume later --
+        # `runner.prepare_resume` needs the design that generated the deck it
+        # is rewriting, and a deck alone does not carry it back out.
+        # by_alias=True -- see fleet.adopt_design for why (Fire.fire_class's alias).
+        (run_dir / DESIGN_NAME).write_text(design.model_dump_json(indent=2, by_alias=True))
         # The previous Tier 2 result describes a pair of runs that no longer exists here.
         state.set_tier2_result(None)
         fds_runner.run(deck_path, run_dir)
@@ -298,14 +325,14 @@ def _live_progress(run_dir: Path) -> None:
         column.metric(label, value, help=help_text)
     st.caption(f"Polled from the run's own output every {POLL}. "
                f"Step {live['time_step'] or 0:,}.")
-    if status["state"] != "running":
+    if status["state"] not in fds_runner.RUNNING_STATES:
         st.rerun(scope="app")
 
 
 def _slice_caption(run_state: str, slice_) -> str:
     """Only a run that actually finished may describe its field as complete."""
     last = float(slice_.t_s[-1])
-    if run_state == "running":
+    if run_state in fds_runner.RUNNING_STATES:
         return f"Preliminary — last complete frame at t = {last:.0f} s; the run is still going."
     if run_state == "done":
         return f"{len(slice_.t_s)} frames to t = {last:.0f} s."
@@ -315,7 +342,7 @@ def _slice_caption(run_state: str, slice_) -> str:
 
 def _missing_slice_note(run_state: str, label: str) -> str:
     """Absence means different things while running, when finished, and when crashed."""
-    if run_state == "running":
+    if run_state in fds_runner.RUNNING_STATES:
         return "FDS has not written this slice yet."
     if run_state == "done":
         return f"This run holds no {label.lower()} slice."
@@ -481,7 +508,7 @@ def render() -> None:
     suppression = dict(SCENARIOS).get(scenario, True)
     run_dir, other_dir = run_dir_for(design, suppression), run_dir_for(design, not suppression)
     status, other_status = _status(run_dir), _status(other_dir)
-    running = status is not None and status["state"] == "running"
+    running = status is not None and status["state"] in fds_runner.RUNNING_STATES
 
     halted = status is not None and status["state"] in ("paused", "stopped")
     if running:

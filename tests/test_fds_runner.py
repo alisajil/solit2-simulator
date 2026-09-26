@@ -58,6 +58,16 @@ def test_status_reports_failed_when_there_is_no_log(tmp_path):
     assert runner.status(tmp_path)["state"] == "failed"
 
 
+def test_status_reports_pending_for_a_deck_written_but_never_launched(tmp_path):
+    """I4: a grid study or an E sweep writes every deck up front, well
+    before any of them are launched -- each one used to read as a red FAIL
+    (no FDS log) rather than the honest "hasn't started yet"."""
+    (tmp_path / "deck.fds").write_text("&HEAD CHID='x' /\n&TIME T_END=100.0 /\n")
+    state = runner.status(tmp_path)
+    assert state["state"] == "pending"
+    assert state["progress"] == 0.0
+
+
 def test_status_reports_progress_from_the_fds_log(tmp_path):
     (tmp_path / "run.out").write_text(
         "Time Step       100   March 15, 2026  10:00:00\n"
@@ -218,6 +228,42 @@ def test_an_openmp_thread_count_the_caller_set_is_left_alone(ready, monkeypatch,
     deck.write_text("&MESH IJK=1,1,1, XB=0,1,0,1,0,1 /\n&TAIL /\n")
     runner.run(deck, tmp_path)
     assert captured["env"]["OMP_NUM_THREADS"] == "4"
+
+
+def test_extra_env_is_merged_into_the_launch_environment(ready, monkeypatch, tmp_path):
+    # The fleet scheduler pins concurrent runs to disjoint cores via
+    # I_MPI_PIN_PROCESSOR_LIST, set per launch rather than globally -- see
+    # scheduler.py.
+    captured = {}
+
+    class FakePopen:
+        pid = 1
+
+        def __init__(self, argv, **kwargs):
+            captured["env"] = kwargs.get("env")
+
+    monkeypatch.setattr(runner.subprocess, "Popen", FakePopen)
+    deck = tmp_path / "deck.fds"
+    deck.write_text("&MESH IJK=1,1,1, XB=0,1,0,1,0,1 /\n&TAIL /\n")
+    runner.run(deck, tmp_path, extra_env={"I_MPI_PIN_PROCESSOR_LIST": "10-19"})
+    assert captured["env"]["I_MPI_PIN_PROCESSOR_LIST"] == "10-19"
+
+
+def test_extra_env_can_override_the_omp_thread_default(ready, monkeypatch, tmp_path):
+    captured = {}
+
+    class FakePopen:
+        pid = 1
+
+        def __init__(self, argv, **kwargs):
+            captured["env"] = kwargs.get("env")
+
+    monkeypatch.setattr(runner.subprocess, "Popen", FakePopen)
+    monkeypatch.delenv("OMP_NUM_THREADS", raising=False)
+    deck = tmp_path / "deck.fds"
+    deck.write_text("&MESH IJK=1,1,1, XB=0,1,0,1,0,1 /\n&TAIL /\n")
+    runner.run(deck, tmp_path, extra_env={"OMP_NUM_THREADS": "2"})
+    assert captured["env"]["OMP_NUM_THREADS"] == "2"
 
 
 def test_mesh_count_reads_the_deck(tmp_path):
@@ -544,6 +590,89 @@ def test_a_paused_run_is_paused_and_not_failed():
     assert "resumable" in runner.status(d)["detail"]
 
 
+def test_a_paused_run_whose_process_is_still_alive_reads_pausing_not_paused():
+    """C2: FDS checks for the stop file once per time step, not instantly, so
+    there is a real window -- up to one step, tens of seconds on a large deck
+    -- where the marker exists but the ranks have not exited yet. Reporting
+    "paused" for that window let a second launch (Resume, or the scheduler
+    reusing what it thought was a freed block) start a second FDS in the same
+    directory while the first was still writing to it."""
+    import os
+    import tempfile
+    from pathlib import Path
+    d = _run_dir_with_deck(Path(tempfile.mkdtemp()))
+    runner.pause(d)
+    (d / runner.PID_NAME).write_text(str(os.getpid()))     # a real, definitely-alive pid
+    state = runner.status(d)
+    assert state["state"] == "pausing"
+    assert state["progress"] == pytest.approx(0.25)
+    assert "finishing its current step" in state["detail"]
+    assert "pausing" in runner.RUNNING_STATES, \
+        "callers checking 'is this occupying a core' must see it as still-running"
+
+
+def test_a_paused_run_with_no_evidence_of_a_live_process_reads_paused():
+    """No pid file at all (a run launched outside the app) is UNKNOWN, not
+    positive evidence of life -- must not block on it forever, so it still
+    reads as the ordinary terminal "paused"."""
+    import tempfile
+    from pathlib import Path
+    d = _run_dir_with_deck(Path(tempfile.mkdtemp()))
+    runner.pause(d)
+    assert runner.status(d)["state"] == "paused"
+
+
+def test_a_run_stopped_by_user_that_logged_its_own_stop_line_is_paused_not_failed():
+    """Real FDS appends "STOP: FDS stopped by user (CHID: ...)" to its own log
+    once it notices the `<CHID>.stop` file `pause()` writes and exits. That
+    line used to match the generic `_ERROR` pattern (any "STOP:" that is not
+    the success one), and the error check ran BEFORE the is_paused() branch
+    ever got a look -- so a cleanly paused run with restart files already on
+    disk was reported {'state': 'failed', 'progress': 0.0}. Verified live:
+    is_paused() True, has_restart_files() True, status() said failed at 0%.
+    """
+    import tempfile
+    from pathlib import Path
+    d = _run_dir_with_deck(Path(tempfile.mkdtemp()), chid="eaea401330e8")
+    runner.pause(d)
+    with (d / "run.out").open("a") as f:
+        f.write("STOP: FDS stopped by user (CHID: eaea401330e8)\n")
+    (d / "eaea401330e8.restart").write_text("")
+    state = runner.status(d)
+    assert state["state"] == "paused"
+    assert state["progress"] == pytest.approx(0.25), "real progress, not 0%"
+    assert "resumable" in state["detail"]
+
+
+def test_stopped_by_user_with_no_restart_files_is_still_paused_not_stopped():
+    """`is_paused()` (the pause() marker) and `was_stopped()` (the stop()
+    marker) are different actions with different states; a pause that never
+    reached a checkpoint is still `paused`, just not resumable -- it must not
+    be misread as `failed` (the bug) or as `stopped` (stop()'s own state)."""
+    import tempfile
+    from pathlib import Path
+    d = _run_dir_with_deck(Path(tempfile.mkdtemp()), chid="c1")
+    runner.pause(d)
+    with (d / "run.out").open("a") as f:
+        f.write("STOP: FDS stopped by user (CHID: c1)\n")
+    state = runner.status(d)
+    assert state["state"] == "paused"
+    assert "cannot resume" in state["detail"]
+
+
+def test_a_genuine_stop_reason_is_still_reported_failed():
+    """The fix narrows _ERROR to exclude exactly the success STOP and the
+    user-requested STOP -- every other STOP (a numerical instability, a setup
+    problem) must still fail, or the fix would have gone too far."""
+    import tempfile
+    from pathlib import Path
+    d = _run_dir_with_deck(Path(tempfile.mkdtemp()), chid="c2")
+    with (d / "run.out").open("a") as f:
+        f.write("STOP: Numerical instability discovered\n")
+    state = runner.status(d)
+    assert state["state"] == "failed"
+
+
 def test_resume_refuses_when_there_is_nothing_to_resume_from():
     import tempfile
     from pathlib import Path
@@ -603,6 +732,108 @@ def test_resume_refuses_when_the_mesh_moved_under_the_checkpoints(monkeypatch):
         runner.resume(d, design)
     assert runner.is_paused(d), "a refused resume must not touch the run's state"
     assert "RESTART=.TRUE." not in (d / "deck.fds").read_text(), "deck was rewritten anyway"
+
+
+# --- C3: prepare_resume against the REAL generator, not a mock -----------
+#
+# These reproduce the three live probe findings exactly: a grid-study point
+# at a non-default dx and a shortened T_END, and a free-burn deck -- all
+# resumed with `runner.resume(d, design)`, no override, the way the
+# scheduler's own `_launch` calls it.
+
+def test_resume_keeps_the_dx_a_grid_study_point_was_run_at(monkeypatch):
+    """Live probe: `dx_0.75` was refused as a mesh change because the old
+    prepare_resume always regenerated at this module's default dx (0.6)
+    instead of the 0.75 the run dir was actually checkpointed at."""
+    from solit2.engines.fds import deck as deck_mod
+    from solit2.schema.design import Design
+    design = Design.load("designs/og-dbr-rev0.json")
+    d = _run_dir_on_the_real_deck_at_dx(design, dx_m=0.75, t_end=600.0)
+    runner.pause(d)
+    (d / "x.restart").write_text("")
+    monkeypatch.setattr(runner, "run", lambda deck, out: "launched")
+    assert runner.resume(d, design) == "launched"        # must not raise "different mesh"
+    assert deck_mod.stored_dx_m(d) == pytest.approx(0.75)
+
+
+def test_resume_keeps_the_window_a_run_was_launched_for_by_default(monkeypatch):
+    """Live probe: grid `dx_0.60` with T_END 600 was resumed with T_END 3600
+    -- the old prepare_resume defaulted an omitted t_end_s to the design's
+    FULL discharge duration instead of to the deck's own, already-shortened
+    T_END. The scheduler's own resume call never passes t_end_s."""
+    from solit2.schema.design import Design
+    design = Design.load("designs/og-dbr-rev0.json")
+    assert design.zones.duration_min * 60.0 == pytest.approx(3600.0), \
+        "the bug only shows when the design's full duration differs from the run's own T_END"
+    d = _run_dir_on_the_real_deck(design, t_end=600.0)
+    runner.pause(d)
+    (d / "x.restart").write_text("")
+    monkeypatch.setattr(runner, "run", lambda deck, out: "launched")
+    runner.resume(d, design)                              # no t_end_s override
+    assert "T_END=600.0" in (d / "deck.fds").read_text()
+
+
+def test_resume_keeps_an_explicit_t_end_override(monkeypatch):
+    """The deliberate-extension path (`fds-exec --t-end`, already tested end
+    to end in test_fds_exec.py) must still work: a caller-supplied t_end_s is
+    not "drift", it's a choice, and stays honoured."""
+    from solit2.schema.design import Design
+    design = Design.load("designs/og-dbr-rev0.json")
+    d = _run_dir_on_the_real_deck(design, t_end=600.0)
+    runner.pause(d)
+    (d / "x.restart").write_text("")
+    monkeypatch.setattr(runner, "run", lambda deck, out: "launched")
+    runner.resume(d, design, t_end_s=120.0)
+    assert "T_END=120.0" in (d / "deck.fds").read_text()
+
+
+def test_resume_keeps_a_free_burn_deck_free_burn(monkeypatch):
+    """Live probe: a free-burn deck got the mist deck's CHID plus nozzles on
+    resume, because prepare_resume always regenerated with suppression=True
+    regardless of what the checkpointed deck actually was."""
+    from solit2.engines.fds import deck as deck_mod
+    from solit2.schema.design import Design
+    import tempfile
+    from pathlib import Path
+    design = Design.load("designs/og-dbr-rev0.json")
+    d = Path(tempfile.mkdtemp())
+    (d / "deck.fds").write_text(deck_mod.generate(design, t_end_s=100.0, suppression=False))
+    (d / "run.out").write_text("Total Time:  25.000 s\n")
+    runner.pause(d)
+    (d / "x.restart").write_text("")
+    monkeypatch.setattr(runner, "run", lambda deck, out: "launched")
+    runner.resume(d, design)
+    deck_text = (d / "deck.fds").read_text()
+    assert f"CHID='{deck_mod.chid(design, suppression=False)}'" in deck_text.splitlines()[0]
+    assert "PART_ID='FINE'" not in deck_text and "'NOZ" not in deck_text, \
+        "a free-burn resume must not grow nozzles/particles"
+
+
+def test_resume_refuses_when_the_design_does_not_match_the_checkpoints(monkeypatch):
+    """CHID encodes the whole design; if it does not match what is on disk,
+    `design` is not the one that produced this run, and resuming under it
+    would attribute a different experiment's physics to this run's data."""
+    from solit2.schema.design import Design
+    design = Design.load("designs/og-dbr-rev0.json")
+    other = design.model_copy(update={
+        "fire": design.fire.model_copy(update={"design_hrr_mw": design.fire.design_hrr_mw + 1.0})})
+    d = _run_dir_on_the_real_deck(design)
+    runner.pause(d)
+    (d / "x.restart").write_text("")
+    monkeypatch.setattr(runner, "run", lambda deck, out: "launched")
+    with pytest.raises(ValueError, match="not the design this run was launched from"):
+        runner.resume(d, other)
+    assert runner.is_paused(d), "a refused resume must not touch the run's state"
+
+
+def _run_dir_on_the_real_deck_at_dx(design, dx_m, t_end=100.0, reached=25.0):
+    import tempfile
+    from pathlib import Path
+    from solit2.engines.fds import deck as deck_mod
+    d = Path(tempfile.mkdtemp())
+    (d / "deck.fds").write_text(deck_mod.generate(design, dx_m=dx_m, t_end_s=t_end))
+    (d / "run.out").write_text(f"Total Time:  {reached:.3f} s\n")
+    return d
 
 
 def test_run_or_resume_skips_a_done_run(monkeypatch, tmp_path):
@@ -728,7 +959,8 @@ def test_stop_does_not_claim_a_kill_it_was_not_allowed_to_make(monkeypatch):
     d = _run_dir_with_deck(Path(tempfile.mkdtemp()))
     (d / runner.PID_NAME).write_text("4242")
     monkeypatch.setattr(runner, "_pid_alive", lambda pid: True)
-    monkeypatch.setattr(os, "getpgid", lambda pid: 9999)
+    monkeypatch.setattr(runner, "_pid_matches_run_dir", lambda pid, run_dir: True)
+    monkeypatch.setattr(os, "getpgid", lambda pid: pid)
 
     def denied(pgid, sig):
         raise PermissionError("Operation not permitted")
@@ -748,7 +980,8 @@ def test_stop_marks_a_run_whose_group_vanished_mid_signal(monkeypatch):
     d = _run_dir_with_deck(Path(tempfile.mkdtemp()))
     (d / runner.PID_NAME).write_text("4242")
     monkeypatch.setattr(runner, "_pid_alive", lambda pid: True)
-    monkeypatch.setattr(os, "getpgid", lambda pid: 9999)
+    monkeypatch.setattr(runner, "_pid_matches_run_dir", lambda pid, run_dir: True)
+    monkeypatch.setattr(os, "getpgid", lambda pid: pid)
 
     def gone(pgid, sig):
         raise ProcessLookupError("No such process")
@@ -768,9 +1001,74 @@ def test_stop_signals_the_process_group_not_the_launcher_alone(monkeypatch):
     d = _run_dir_with_deck(Path(tempfile.mkdtemp()))
     (d / runner.PID_NAME).write_text("4242")
     monkeypatch.setattr(runner, "_pid_alive", lambda pid: True)
-    monkeypatch.setattr(os, "getpgid", lambda pid: 9999)
+    monkeypatch.setattr(runner, "_pid_matches_run_dir", lambda pid, run_dir: True)
+    monkeypatch.setattr(os, "getpgid", lambda pid: pid)
     signalled = []
     monkeypatch.setattr(os, "killpg", lambda pgid, sig: signalled.append((pgid, sig)))
     monkeypatch.setattr(runner.time, "sleep", lambda s: None)
     runner.stop(d)
-    assert signalled and all(pgid == 9999 for pgid, _ in signalled), "the group, not the pid"
+    assert signalled and all(pgid == 4242 for pgid, _ in signalled), "the group, not the pid"
+
+
+def test_stop_refuses_a_stale_or_recycled_pid(monkeypatch):
+    """I3: the pid file can outlive the process it named. `_pid_matches_run_dir`
+    returning False means whatever now holds this pid is not this run's own
+    launcher any more -- signalling it would risk hitting an unrelated
+    process, so stop() must refuse rather than guess."""
+    import tempfile
+    from pathlib import Path
+    d = _run_dir_with_deck(Path(tempfile.mkdtemp()))
+    (d / runner.PID_NAME).write_text("4242")
+    monkeypatch.setattr(runner, "_pid_alive", lambda pid: True)
+    monkeypatch.setattr(runner, "_pid_matches_run_dir", lambda pid, run_dir: False)
+    with pytest.raises(PermissionError, match="stale or recycled"):
+        runner.stop(d)
+    assert not runner.was_stopped(d)
+
+
+def test_pid_matches_run_dir_true_when_getpgid_matches_and_no_procfs(tmp_path, monkeypatch):
+    """On a platform with no procfs at all (macOS/BSD -- this test's own
+    machine), the getpgid check is the whole safety net available, same as
+    before this fix existed anywhere it could not be strengthened further."""
+    import os
+    monkeypatch.setattr(os, "getpgid", lambda pid: pid)
+    no_procfs = tmp_path / "no-such-proc-dir"
+    assert runner._pid_matches_run_dir(4242, tmp_path, proc_dir=no_procfs) is True
+
+
+def test_pid_matches_run_dir_false_when_getpgid_does_not_match(monkeypatch):
+    import os
+    from pathlib import Path
+    monkeypatch.setattr(os, "getpgid", lambda pid: pid + 1)   # never equal to pid
+    assert runner._pid_matches_run_dir(4242, Path("/tmp"), proc_dir=Path("/nonexistent")) is False
+
+
+def test_pid_matches_run_dir_checks_cwd_against_a_fake_procfs(tmp_path, monkeypatch):
+    """A synthetic /proc/<pid>/cwd (this platform has no real one) proves the
+    cwd half of the check without needing an actual Linux box: getpgid is
+    stubbed to match so only the cwd branch is exercised."""
+    import os
+    monkeypatch.setattr(os, "getpgid", lambda pid: pid)
+    real_run_dir = tmp_path / "run"
+    real_run_dir.mkdir()
+    other_dir = tmp_path / "elsewhere"
+    other_dir.mkdir()
+    proc_dir = tmp_path / "proc"
+    pid = 4242
+    cwd_link = proc_dir / str(pid) / "cwd"
+    cwd_link.parent.mkdir(parents=True)
+    cwd_link.symlink_to(real_run_dir)
+
+    assert runner._pid_matches_run_dir(pid, real_run_dir, proc_dir=proc_dir) is True
+    assert runner._pid_matches_run_dir(pid, other_dir, proc_dir=proc_dir) is False
+
+
+def test_pid_matches_run_dir_false_when_procfs_exists_but_the_pid_does_not(tmp_path, monkeypatch):
+    """procfs is mounted (Linux) but this specific pid has no entry under it
+    -- the process named by the pid file is simply gone, which is exactly the
+    stale-pid case this check exists to catch."""
+    import os
+    monkeypatch.setattr(os, "getpgid", lambda pid: pid)
+    proc_dir = tmp_path / "proc"
+    proc_dir.mkdir()
+    assert runner._pid_matches_run_dir(4242, tmp_path, proc_dir=proc_dir) is False

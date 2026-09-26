@@ -48,13 +48,33 @@ REMOTE_ENV = "SOLIT2_FDS_HOST"
 SMV_ENV = "SOLIT2_SMV_BIN"
 MIN_FREE_BYTES = 10 * 1024**3          # parent spec: 10 GB floor
 LOG_NAME = "run.out"
+# Every `status()` state where the run's own processes are (or may still be)
+# actively computing -- "running" itself, and "pausing" (asked to stop, not
+# yet gone: see status()). A caller deciding whether a core is occupied, a
+# rate/ETA is meaningful, or a second launch would double up on one directory
+# should treat both the same; a bare `== "running"` string check misses
+# "pausing" and is exactly the C2 bug (freeing a block, or launching into a
+# directory, while the previous run had not actually exited yet).
+RUNNING_STATES = frozenset({"running", "pausing"})
 _TOTAL_TIME = re.compile(r"Total Time:\s+([\d.]+)\s*s")
 _T_END = re.compile(r"T_END\s*=\s*([\d.]+)")
 _DONE = "STOP: FDS completed successfully"
-# Anything FDS says that is not the success STOP means the run is over and did
-# not finish. Without this, "no progress line yet" and "dead" look identical.
-_ERROR = re.compile(r"^[ \t]*(?:ERROR|STOP: (?!FDS completed successfully))",
-                    re.MULTILINE)
+# What FDS writes when it exits because it found `<CHID>.stop` -- exactly the
+# marker `pause()` leaves. Not a failure: it is the graceful stop pause() asks
+# for, working as intended. Seen live: "STOP: FDS stopped by user
+# (CHID: eaea401330e8)", so this is a prefix match, not the whole line.
+_STOPPED_BY_USER = "STOP: FDS stopped by user"
+# Anything FDS says that is not one of the two STOPs above means the run is
+# over and did not finish cleanly. Without this, "no progress line yet" and
+# "dead" look identical -- and without excluding _STOPPED_BY_USER too, a
+# cleanly paused run (is_paused() true, restart files on disk) was reported
+# as failed at 0%, because this check runs before the is_paused() branch
+# below ever gets a look. A genuine "STOP: Numerical instability..." or any
+# other STOP/ERROR line still matches and is still reported failed.
+_ERROR = re.compile(
+    r"^[ \t]*(?:ERROR|STOP: (?!" + re.escape(_DONE.removeprefix("STOP: ")) + "|"
+    + re.escape(_STOPPED_BY_USER.removeprefix("STOP: ")) + r"))",
+    re.MULTILINE)
 # FDS banners its build as "Revision : FDS6.9.1-0-g..." or "Version : FDS 6.7.0".
 _VERSION = re.compile(r"(?:FDS|Version\s*:)\s*v?(\d+\.\d+(?:\.\d+)?)")
 # A build from source often stamps no release number at all -- one on this
@@ -100,7 +120,7 @@ def mesh_count(deck_path: Path) -> int:
                if ln.startswith("&MESH"))
 
 
-def run(deck_path: Path, out_dir: Path) -> str:
+def run(deck_path: Path, out_dir: Path, *, extra_env: dict[str, str] | None = None) -> str:
     """Launch FDS detached, one MPI rank per mesh, and return immediately.
 
     A run is hours long; the CFD step polls `status()` rather than blocking
@@ -112,6 +132,13 @@ def run(deck_path: Path, out_dir: Path) -> str:
     than three ranks on a three-mesh deck on the machine this was built on.
 
     Each rank gets one OpenMP thread; see OMP_THREADS_PER_RANK for why.
+
+    `extra_env` merges additional variables over the inherited process
+    environment -- e.g. `I_MPI_PIN_PROCESSOR_LIST`, which the fleet scheduler
+    sets to one run's own core block (see scheduler.py) so several runs
+    launched this way pin to disjoint cores instead of fighting over the
+    same ones. Applied after the `OMP_NUM_THREADS` default below, so a caller
+    can override that too if it needs to.
     """
     problems = preflight()
     if problems:
@@ -123,6 +150,8 @@ def run(deck_path: Path, out_dir: Path) -> str:
     ranks = max(mesh_count(local_deck), 1)
     env = {**os.environ}
     env.setdefault("OMP_NUM_THREADS", OMP_THREADS_PER_RANK)
+    if extra_env:
+        env.update(extra_env)
     with (out_dir / LOG_NAME).open("w") as log:
         process = subprocess.Popen([shutil.which("mpiexec"), "-np", str(ranks),
                                     _binary(), local_deck.name],
@@ -228,6 +257,18 @@ def stop(run_dir: Path) -> bool:
                        capture_output=True, check=False)
         (run_dir / STOPPED_NAME).write_text("")
         return True
+    if not _pid_matches_run_dir(pid, run_dir):
+        # I3: `fds.pid` can outlive the process it named -- killed some other
+        # way, or the OS has since reused that number for an unrelated
+        # process. Signalling it then would not be stopping THIS run; it
+        # would be signalling whatever now holds pid, which `_pid_alive`
+        # alone cannot tell apart from the real thing.
+        raise PermissionError(
+            f"{run_dir}'s {PID_NAME} names pid {pid}, but that process no longer looks like "
+            f"this run's own launcher (it is not its own process group leader, or its "
+            f"working directory is not {run_dir} any more) -- it may be a stale or recycled "
+            f"pid. Stopping it here would risk signalling the wrong process; confirm by hand "
+            f"(`ps -o pid,pgid,args -p {pid}` and `readlink /proc/{pid}/cwd`) before ending it")
     for signal_number in (signal.SIGTERM, signal.SIGKILL):
         try:
             os.killpg(os.getpgid(pid), signal_number)
@@ -282,21 +323,44 @@ def _refuse_on_mesh_change(existing: str, regenerated: str, run_dir: Path) -> No
 
 def prepare_resume(run_dir: Path, design, t_end_s: float | None = None) -> Path:
     """Rewrite `run_dir/deck.fds` with `RESTART=.TRUE.` from `design`, refuse a
-    mesh mismatch against the checkpoints already on disk, and clear the
-    stop/stopped markers so the deck is ready to relaunch. Returns the deck
-    path. Touches nothing else -- launching is the caller's job.
+    mesh or identity mismatch against the checkpoints already on disk, and
+    clear the stop/stopped markers so the deck is ready to relaunch. Returns
+    the deck path. Touches nothing else -- launching is the caller's job.
 
     Split out of `resume` so a caller that must block in the FOREGROUND
     (`fds-exec`, the entry point the CFD server's run queue calls -- see
     exec_run.py) can reuse the exact same regeneration and mesh-change check
     without going through `resume`'s own detached relaunch via `run`.
 
-    `e_coefficient` is read back from the run's OWN deck.fds, never taken from
-    the module's current default: a calibration run launched at E=0.25 must
-    resume at E=0.25, not silently drift to whatever `deck.E_COEFFICIENT`
-    happens to be today. That is a different E, hence a different deck, and
-    resuming under it would be exactly the silent physics change the mesh
-    check next to this one already exists to catch.
+    Every property that decides WHICH deck this is comes from the run's own
+    files, never from a caller-passed default, because the whole point of
+    resuming is continuing the SAME experiment:
+
+    - `suppression` (mist vs free burn) from the existing CHID, the same test
+      `matches_design` already uses. Getting this wrong regenerates the WRONG
+      deck under the RIGHT run dir's name -- caught live: a free-burn run's
+      own deck.fds was overwritten with a mist deck carrying the mist CHID.
+    - `dx_m` from the existing deck's own mesh (`deck.stored_dx_m`), not this
+      module's current default -- caught live: a grid-study point checkpointed
+      at dx=0.75 resumed at the default 0.6 was refused as a mesh change, even
+      though the run dir's own dx never moved.
+    - `e_coefficient` from the run's OWN deck.fds, never taken from the
+      module's current default: a calibration run launched at E=0.25 must
+      resume at E=0.25, not silently drift to whatever `deck.E_COEFFICIENT`
+      happens to be today.
+    - `t_end_s` DEFAULTS to the existing deck's own T_END when the caller
+      passes none -- caught live: the scheduler's own resume call passes none,
+      and used to regenerate at the design's full discharge duration instead
+      of the window the run was actually launched for (600 s resumed as
+      3600 s). A caller that explicitly wants a different window (`fds-exec
+      --t-end`, the app's "resume for longer" picker) still gets it: that is
+      a deliberate choice, not drift.
+
+    After regenerating, the CHID must match what was on disk -- if it does
+    not, `design` is not the one that produced this run at all (a stale or
+    wrong `design.json`), and resuming would attribute one experiment's data
+    to a different one's physics. Checked before the mesh comparison, which
+    catches a narrower case (same design, moved mesh generator).
     """
     from solit2.engines.fds import deck as deck_mod
 
@@ -314,11 +378,32 @@ def prepare_resume(run_dir: Path, design, t_end_s: float | None = None) -> Path:
             f"written on cannot be checked against the one this design generates "
             f"now. Resuming would be a guess; start the run again")
     existing_text = existing.read_text()
+    existing_chid = _chid(run_dir)
+    # Same test `deck.matches_design` uses: the mist CHID is never a substring
+    # of a free-burn deck's own HEAD line, so its absence is the free-burn tell.
+    suppression = f"CHID='{deck_mod.chid(design, suppression=False)}'" not in existing_text.split(
+        "\n", 1)[0]
+    expected_chid = deck_mod.chid(design, suppression=suppression)
+    if existing_chid != expected_chid:
+        raise ValueError(
+            f"{run_dir} was checkpointed under CHID {existing_chid!r}, but the design passed "
+            f"to resume generates {expected_chid!r} "
+            f"({'suppressed' if suppression else 'free burn'}). That is not the design this "
+            f"run was launched from -- resuming would attribute a different experiment's "
+            f"physics to this run's checkpoints")
+    dx_m = deck_mod.stored_dx_m(run_dir)
+    if dx_m is None:
+        raise ValueError(
+            f"{run_dir}'s deck.fds carries no readable &MESH line, so the cell size it "
+            f"actually ran at cannot be recovered to resume at the same one")
     e_coefficient = deck_mod.stored_e_coefficient(run_dir)
     if e_coefficient is None:
         e_coefficient = deck_mod.E_COEFFICIENT
-    regenerated = deck_mod.generate(design, t_end_s=t_end_s, restart=True,
-                                    e_coefficient=e_coefficient)
+    if t_end_s is None:
+        existing_t_end = _T_END.search(existing_text)
+        t_end_s = float(existing_t_end.group(1)) if existing_t_end else None
+    regenerated = deck_mod.generate(design, dx_m=dx_m, t_end_s=t_end_s, restart=True,
+                                    suppression=suppression, e_coefficient=e_coefficient)
     _refuse_on_mesh_change(existing_text, regenerated, run_dir)
     # Nothing above this line has changed anything on disk: a refused resume
     # leaves the run exactly as it found it, still stopped and still resumable
@@ -456,6 +541,40 @@ def _pid_alive(pid: int) -> bool:
         kernel32.CloseHandle(handle)
 
 
+def _pid_matches_run_dir(pid: int, run_dir: Path, *, proc_dir: Path = Path("/proc")) -> bool:
+    """I3: is `pid` actually the launcher THIS run dir's own `fds.pid` should
+    name, not a stale or recycled number that happens to still exist?
+
+    Two checks, both POSIX-only (callers gate this on `os.name != 'nt'`):
+
+    - `getpgid(pid) == pid`: `run()` launches with `start_new_session=True`,
+      which makes the launched process the leader of a brand new session AND
+      process group -- so for the real thing this is always true. A pid that
+      is no longer its own group leader is not what was launched here.
+    - on a system with procfs (Linux -- the deployment target), `/proc/<pid>
+      /cwd` must resolve to `run_dir`: FDS is launched with `cwd=run_dir` (see
+      `run()`), so the real process's working directory never moves away from
+      it. Skipped where there is no procfs at all (macOS/BSD): the getpgid
+      check is the only signal available there, same as always.
+    """
+    try:
+        if os.getpgid(pid) != pid:
+            return False
+    except ProcessLookupError:
+        return False
+    except OSError:
+        pass                                  # not ours to ask; fall through to what we CAN check
+    cwd_link = proc_dir / str(pid) / "cwd"
+    if not proc_dir.is_dir():
+        return True                           # no procfs on this platform; getpgid is the whole check
+    if not cwd_link.exists():
+        return False                          # procfs exists but this pid does not -- it is gone
+    try:
+        return cwd_link.resolve() == Path(run_dir).resolve()
+    except OSError:
+        return False
+
+
 def _launcher_alive(run_dir: Path) -> bool | None:
     """Whether the process `run()` launched is still there; None if unknown.
 
@@ -487,6 +606,14 @@ def status(run_dir: Path) -> dict:
     """Progress from FDS's own log, against the deck's T_END."""
     log = log_path(run_dir)
     if log is None:
+        # I4: `run()` creates LOG_NAME the instant it starts, so no log at
+        # all means run() was never called here -- distinct from a run that
+        # was attempted and went wrong. A grid study or an E sweep writes
+        # every deck up front, well before any of them are launched, and
+        # each one used to read as a red FAIL until its own turn came.
+        if (Path(run_dir) / "deck.fds").exists():
+            return {"state": "pending", "progress": 0.0,
+                    "detail": "deck written, not yet launched"}
         return {"state": "failed", "progress": 0.0,
                 "detail": f"no FDS log in {run_dir}"}
     text = log.read_text()
@@ -518,7 +645,19 @@ def status(run_dir: Path) -> dict:
                               else "; it wrote no restart files, so it cannot resume"))}
     if is_paused(run_dir):
         # Asked to stop, so silence is the point rather than a symptom, and
-        # neither the pid check nor the stall clock below has anything to say.
+        # neither the stall clock below has anything to say. The pid check
+        # DOES still matter here, though: FDS checks for the stop file once
+        # per time step, not instantly, so there is a real window -- up to
+        # one step, which can be tens of seconds on a large deck -- where the
+        # marker exists but the ranks are still finishing. Reporting "paused"
+        # for that window made a second launch (Resume, or the scheduler
+        # reusing the freed block) start a second FDS in the same directory
+        # while the first was still writing to it.
+        if _launcher_alive(run_dir) is True:
+            return {"state": "pausing", "progress": progress,
+                    "detail": ("finishing its current step before stopping at "
+                               + (f"{float(elapsed[-1]):.0f} s of {float(end.group(1)):.0f} s"
+                                  if elapsed else "the start"))}
         return {"state": "paused", "progress": progress,
                 "detail": ("stopped gracefully at "
                            + (f"{float(elapsed[-1]):.0f} s of {float(end.group(1)):.0f} s"

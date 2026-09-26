@@ -47,6 +47,27 @@ def test_with_fds_ready_the_start_button_names_the_default_window(run_view, monk
     assert at.button(key="fds_start").label == "Start FDS run (20 min)"
 
 
+def test_start_warns_when_a_pinning_scheduler_is_running(run_view, monkeypatch, tmp_path):
+    """Known limit, documented rather than fixed in this round: this step
+    launches unpinned, never through the scheduler's own queue -- worth
+    saying out loud only when there is a scheduler actually pinning OTHER
+    runs to reserved cores for this one to compete with."""
+    from app.views import cfd
+    _isolate(monkeypatch, tmp_path, [])
+    monkeypatch.setattr(cfd.fds_scheduler, "is_running", lambda state_dir: True)
+    at = run_view("cfd")
+    assert any("core-block scheduler" in c.value for c in at.caption)
+
+
+def test_start_says_nothing_about_pinning_with_no_scheduler_running(run_view, monkeypatch,
+                                                                    tmp_path):
+    from app.views import cfd
+    _isolate(monkeypatch, tmp_path, [])
+    monkeypatch.setattr(cfd.fds_scheduler, "is_running", lambda state_dir: False)
+    at = run_view("cfd")
+    assert not any("core-block scheduler" in c.value for c in at.caption)
+
+
 def test_start_writes_the_shortened_deck_and_launches(run_view, monkeypatch, tmp_path):
     run_dir = _isolate(monkeypatch, tmp_path, [])
     launched = []
@@ -56,6 +77,22 @@ def test_start_writes_the_shortened_deck_and_launches(run_view, monkeypatch, tmp
     at.button(key="fds_start").click().run()
     assert launched and launched[0][1] == run_dir
     assert "T_END=300.0" in (run_dir / "deck.fds").read_text()
+
+
+def test_start_writes_design_json_beside_the_deck(run_view, monkeypatch, tmp_path):
+    """The run manager's resume path (runner.prepare_resume, via
+    fleet.resume/scheduler._launch) needs design.json beside deck.fds -- a
+    deck alone does not carry the design that generated it back out."""
+    from solit2.engines.fds.exec_run import DESIGN_NAME
+    from solit2.schema.design import Design
+
+    run_dir = _isolate(monkeypatch, tmp_path, [])
+    monkeypatch.setattr(fds_runner, "run", lambda deck, out: out.name)
+    at = run_view("cfd")
+    at.button(key="fds_start").click().run()
+    design_path = run_dir / DESIGN_NAME
+    assert design_path.exists()
+    assert Design.load(design_path) == Design.load(EXAMPLE)
 
 
 def test_a_running_run_shows_progress_and_hides_start(run_view, monkeypatch, tmp_path):
@@ -553,9 +590,14 @@ def test_a_running_run_offers_both_a_pause_and_a_hard_stop(run_view, monkeypatch
     monkeypatch.setattr(cfd, "_load_slice", lambda *a, **kw: None)
     monkeypatch.setattr(cfd.fds_runner, "series", lambda *a, **kw: {})
     # Alive, with the kill itself stubbed: the button's job is to ask, and
-    # stop()'s own tests cover what the asking does.
+    # stop()'s own tests cover what the asking does. getpgid matches pid --
+    # the real invariant `run()`'s start_new_session=True gives every launch
+    # -- so the new I3 pid/cwd check (runner._pid_matches_run_dir) passes;
+    # /proc does not exist on the machine these tests run on, so that check
+    # is getpgid-only here regardless (see test_fds_runner.py for the parts
+    # of it that need a synthetic /proc to exercise).
     monkeypatch.setattr(cfd.fds_runner, "_pid_alive", lambda pid: True)
-    monkeypatch.setattr(os, "getpgid", lambda pid: 9999)
+    monkeypatch.setattr(os, "getpgid", lambda pid: pid)
     monkeypatch.setattr(os, "killpg", lambda pgid, sig: None)
     monkeypatch.setattr(cfd.fds_runner.time, "sleep", lambda s: None)
     at = run_view("cfd")

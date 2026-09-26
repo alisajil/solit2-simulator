@@ -18,6 +18,7 @@ _RESULT_KEY = "result"
 _TWIN_KEY = "twin_result"
 _TIER2_KEY = "tier2_result"
 _STEP_KEY = "step"
+_MANAGER_KEY = "manager_view"
 STEP_MIN, STEP_MAX = 1, 6
 _DERIVED_KEYS = (_RESULT_KEY, _TWIN_KEY, _TIER2_KEY)
 
@@ -67,3 +68,15 @@ def set_tier2_result(result: Result | None) -> None:
         st.session_state.pop(_TIER2_KEY, None)
         return
     st.session_state[_TIER2_KEY] = result
+
+
+def in_manager_view() -> bool:
+    """Whether the app is showing the CFD runs manager instead of the wizard.
+
+    Kept apart from `_STEP_KEY` on purpose: switching to the manager and back
+    must land on the same wizard step, not reset it."""
+    return bool(st.session_state.get(_MANAGER_KEY, False))
+
+
+def set_manager_view(value: bool) -> None:
+    st.session_state[_MANAGER_KEY] = value

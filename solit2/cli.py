@@ -5,6 +5,7 @@ import argparse
 import json
 import sys
 import time
+from dataclasses import asdict
 from pathlib import Path
 
 from pydantic import ValidationError
@@ -14,9 +15,11 @@ from solit2.engines.fds import calibrate as fds_calibrate
 from solit2.engines.fds import campaign as fds_campaign
 from solit2.engines.fds import deck as fds_deck
 from solit2.engines.fds import exec_run as fds_exec
+from solit2.engines.fds import fleet as fds_fleet
 from solit2.engines.fds import grid as fds_grid
 from solit2.engines.fds import reader as fds_reader
 from solit2.engines.fds import runner as fds_runner
+from solit2.engines.fds import scheduler as fds_scheduler
 from solit2.engines.reduced import envelope
 from solit2.reports import archive as archive_mod
 from solit2.reports import assessment, correlation, test_plan
@@ -360,6 +363,130 @@ def _cmd_fds_campaign(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _cmd_fds_scheduler(args: argparse.Namespace) -> int:
+    state_dir = fds_scheduler.resolve_state_dir(args.state_dir)
+    try:
+        blocks = fds_scheduler.resolve_blocks(args.blocks)
+    except ValueError as exc:
+        return _fail(str(exc), "--blocks",
+                     "use comma-separated 'lo-hi' core ranges, e.g. 0-9,10-19,20-29",
+                     EXIT_BAD_INPUT)
+    if bool(args.adopt_state) != bool(args.adopt_queue):
+        return _fail("--adopt-state and --adopt-queue must be given together", "--adopt-state",
+                     "pass both paths, or neither", EXIT_BAD_INPUT)
+    if args.adopt_state and args.adopt_queue:
+        try:
+            fds_scheduler.adopt(state_dir, blocks, Path(args.adopt_state), Path(args.adopt_queue))
+        except (OSError, ValueError) as exc:
+            return _fail(str(exc), "--adopt-state",
+                         "point at the interim scheduler's own state.json and queue.txt",
+                         EXIT_BAD_INPUT)
+    try:
+        fds_scheduler.run_forever(state_dir, blocks, poll_s=args.poll,
+                                  stop_after=1 if args.once else None)
+    except KeyboardInterrupt:
+        pass
+    return EXIT_OK
+
+
+def _cmd_fleet_status(args: argparse.Namespace) -> int:
+    infos = fds_fleet.list_runs()
+    summary = fds_fleet.summarise(infos)
+    if args.json:
+        json.dump({"summary": asdict(summary), "runs": fds_fleet.to_json(infos)},
+                  sys.stdout, indent=2, default=str)
+        sys.stdout.write("\n")
+    else:
+        print(fds_fleet.render_status(infos, summary))
+    return EXIT_OK
+
+
+def _cmd_fleet_pause(args: argparse.Namespace) -> int:
+    try:
+        fds_fleet.pause(Path(args.run_dir), fds_scheduler.resolve_state_dir())
+    except (FileNotFoundError, OSError) as exc:
+        return _fail(str(exc), "run_dir", "point at a run directory runner.run launched",
+                     EXIT_ENGINE)
+    return EXIT_OK
+
+
+def _cmd_fleet_stop(args: argparse.Namespace) -> int:
+    try:
+        fds_fleet.stop(Path(args.run_dir), fds_scheduler.resolve_state_dir())
+    except (FileNotFoundError, PermissionError, OSError) as exc:
+        return _fail(str(exc), "run_dir", "see the message for what could not be signalled",
+                     EXIT_ENGINE)
+    return EXIT_OK
+
+
+def _cmd_fleet_resume(args: argparse.Namespace) -> int:
+    try:
+        fds_fleet.resume(Path(args.run_dir), fds_scheduler.resolve_state_dir())
+    except FileNotFoundError as exc:
+        return _fail(str(exc), "run_dir",
+                     "resume needs restart files and design.json beside deck.fds "
+                     "(write the latter with `solit2 fds-adopt`)", EXIT_BAD_INPUT)
+    except ValueError as exc:
+        return _fail(str(exc), "run_dir", "a run with a live process cannot be resumed",
+                     EXIT_BAD_INPUT)
+    return EXIT_OK
+
+
+def _cmd_fleet_enqueue(args: argparse.Namespace) -> int:
+    try:
+        fds_fleet.enqueue(Path(args.run_dir), fds_scheduler.resolve_state_dir(),
+                          position=args.position)
+    except FileNotFoundError as exc:
+        return _fail(str(exc), "run_dir", "point at a run directory that already holds deck.fds",
+                     EXIT_BAD_INPUT)
+    except ValueError as exc:
+        return _fail(str(exc), "run_dir", "a run with a live process cannot be re-queued",
+                     EXIT_BAD_INPUT)
+    return EXIT_OK
+
+
+def _cmd_fleet_dequeue(args: argparse.Namespace) -> int:
+    try:
+        fds_fleet.dequeue(Path(args.run_dir), fds_scheduler.resolve_state_dir())
+    except ValueError as exc:
+        return _fail(str(exc), "run_dir", "only a queued run directory can be dequeued",
+                     EXIT_BAD_INPUT)
+    return EXIT_OK
+
+
+def _cmd_fleet_move(args: argparse.Namespace) -> int:
+    try:
+        fds_fleet.move(Path(args.run_dir), fds_scheduler.resolve_state_dir(), args.position)
+    except ValueError as exc:
+        return _fail(str(exc), "run_dir", "only a queued run directory can be moved",
+                     EXIT_BAD_INPUT)
+    return EXIT_OK
+
+
+def _cmd_fds_adopt(args: argparse.Namespace) -> int:
+    if bool(args.design) == bool(args.anchor):
+        return _fail("exactly one of --design or --anchor is required", "--design",
+                     "pass --design PATH or --anchor ID, not both or neither", EXIT_BAD_INPUT)
+    try:
+        if args.design:
+            design = Design.load(args.design)
+        else:
+            from validation import compare
+            design = compare.load_anchors((args.anchor,))[0].design
+    except (ValidationError, ValueError, FileNotFoundError, KeyError) as exc:
+        field = "--design" if args.design else "--anchor"
+        return _fail(str(exc), field,
+                     "point at a valid design JSON, or an anchor id under validation/anchors/",
+                     EXIT_BAD_INPUT)
+    try:
+        path = fds_fleet.adopt_design(Path(args.run_dir), design)
+    except FileNotFoundError as exc:
+        return _fail(str(exc), "run_dir", "point at a run directory that already holds deck.fds",
+                     EXIT_BAD_INPUT)
+    print(f"wrote {path}")
+    return EXIT_OK
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="solit2", description="SOLIT2 tunnel water-mist simulator")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -513,6 +640,78 @@ def build_parser() -> argparse.ArgumentParser:
                          "and audited later")
     ra.add_argument("--out")
     ra.set_defaults(func=_cmd_report_assessment)
+
+    fsched = sub.add_parser(
+        "fds-scheduler",
+        help="foreground daemon: keep every core block busy from the CFD run queue "
+             "(see deploy/systemd/solit2-scheduler.service and docs/cloud-compute.md)")
+    fsched.add_argument("--blocks",
+                        help=f"comma-separated 'lo-hi' core ranges; default from "
+                             f"{fds_scheduler.BLOCKS_ENV} or {fds_scheduler.DEFAULT_BLOCKS!r}")
+    fsched.add_argument("--state-dir",
+                        help=f"default from {fds_scheduler.STATE_DIR_ENV} or "
+                             f"{fds_scheduler.DEFAULT_STATE_DIR}")
+    fsched.add_argument("--adopt-state",
+                        help="an interim scheduler's state.json, imported once at startup "
+                             "(pass with --adopt-queue)")
+    fsched.add_argument("--adopt-queue",
+                        help="an interim scheduler's queue.txt, imported once at startup "
+                             "(pass with --adopt-state)")
+    fsched.add_argument("--poll", type=float, default=fds_scheduler.POLL_S,
+                        help="seconds between iterations")
+    fsched.add_argument("--once", action="store_true",
+                        help="run a single iteration and exit, instead of looping forever "
+                             "(for smoke-testing a configuration)")
+    fsched.set_defaults(func=_cmd_fds_scheduler)
+
+    fleet = sub.add_parser(
+        "fds-fleet", help="fleet-wide view and control of every FDS run directory")
+    fleet_sub = fleet.add_subparsers(dest="fleet_command", required=True)
+
+    flstatus = fleet_sub.add_parser(
+        "status", help="every run directory under SOLIT2_RUN_ROOTS, its state, progress, "
+                       "core block and queue position")
+    flstatus.add_argument("--json", action="store_true")
+    flstatus.set_defaults(func=_cmd_fleet_status)
+
+    flpause = fleet_sub.add_parser(
+        "pause", help="ask a run to finish its step, checkpoint and exit cleanly")
+    flpause.add_argument("run_dir")
+    flpause.set_defaults(func=_cmd_fleet_pause)
+
+    flstop = fleet_sub.add_parser("stop", help="kill a run's processes outright")
+    flstop.add_argument("run_dir")
+    flstop.set_defaults(func=_cmd_fleet_stop)
+
+    flresume = fleet_sub.add_parser(
+        "resume", help="enqueue a resume for a paused or stopped run")
+    flresume.add_argument("run_dir")
+    flresume.set_defaults(func=_cmd_fleet_resume)
+
+    flenq = fleet_sub.add_parser("enqueue", help="add a run directory to the scheduler queue")
+    flenq.add_argument("run_dir")
+    flenq.add_argument("--position", type=int,
+                       help="0-based queue position; default: append at the end")
+    flenq.set_defaults(func=_cmd_fleet_enqueue)
+
+    fldeq = fleet_sub.add_parser(
+        "dequeue", help="remove a run directory from the scheduler queue")
+    fldeq.add_argument("run_dir")
+    fldeq.set_defaults(func=_cmd_fleet_dequeue)
+
+    flmove = fleet_sub.add_parser(
+        "move", help="move a queued run directory to a new 0-based position")
+    flmove.add_argument("run_dir")
+    flmove.add_argument("--position", type=int, required=True)
+    flmove.set_defaults(func=_cmd_fleet_move)
+
+    fadopt = sub.add_parser(
+        "fds-adopt",
+        help="write design.json into an existing run dir, so it can resume later")
+    fadopt.add_argument("run_dir")
+    fadopt.add_argument("--design", help="a design JSON path")
+    fadopt.add_argument("--anchor", help="an anchor id from validation/anchors/, e.g. c4")
+    fadopt.set_defaults(func=_cmd_fds_adopt)
     return parser
 
 

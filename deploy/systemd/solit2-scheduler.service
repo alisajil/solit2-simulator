@@ -1,0 +1,90 @@
+# The CFD run scheduler as a systemd unit: `solit2 fds-scheduler` in the
+# foreground, forever, keeping every core block busy from the queue. See
+# docs/cloud-compute.md for the walkthrough this fits into, including the
+# takeover from the interim `/opt/cfd-sched.py` script this supersedes.
+#
+# Paths below match that doc's install layout: repo at /opt/solit2, FDS at
+# /opt/FDS/FDS6, uv at the default /root/.local/bin -- adjust every one of
+# them together if your server differs.
+#
+# Install (fresh, no interim scheduler to take over from):
+#   cd /opt/solit2 && uv sync --frozen
+#   cp deploy/systemd/solit2-scheduler.service /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable --now solit2-scheduler.service
+#
+# Install (taking over from a running interim scheduler): see
+# docs/cloud-compute.md's "Taking over from the interim scheduler" section --
+# it is an 8-step checklist, not just "start the unit"; do not skip to here.
+#
+# `Type=simple` (the default) with `Restart=always`: unlike
+# solit2-cfd.service's queue-to-completion oneshot, this process is meant to
+# run forever -- a clean exit is as much a reason to restart it as a crash,
+# because "the scheduler stopped" should never be a silent, permanent state
+# on a server whose whole job is running this queue.
+#
+# C1: KillMode=process (NOT the default "control-group") is the single most
+# important line in this file. Every FDS run the scheduler launches is a
+# CHILD PROCESS of this unit at the moment it starts (mpiexec, forked from
+# `solit2 fds-scheduler` via runner.run's start_new_session=True) -- and
+# systemd's default KillMode=control-group means EVERY `systemctl restart`
+# or `stop` of this unit (a deploy of these very fixes, for instance) sends
+# SIGTERM/SIGKILL to the whole cgroup, killing every run the scheduler ever
+# launched along with the scheduler itself. `start_new_session=True` moves a
+# launched run into its own session and process group, but NOT out of the
+# unit's cgroup -- cgroup membership is inherited regardless, which is
+# exactly what KillMode=process stops systemd from acting on.
+[Unit]
+Description=SOLIT2 FDS CFD run scheduler
+After=network.target
+StartLimitIntervalSec=3600
+StartLimitBurst=10
+
+[Service]
+Type=simple
+KillMode=process
+# The daemon loop has no natural "started" moment for systemd to wait for
+# beyond the process existing -- and it must never be killed for merely
+# looping for hours, which is the whole point of it. TimeoutStopSec bounds
+# the OTHER direction: how long systemd waits for SIGTERM to reach the loop
+# (caught by run_forever's own handler and checked between iterations, at
+# most POLL_S later -- see scheduler.py) before SIGKILL.
+TimeoutStartSec=infinity
+TimeoutStopSec=60
+WorkingDirectory=/opt/solit2
+Environment=TZ=Asia/Kolkata
+# Where solit2 fds-fleet and the web app look for run directories -- this
+# unit's own scheduler loop does not read it (it only ever touches the run
+# dirs already named in its queue), but setting it here keeps every tool run
+# on this host, including a hand-run `solit2 fds-fleet status`, looking at
+# the same roots without each needing its own copy of this line.
+Environment=SOLIT2_RUN_ROOTS=/opt/solit2/runs:/opt/solit2-app/runs
+# state.json / queue.txt / scheduler.log / actions.jsonl all live here --
+# see scheduler.py's own STATE_DIR_ENV default, restated explicitly rather
+# than left to it so this file stays the single source of truth for where
+# they are on THIS server. Deliberately NOT /var/lib/solit2-cfd -- that is
+# scripts/cfd_queue.sh/solit2-cfd.service's own directory and queue.txt; see
+# scheduler.DEFAULT_STATE_DIR's own comment for what sharing it would break.
+Environment=SOLIT2_CFD_STATE_DIR=/var/lib/solit2-scheduler
+# I7: FDS's OWN env script (FDS6VARS.sh, sourced interactively in
+# docs/cloud-compute.md) sets more than PATH -- LD_LIBRARY_PATH, I_MPI_ROOT,
+# FI_PROVIDER_PATH among them -- none of which a bare Environment=PATH=...
+# line reproduces, and systemd does not read shell rc files or source
+# anything on its own. ExecStart below runs a login-less bash that sources
+# it, then `exec`s into `solit2 fds-scheduler` so systemd is still tracking
+# the right pid (a bare `bash -c '... solit2 fds-scheduler'` without `exec`
+# would have systemd supervising bash, one layer removed from the process
+# that actually matters).
+ExecStart=/bin/bash -c 'source /opt/FDS/FDS6/bin/FDS6VARS.sh && exec /opt/solit2/.venv/bin/solit2 fds-scheduler'
+# I7: FDS's stack usage on a large mesh can exceed systemd's own default
+# (8 MB) well before it exceeds what the KERNEL allows an interactive shell
+# (where FDS6VARS.sh / an operator's own ulimit -s unlimited already covers
+# it) -- infinite is what an interactive launch effectively gets, and a
+# unit that silently caps it tighter is a crash this deployment would not
+# see coming from a deck that ran fine by hand.
+LimitSTACK=infinity
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
