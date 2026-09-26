@@ -16,13 +16,13 @@ ignition with every reading moving together.
 
 ```
 ┌ sidebar ──────────────┬──────────────────────────────────────────────────────────┐
-│ Test   [Class A|B]    │ ◉ SOLIT² VIRTUAL FIRE TEST · engine vX · Tier 1          │
-│ Presets (design files)│ [peak HRR] [peak ceiling °C] [target] [activation] [score]│
-│ Nozzle / Zones /      │ ● TIER 1 · PREDICTION   detect 103 s · activate 283 s ·   │
-│ Ventilation sliders   │   criteria set 2/9 · calibration a1b2c3                   │
+│ Presets (design files)│ ◉ SOLIT² VIRTUAL FIRE TEST · engine vX · Tier 1          │
+│ Nozzle / Zones /      │ [peak HRR] [peak ceiling °C] [target] [activation] [score]│
+│ Ventilation sliders   │ ● TIER 1 · PREDICTION   detect 103 s · activate 283 s ·   │
+│ Protocol (read-only)  │   criteria set 2/9 · calibration a1b2c3                   │
 │ "Drag a slider — the  │ ┌ one animated figure ───────────────────┐ ┌ CFD · LIVE ┐ │
-│  result updates"      │ │ gauges at t: HRR, ceiling °C, target   │ │ state chip │ │
-│ [Open the wizard →]   │ │ flux, air m/s, water L/min, backlayer  │ │ progress   │ │
+│  result updates"      │ │ gauges at t: HRR, air °C, heat flux,   │ │ state chip │ │
+│ [Open the wizard →]   │ │ visibility, air m/s, water L/min       │ │ progress   │ │
 │                       │ │ 3D tunnel                               │ │ latest HRR │ │
 │                       │ │ HRR vs free burn · station temps · flux │ └────────────┘ │
 │                       │ │ ▶ Play  ──●── test clock                │                │
@@ -38,12 +38,21 @@ ignition with every reading moving together.
 - **Animated figure:** one Plotly figure holding every time-varying element, so a single Play
   button and a single time slider keep them in step, client-side, with no server round trips
   during playback (smooth on the remote server as well as locally).
-  - Six gauges showing the engine's value at the current instant: HRR (MW), ceiling
-    temperature (°C), target heat flux (kW/m²), effective air velocity (m/s), water flow
-    (L/min), backlayering length (m).
+  - Six gauges showing the engine's value at the current instant. Four are the quantities the
+    Annex 7 criteria judge, read the way `criteria.py` reads them, so a gauge's red band is
+    exactly the criterion's limit:
+    | Gauge | Value at the instant | Criterion whose `ahj` limit bands it |
+    |---|---|---|
+    | HRR (MW) | `hrr_mw` | `hrr_below_tvs_design_mw` |
+    | Air temperature (°C) | worst `temp_c` over `THERMOCOUPLE_STATIONS` (breathing height) | `max_air_temp_c` |
+    | Heat flux (kW/m²) | worst `flux_kwm2` over `HEAT_FLUX_STATIONS` | `max_heat_flux_kwm2` |
+    | Visibility (m) | worst (lowest) `visibility_m` over `VISIBILITY_STATIONS` | `min_visibility_m` |
+    | Air velocity (m/s) | `u_eff_ms` | none |
+    | Water flow (L/min) | `water_lpm` | none |
   - A 3D tunnel (below).
-  - Three charts with a cursor at the current instant: HRR with the engine's free-burn HRR,
-    gas temperature at every station, heat flux at the target and U15.
+  - Three charts with a cursor at the current instant: HRR with the engine's free-burn HRR
+    (`hrr_free_mw`); breathing-height temperature at U45, U15, D15, D45 and D100; the worst
+    station heat flux and the target's heat flux.
 - **CFD · LIVE panel:** if an FDS run of this exact design exists (its CHID is the design's SHA,
   `deck.chid`), its state, progress (simulated of T_END s), rate and latest HRR, read from the
   run's own files every 10 s. Otherwise "CFD not run for this design" and a button to the
@@ -69,15 +78,18 @@ Built from the design and the worst-case trace, over the zoom window the 2D twin
 
 ### Sidebar
 
-- **Test:** Class A / Class B, selecting the compliance spec's test designs when one is loaded.
-- **Presets:** one button per design file in `designs/` and `examples/` (non-design JSON is
-  filtered out with `spec.is_design_payload`).
-- **Parameters:** nozzle pressure, K-factor, mounting height, head pitch, section length,
-  sections simultaneous, activation delay, ventilation velocity, test duration. The sliders use
-  the **same session keys and assembly** as the Design step (its input renderers move to a
-  shared `app/components/design_inputs.py`), so one design is shared by the simulator and the
-  wizard.
-- "Drag a slider — the result updates" and **Open the wizard →**.
+- **Presets:** one pill per design file in `designs/` and `examples/designs/` (non-design JSON
+  is filtered out with `spec.is_design_payload`). The planned Class A and Class B test designs
+  are presets like any other; the loaded design's fire class shows as a chip in the header.
+- **Parameters:** nozzle pressure, K-factor, mounting height, heads per zone, section length,
+  sections simultaneous, ventilation velocity low and high. The sliders edit the **shared
+  current design** (`state.get_design()`): the design is dumped
+  (`model_dump(by_alias=True, mode="json")`), the one field is set, and it is rebuilt with
+  `Design.from_dict`, so everything the sliders do not show survives unchanged. The protocol's
+  own values (activation delay, pump ramp, duration, detection) are shown read-only: they belong
+  to the test protocol, not to a design knob.
+- "Drag a slider — the result updates" and **Open the wizard →**, which opens the wizard's
+  Result step on the same design.
 
 ## Behaviour
 
@@ -91,8 +103,8 @@ Built from the design and the worst-case trace, over the zoom window the 2D twin
   manager on its own branch adds a third view the same way.
 - Theme: dark by default app-wide, from `.streamlit/config.toml`'s existing `[theme.dark]`
   palette; light stays available from Streamlit's settings. Every existing screen and figure is
-  checked for legibility on dark (figures that pass `theme=None` get explicit colours from
-  `app/palette.py`). Instrument styling (mono uppercase labels, tile cards, the pill's pulsing
+  checked for legibility on dark: figures that pass `theme=None` take a Plotly template from
+  `app/plot_theme.py`, chosen by `st.context.theme.type` (dark when unknown). Instrument styling (mono uppercase labels, tile cards, the pill's pulsing
   dot) lives in `app/theme.py`; the pulse stops under `prefers-reduced-motion`.
 
 ## Honesty rules (not negotiable)
@@ -120,8 +132,9 @@ Built from the design and the worst-case trace, over the zoom window the 2D twin
 | File | Role |
 |---|---|
 | `app/views/simulator.py` | the landing screen: sidebar, tiles, pill, figure, CFD panel |
-| `app/components/design_inputs.py` | input renderers shared by the Design step and the sidebar |
+| `app/components/readings.py` | the gauges' values, limits and ranges, and the tiles, from a result and its trace |
 | `app/components/tunnel3d.py` | the 3D scene's traces for one frame |
+| `app/plot_theme.py` | the Plotly template for figures drawn with `theme=None` |
 | `app/components/live_figure.py` | the animated figure: gauges, 3D scene, charts, frames, Play |
 | `app/components/cfd_live.py` | reads one FDS run's state and latest HRR for the panel |
 | `app/streamlit_app.py`, `app/state.py` | the top-level view switch |
@@ -130,8 +143,8 @@ Built from the design and the worst-case trace, over the zoom window the 2D twin
 ## Testing
 
 - AppTest: the app opens on the simulator; the tiles show the result's peaks; moving a slider
-  changes the design and the tiles; "Open the wizard" switches view and the Design step shows
-  the same design.
+  changes the design and the tiles; "Open the wizard" switches view and the Result step shows
+  the same design (same design SHA).
 - The figure has one frame per sampled step; frame k's gauge values equal the trace's values at
   that step; a gauge has a red band only when its `ahj` limit is set.
 - 3D: the fire box equals the footprint; the smoke band starts at `-backlayer_m`; active heads
