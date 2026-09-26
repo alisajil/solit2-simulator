@@ -65,7 +65,23 @@ def test_a_gauges_limit_is_exactly_what_the_design_declares(run):
 
 def test_a_set_limit_is_the_criterions_own(run):
     result = envelope.run(_with_limit(run[0], "max_air_temp_c", 60.0))
-    assert readings.limit(result, _gauge("air_temp_c")) == 60.0
+    band = readings.limit(result, _gauge("air_temp_c"))
+    assert band.limit == 60.0
+    assert band.op == "<="
+
+
+def test_limit_does_not_crash_on_a_two_sided_limit(run):
+    """I-4: `design.criteria` can override a criterion's own `op` to `"in"`, which
+    carries a two-sided `(lo, hi)` limit -- `readings.limit()` must hand that
+    straight to the band, never call `float()` on it."""
+    _, result, _ = run
+    two_sided = result.criteria["max_air_temp_c"].model_copy(
+        update={"op": "in", "limit": (10.0, 20.0)})
+    patched = result.model_copy(update={"criteria": {**result.criteria,
+                                                      "max_air_temp_c": two_sided}})
+    band = readings.limit(patched, _gauge("air_temp_c"))
+    assert band.op == "in"
+    assert band.limit == (10.0, 20.0)
 
 
 def test_velocity_and_water_never_carry_a_limit(run):

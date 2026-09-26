@@ -36,15 +36,36 @@ FIGURE_BUDGET_BYTES = 6_000_000
 GAUGE_BAND_ALPHA = 0.35
 
 
+def _bands(limit: readings.Band, top: float) -> list[list[float]]:
+    """Where the red zone sits, from the criterion's own comparison (I-4) --
+    never assumed from the gauge: `<=` bands from the limit up to the axis top,
+    `>=` bands from zero up to the limit, and a two-sided `"in"` limit bands
+    BOTH outside sides of its `(lo, hi)` range."""
+    if limit.op == "<=":
+        return [[limit.limit, top]]
+    if limit.op == ">=":
+        return [[0.0, limit.limit]]
+    lo, hi = limit.limit
+    return [[0.0, lo], [hi, top]]
+
+
+def _threshold(limit: readings.Band) -> float | None:
+    """The one value a threshold LINE can mark -- none for a two-sided limit,
+    where a single line would misstate which of its two edges it is."""
+    return None if limit.op == "in" else limit.limit
+
+
 def _gauge(gauge: readings.Gauge, value: float, top: float,
-           limit: float | None) -> go.Indicator:
+           limit: readings.Band | None) -> go.Indicator:
     """One indicator trace for `gauge`'s reading, with a red band and threshold
     line where `limit` is set, and none where it is not."""
     spec: dict = {"axis": {"range": [0.0, top]}, "bar": {"color": palette.PRIMARY}}
     if limit is not None:
-        band = [0.0, limit] if gauge.lower_is_worse else [limit, top]
-        spec["steps"] = [{"range": band, "color": palette.rgba(palette.FAIL, GAUGE_BAND_ALPHA)}]
-        spec["threshold"] = {"line": {"color": palette.FAIL, "width": 3}, "value": limit}
+        spec["steps"] = [{"range": band, "color": palette.rgba(palette.FAIL, GAUGE_BAND_ALPHA)}
+                         for band in _bands(limit, top)]
+        threshold = _threshold(limit)
+        if threshold is not None:
+            spec["threshold"] = {"line": {"color": palette.FAIL, "width": 3}, "value": threshold}
     return go.Indicator(mode="gauge+number", value=value, gauge=spec,
                         number={"suffix": f" {gauge.unit}", "valueformat": ".1f"},
                         title={"text": gauge.label.upper(), "font": {"size": 12}})

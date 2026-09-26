@@ -57,11 +57,11 @@ def test_frames_update_exactly_the_dynamic_traces(built):
 def test_a_gauge_has_a_band_only_where_its_limit_is_set(built):
     result, _, fig, _ = built
     for d, gauge in zip(_indicators(fig.data), readings.GAUGES):
-        lim = readings.limit(result, gauge)
-        if lim is None:
+        band = readings.limit(result, gauge)
+        if band is None:
             assert not d.gauge.steps and d.gauge.threshold.value is None
         else:
-            assert d.gauge.threshold.value == lim
+            assert d.gauge.threshold.value == band.limit
 
 
 def test_a_set_limit_draws_its_band_from_the_limit_up():
@@ -84,3 +84,29 @@ def test_a_floor_limit_draws_its_band_from_zero_up_to_the_limit():
 
 def test_the_figure_stays_inside_its_size_budget(built):
     assert len(built[2].to_json()) < live_figure.FIGURE_BUDGET_BYTES
+
+
+def test_a_ge_override_on_a_normally_le_gauge_bands_below_the_limit():
+    """I-4: `design.criteria` can override a criterion's `op` -- the band must
+    follow THAT, not a per-gauge direction hard-coded from the gauge alone."""
+    raw = Design.load(PROTOCOL).model_dump(by_alias=True, mode="json")
+    raw["criteria"] = {"max_air_temp_c": {"op": ">=", "limit": 50.0}}
+    _, _, fig, _ = _build(Design.from_dict(raw))
+    temp = _indicators(fig.data)[[g.key for g in readings.GAUGES].index("air_temp_c")]
+    assert len(temp.gauge.steps) == 1
+    assert temp.gauge.steps[0].range == (0.0, 50.0)
+    assert temp.gauge.threshold.value == 50.0
+
+
+def test_an_in_override_draws_two_bands_and_does_not_crash():
+    raw = Design.load(PROTOCOL).model_dump(by_alias=True, mode="json")
+    raw["criteria"] = {"max_air_temp_c": {"op": "in", "limit": [10.0, 20.0]}}
+    _, _, fig, _ = _build(Design.from_dict(raw))
+    temp = _indicators(fig.data)[[g.key for g in readings.GAUGES].index("air_temp_c")]
+    ranges = [tuple(s.range) for s in temp.gauge.steps]
+    assert len(ranges) == 2
+    assert ranges[0] == (0.0, 10.0)
+    assert ranges[1][0] == 20.0
+    # A single threshold line cannot honestly mark two edges, so a two-sided
+    # limit draws no threshold at all -- just the two bands.
+    assert temp.gauge.threshold.value is None

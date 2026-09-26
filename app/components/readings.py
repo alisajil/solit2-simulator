@@ -31,17 +31,34 @@ class Gauge:
     label: str
     unit: str
     criterion: str | None         # the criterion whose `ahj` limit bands this gauge
-    lower_is_worse: bool = False  # visibility: the limit is a floor, not a ceiling
 
 
 GAUGES: tuple[Gauge, ...] = (
     Gauge("hrr_mw", "Heat release", "MW", "hrr_below_tvs_design_mw"),
     Gauge("air_temp_c", "Air temperature", "°C", "max_air_temp_c"),
     Gauge("heat_flux_kwm2", "Heat flux", "kW/m²", "max_heat_flux_kwm2"),
-    Gauge("visibility_m", "Visibility", "m", "min_visibility_m", lower_is_worse=True),
+    Gauge("visibility_m", "Visibility", "m", "min_visibility_m"),
     Gauge("air_velocity_ms", "Air velocity", "m/s", None),
     Gauge("water_lpm", "Water flow", "L/min", None),
 )
+
+
+@dataclass(frozen=True)
+class Band:
+    """A gauge's limit, exactly as its criterion declared it -- the comparison
+    together with the value, never just the value alone. `live_figure._gauge`
+    reads `op` to decide which side of `limit` is the red zone; a hard-coded
+    per-gauge direction (the old `lower_is_worse` flag) would draw the wrong
+    side the moment a design overrides a criterion's `op` (`design.criteria`
+    lets it, e.g. to `"in"`, a two-sided `(lo, hi)` limit)."""
+    op: str
+    limit: float | tuple[float, float]
+
+    @property
+    def edge(self) -> float:
+        """The furthest value a gauge's axis must reach to keep this band on-dial."""
+        return max(self.limit) if isinstance(self.limit, tuple) else float(self.limit)
+
 
 _READERS: dict[str, Callable[[StepRecord], float]] = {
     "hrr_mw": lambda s: s.hrr_mw,
@@ -61,19 +78,23 @@ def reading(step: StepRecord, key: str) -> float:
     return float(reader(step))
 
 
-def limit(result: Result, gauge: Gauge) -> float | None:
-    """The authority's limit for this gauge's criterion, or None where nobody set one."""
+def limit(result: Result, gauge: Gauge) -> Band | None:
+    """This gauge's criterion, as a `Band` (its own comparison and limit), or
+    `None` where nobody set a limit -- never a bare number: a bare `float()` on a
+    two-sided `(lo, hi)` limit raises, and dropping `op` is what let the gauge
+    band assume every criterion reads the same way `<=` does."""
     if gauge.criterion is None:
         return None
     criterion = result.criteria.get(gauge.criterion)
     if criterion is None or criterion.limit is None:
         return None
-    return float(criterion.limit)
+    return Band(criterion.op, criterion.limit)
 
 
-def axis_max(trace: RunTrace, gauge: Gauge, limit_value: float | None) -> float:
+def axis_max(trace: RunTrace, gauge: Gauge, limit_value: Band | float | None) -> float:
     peak = max(reading(s, gauge.key) for s in trace.steps)
-    top = max(peak, limit_value if limit_value is not None else 0.0) * RANGE_HEADROOM
+    edge = limit_value.edge if isinstance(limit_value, Band) else limit_value
+    top = max(peak, edge if edge is not None else 0.0) * RANGE_HEADROOM
     return top if top > 0 else 1.0
 
 
