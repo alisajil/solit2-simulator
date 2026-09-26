@@ -34,6 +34,7 @@ ROAD_OPACITY = 0.25
 FIRE_LOAD_OPACITY = 0.6
 TARGET_MIN_OPACITY, TARGET_MAX_OPACITY = 0.25, 0.85
 AIR_ARROW_M = 3.0             # the airflow cone's length; its label carries the speed
+HEAD_RAMP_MIN_ALPHA = 0.3     # a head discharging must never read as idle, so min alpha during ramp
 POST_STATIONS = ("U45", "U15", "D15", "D45", "D100")
 # Every station with a thermocouple tree along the tunnel. "Target" is the target's
 # own thermocouples, not a cross-section, so it does not colour the smoke.
@@ -130,9 +131,23 @@ def _target(design: Design, geom: SectionGeometry, step: StepRecord) -> go.Mesh3
                opacity=TARGET_MIN_OPACITY + (TARGET_MAX_OPACITY - TARGET_MIN_OPACITY) * progress)
 
 
+def _flow_fraction(step: StepRecord, design: Design) -> float:
+    """Pump ramp progress: 0 when dry, 1 at full pressure, ramping linearly in between."""
+    return min(step.water_lpm / design.flow_lpm, 1.0) if design.flow_lpm > 0 else 0.0
+
+
 def _heads(design: Design, geom: SectionGeometry, step: StepRecord) -> go.Scatter3d:
+    """Heads follow the engine's pump ramp: GREY when dry, PRIMARY at full pressure,
+    an rgba blend during the ramp (0.3 alpha minimum so discharging never reads as idle)."""
     heads = nozzle_positions(design, geom, fire_x_m=0.0)
-    colour = palette.PRIMARY if step.water_lpm > 0.0 else palette.GREY
+    fraction = _flow_fraction(step, design)
+    if fraction == 0.0:
+        colour = palette.GREY
+    elif fraction >= 1.0:
+        colour = palette.PRIMARY
+    else:
+        alpha = HEAD_RAMP_MIN_ALPHA + (1.0 - HEAD_RAMP_MIN_ALPHA) * fraction
+        colour = palette.rgba(palette.PRIMARY, alpha)
     return go.Scatter3d(x=[h.x_m for h in heads], y=[h.y_m for h in heads],
                         z=[h.z_m for h in heads], mode="markers",
                         name="nozzle heads (active length)", hoverinfo="skip",
@@ -140,14 +155,17 @@ def _heads(design: Design, geom: SectionGeometry, step: StepRecord) -> go.Scatte
 
 
 def _spray(design: Design, geom: SectionGeometry, step: StepRecord) -> go.Mesh3d:
+    """Spray volume follows the engine's pump ramp: 0 opacity when dry, full SPRAY_OPACITY
+    at full pressure, scaling linearly in between."""
     mount = design.nozzles.mounting
     half_length = design.active_length_m / 2.0
     half_road = geom.road_width_m / 2.0
     y0 = max(min(mount.row_lateral_offsets_m) - SPRAY_SPREAD_M, -half_road)
     y1 = min(max(mount.row_lateral_offsets_m) + SPRAY_SPREAD_M, half_road)
+    fraction = _flow_fraction(step, design)
+    opacity = SPRAY_OPACITY * fraction
     return box((-half_length, half_length), (y0, y1), (0.0, mount.height_above_carriageway_m),
-               name="spray (schematic volume)", colour=palette.PRIMARY,
-               opacity=SPRAY_OPACITY if step.water_lpm > 0.0 else 0.0)
+               name="spray (schematic volume)", colour=palette.PRIMARY, opacity=opacity)
 
 
 def _top_rung(sample: StationSample) -> float:
@@ -180,7 +198,8 @@ def _smoke(geom: SectionGeometry, step: StepRecord, window_m: tuple[float, float
                       cmin=twin_canvas.TEMP_MIN_C, cmax=cmax_c,
                       colorscale=twin_canvas.TEMP_SCALE, opacity=SMOKE_OPACITY,
                       showscale=True, colorbar={"title": {"text": "gas °C"}, "len": 0.45},
-                      name="smoke (engine temperature; height schematic)", hoverinfo="skip")
+                      name="smoke (engine temperature; height schematic)", hoverinfo="skip",
+                      showlegend=True)
 
 
 def _airflow(geom: SectionGeometry, step: StepRecord,

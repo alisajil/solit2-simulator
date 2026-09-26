@@ -53,17 +53,50 @@ def test_there_are_always_six_dynamic_traces_in_a_fixed_order(run):
 
 
 def test_heads_take_the_mist_colour_only_while_water_flows(run):
-    dry = next(s for s in run[2].steps if s.water_lpm == 0)
-    wet = next(s for s in run[2].steps if s.water_lpm > 0)
+    design, geom, trace, window = run
+    dry = next(s for s in trace.steps if s.water_lpm == 0)
+    full = next(s for s in trace.steps if s.water_lpm >= design.flow_lpm)
     assert _dynamic(run, dry)[2].marker.color == palette.GREY
-    assert _dynamic(run, wet)[2].marker.color == palette.PRIMARY
+    assert _dynamic(run, full)[2].marker.color == palette.PRIMARY
 
 
 def test_the_spray_is_invisible_before_discharge(run):
-    dry = next(s for s in run[2].steps if s.water_lpm == 0)
-    wet = next(s for s in run[2].steps if s.water_lpm > 0)
+    design, geom, trace, window = run
+    dry = next(s for s in trace.steps if s.water_lpm == 0)
+    full = next(s for s in trace.steps if s.water_lpm >= design.flow_lpm)
     assert _dynamic(run, dry)[3].opacity == 0.0
-    assert _dynamic(run, wet)[3].opacity > 0.0
+    assert _dynamic(run, full)[3].opacity == pytest.approx(tunnel3d.SPRAY_OPACITY)
+
+
+def test_heads_and_spray_ramp_with_pump_discharge(run):
+    design, geom, trace, window = run
+    ramp = next(s for s in trace.steps if 0 < s.water_lpm < design.flow_lpm)
+    heads_colour = _dynamic(run, ramp)[2].marker.color
+    spray_opacity = _dynamic(run, ramp)[3].opacity
+    # Head colour during ramp is rgba with alpha between HEAD_RAMP_MIN_ALPHA and 1
+    assert isinstance(heads_colour, str) and heads_colour.startswith("rgba(")
+    # Extract alpha from "rgba(r,g,b,a)" format
+    alpha_str = heads_colour.split(",")[-1].rstrip(")")
+    alpha = float(alpha_str)
+    assert 0 < alpha < 1
+    # Spray opacity scales linearly during ramp
+    assert 0 < spray_opacity < tunnel3d.SPRAY_OPACITY
+
+
+def test_schematic_traces_show_in_legend(run):
+    design, geom, trace, window = run
+    step = trace.steps[0]
+    static = tunnel3d.static_traces(design, geom, window)
+    dynamic = tunnel3d.dynamic_traces(design, geom, step, window,
+                                      hrr_peak_mw=max(s.hrr_mw for s in trace.steps),
+                                      cmax_c=twin_canvas.temp_max_c(trace))
+    all_traces = static + dynamic
+    schematic_traces = [t for t in all_traces
+                       if hasattr(t, 'name') and 'schematic' in t.name]
+    assert len(schematic_traces) == 2, f"Expected 2 schematic traces, got {len(schematic_traces)}"
+    for t in schematic_traces:
+        assert t.showlegend is True, f"Schematic trace '{t.name}' must have showlegend=True"
+        assert 'schematic' in t.name
 
 
 def test_smoke_starts_at_the_backlayering_front(run):
