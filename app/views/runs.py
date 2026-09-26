@@ -22,15 +22,13 @@ from pathlib import Path
 
 import streamlit as st
 
+from app.components import run_states
 from solit2.engines.fds import fleet
 from solit2.engines.fds import runner as runner_mod
 from solit2.engines.fds import scheduler as scheduler_mod
 from solit2.engines.fds.exec_run import DESIGN_NAME
 
 POLL = "10s"
-_STATE_CHIP_CLASS = {"done": "pass", "failed": "fail", "stopped": "fail",
-                     "paused": "unset", "running": "unset", "pausing": "unset",
-                     "pending": "unset"}
 _UNSAFE_KEY_CHARS = re.compile(r"[^A-Za-z0-9]+")
 # I5: a confirmation dialog opened from INSIDE a fragment (`_live_panel`,
 # `@st.fragment(run_every=POLL)`) is tied to that specific fragment
@@ -187,7 +185,7 @@ def _row(info: fleet.RunInfo, state_dir: Path) -> None:
             text += f" — {info.simulated_s:.0f} s of {info.t_end_s:.0f} s"
         st.progress(min(info.progress, 1.0), text=text)
     with state_col:
-        st.markdown(f'<span class="chip {_STATE_CHIP_CLASS.get(info.state, "unset")}">'
+        st.markdown(f'<span class="chip {run_states.chip_class(info.state)}">'
                     f'{info.state}</span>', unsafe_allow_html=True)
         if info.detail:
             st.caption(info.detail)

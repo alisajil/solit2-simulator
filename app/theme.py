@@ -37,6 +37,7 @@ CSS = f"""
 .chip.pass {{ background: {PASS}26; color: {PASS}; border-color: {PASS}; }}
 .chip.fail {{ background: {FAIL}26; color: {FAIL}; border-color: {FAIL}; }}
 .chip.unset {{ background: {UNSET}26; color: {UNSET}; border-color: {UNSET}; }}
+.chip.neutral {{ background: {GREY}26; color: {GREY}; border-color: {GREY}; }}
 .lamps {{ display: flex; gap: 1.5rem; font-size: 0.9rem; margin: 0.3rem 0 1rem; }}
 .lamp {{ display: inline-block; width: 0.8rem; height: 0.8rem; border-radius: 2px;
         margin-right: 0.4rem; vertical-align: middle; background: {GREY}; opacity: 0.4; }}

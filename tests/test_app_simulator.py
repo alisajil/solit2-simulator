@@ -31,6 +31,14 @@ def test_the_landing_screen_is_the_live_simulator(monkeypatch, tmp_path):
     assert at.session_state["design"] is not None
 
 
+def test_the_fire_class_chip_is_neutral_not_unset(monkeypatch, tmp_path):
+    """M-9: amber ("unset") means "not judged" in this app; the fire class is
+    descriptive, not a criterion, so it must not borrow that meaning."""
+    at = _app(monkeypatch, tmp_path)
+    assert 'chip neutral">Class' in _text(at)
+    assert 'chip unset">Class' not in _text(at)
+
+
 def test_the_tiles_show_the_results_own_peaks(monkeypatch, tmp_path):
     at = _app(monkeypatch, tmp_path)
     result = at.session_state["result"]
@@ -70,10 +78,14 @@ def test_the_calibration_note_is_on_screen(monkeypatch, tmp_path):
 def test_moving_a_slider_rebuilds_the_design_and_reruns_the_engine(monkeypatch, tmp_path):
     at = _app(monkeypatch, tmp_path)
     before = at.session_state["result"].meta["design_sha"]
+    before_tiles = readings.tiles(at.session_state["result"])
     at.sidebar.slider(key="sim_pressure").set_value(60.0).run()
     assert not at.exception
     assert at.session_state["design"].nozzles.pressure_bar == 60.0
     assert at.session_state["result"].meta["design_sha"] != before
+    # M-10: a slider that changes the design must change what the tiles show, not
+    # just what is stored in session state.
+    assert readings.tiles(at.session_state["result"]) != before_tiles
 
 
 def test_a_velocity_range_wider_than_the_sliders_default_does_not_crash(monkeypatch, tmp_path):
@@ -209,7 +221,21 @@ def test_the_cfd_panel_says_when_no_run_exists(monkeypatch, tmp_path):
     assert any("CFD not run for this design" in c.value for c in at.caption)
 
 
+def test_set_up_a_cfd_run_opens_the_wizards_cfd_step(monkeypatch, tmp_path):
+    """M-7: the panel's own button, reachable only when no run exists yet."""
+    at = _app(monkeypatch, tmp_path)
+    assert at.button(key="sim_open_cfd")
+    at.button(key="sim_open_cfd").click().run()
+    assert not at.exception
+    assert at.session_state["view"] == "wizard"
+    assert at.session_state["step"] == 4
+
+
 def test_the_cfd_panel_reads_a_run_of_this_design(monkeypatch, tmp_path):
+    """M-7: the fixture really yields state `running` at progress 0.1 -- the old
+    test only asserted a `Simulated` metric label exists, which is always true
+    (its own value is "--" here); assert the chip and the progress it actually
+    reads instead."""
     chid = deck.chid(Design.load(simulator.DEFAULT_PRESET))
     run_dir = tmp_path / "runs" / chid
     run_dir.mkdir(parents=True)
@@ -218,3 +244,6 @@ def test_the_cfd_panel_reads_a_run_of_this_design(monkeypatch, tmp_path):
     at = _app(monkeypatch, tmp_path)
     assert not at.exception
     assert any(m.label == "Simulated" for m in at.metric)
+    assert '<span class="chip unset">running</span>' in _text(at)
+    progress = at.get("progress")
+    assert progress and progress[0].proto.value == 10   # 0.1 of T_END, on a 0-100 scale

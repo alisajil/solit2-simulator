@@ -97,15 +97,19 @@ def test_the_axis_covers_the_peak_and_the_limit(run):
     assert readings.axis_max(trace, _gauge("hrr_mw"), 10 * peak) >= 10 * peak
 
 
-def test_the_score_tile_says_how_many_criteria_are_set(run):
+def test_the_score_tile_always_shows_how_many_criteria_are_set(run):
+    """M-1: the count must show unconditionally, even when a gate has failed --
+    the protocol fixture fails `target_ignited` by default (no AHJ dependency), so
+    this is the branch the old `... if failed else ...` never exercised."""
     result = run[1]
     n_set, total = readings.criteria_set(result)
     assert total == len(result.criteria)
     assert n_set == total - len(result.score["criteria_unset"])
+    failed = result.score["gates_failed"]
+    assert failed, "fixture must fail a gate for this test to exercise the count"
     score = next(t for t in readings.tiles(result) if t.label == "Score")
     assert score.value == f"{result.score['total']:.1f}"
-    assert (score.note == f"{n_set} of {total} criteria set"
-            or score.note.startswith("gates failed"))
+    assert score.note == f"{n_set} of {total} criteria set · gates failed: {', '.join(failed)}"
 
 
 def test_the_tiles_carry_the_results_own_peaks(run):

@@ -2,9 +2,13 @@
 
 Those figures opt out of Streamlit's own chart theme (it rewrites near-black
 colours, which breaks the temperature scales), so they must be given the app's
-colours explicitly. The viewer's theme comes from `st.context.theme.type`, which
-Streamlit infers from the page background; it can be unknown on a session's
-first run, and the app is dark by default, so unknown means dark.
+colours explicitly. The app follows the viewer's own system theme -- there is
+no app-wide dark or light default (`.streamlit/config.toml` defines both
+`[theme.light]` and `[theme.dark]` and no `base`). The viewer's theme comes
+from `st.context.theme.type`, which Streamlit infers from the page background;
+Streamlit itself documents that this can be reported wrongly on a session's
+first load, so a figure can show the OTHER palette's colours until the next
+rerun. `current()` falls back to dark only when the type is altogether unknown.
 
 The colours are read from `.streamlit/config.toml` rather than restated: that
 file is where Streamlit takes them from, so the two cannot drift apart.

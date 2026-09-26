@@ -117,6 +117,13 @@ def tiles(result: Result) -> tuple[Tile, ...]:
     full = events.get("t_full_pressure_s")
     ignited = bool(result.criteria["target_ignited"].value)
     failed = list(score.get("gates_failed") or [])
+    # The count is never dropped in favour of the gate failure: a design can fail
+    # a gate for reasons that have nothing to do with how many criteria are set
+    # (`target_ignited` needs no AHJ limit at all), so hiding the count exactly
+    # when a gate fails is the one time a reader most needs to see it (M-1).
+    note = f"{n_set} of {total} criteria set"
+    if failed:
+        note += " · gates failed: " + ", ".join(failed)
     return (
         Tile("Peak heat release", f"{peaks['hrr_mw']:.1f} MW",
              f"free burn {peaks['hrr_free_burn_mw']:.1f} MW"),
@@ -124,9 +131,7 @@ def tiles(result: Result) -> tuple[Tile, ...]:
         Tile("Target", "ignited" if ignited else "not ignited", "Annex 7 §7.2.1"),
         Tile("Full pressure", f"{full:.0f} s" if full is not None else "never reached",
              "after ignition"),
-        Tile("Score", f"{score['total']:.1f}",
-             "gates failed: " + ", ".join(failed) if failed
-             else f"{n_set} of {total} criteria set"),
+        Tile("Score", f"{score['total']:.1f}", note),
     )
 
 

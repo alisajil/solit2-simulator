@@ -68,8 +68,9 @@ Built from the design and the worst-case trace, over the zoom window the 2D twin
 - the fire load as its `Footprint` box at the mock-up centre, and the target where the design
   puts it; the flame's size and colour follow HRR over its own peak;
 - nozzle heads at `Mounting.height_above_carriageway_m`, one line per row offset, at `pitch_m`;
-  heads in the active sections turn to the mist colour once full pressure is reached, with a
-  translucent spray volume per active section;
+  heads and the translucent spray volume per active section follow the engine's own flow
+  fraction (`water_lpm / flow_lpm`) -- grey and empty when dry, ramping to the mist colour and
+  to full spray opacity as flow builds, both reaching full exactly at full pressure (ruling I2);
 - a smoke band under the ceiling from the backlayering front to the window's downstream end,
   coloured by the engine's gas temperature at the stations and linearly interpolated between
   them; the band's **thickness is schematic** (the engine does not compute a layer depth) and the
@@ -146,8 +147,9 @@ Built from the design and the worst-case trace, over the zoom window the 2D twin
   the same design (same design SHA).
 - The figure has one frame per sampled step; frame k's gauge values equal the trace's values at
   that step; a gauge has a red band only when its `ahj` limit is set.
-- 3D: the fire box equals the footprint; the smoke band starts at `-backlayer_m`; active heads
-  appear only at or after full pressure.
+- 3D: the fire box equals the footprint; the smoke band starts at `-backlayer_m`; heads and
+  spray follow the engine's flow fraction (`water_lpm / flow_lpm`), reaching full colour and
+  opacity exactly at full pressure.
 - CFD panel: no run → "not run"; a synthetic run directory with the design's CHID → its state
   and progress; tests never start FDS.
 - Figure size stays under a stated budget (checked in a test); the independence scan passes.

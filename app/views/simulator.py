@@ -16,7 +16,7 @@ from pathlib import Path
 import streamlit as st
 
 from app import plot_theme, state
-from app.components import cfd_live, live_figure, readings, twin_canvas
+from app.components import cfd_live, live_figure, readings, run_states, twin_canvas
 from app.components.design_files import design_files
 from app.views.fire_test import ensure_trace
 from app.views.result import ensure_result
@@ -33,15 +33,15 @@ VELOCITY_PATH = ("ventilation", "velocity_range_ms")
 # none of its own (only the scalar `velocity_ms` does). Widened in `_sidebar()` to hold
 # whatever range the current design actually declares.
 VELOCITY_RANGE_MS = (0.0, 8.0)
-CHIP = {"done": "pass", "running": "pass", "failed": "fail", "stopped": "fail",
-        "unreadable": "fail"}
 CAPTION = (
     "Every reading is the Tier 1 engine's own output for this design: a prediction, not a "
     "measurement. Gauges show the worst of the Annex 7 Table 5 stations that carry each "
-    "instrument; a red band is the authority's limit and appears only where one is set. "
-    "Across the tunnel the picture is enlarged for legibility. The smoke plane's height and "
-    "the spray volume are schematic; the smoke's colour is the engine's temperature at the "
-    "stations, interpolated between them.")
+    "instrument; a red band is the authority's limit and appears only where one is set. The "
+    "heat-release criterion judges only the peak after full pressure, but its gauge's band "
+    "marks the limit at every instant, including the free burn before activation. Across the "
+    "tunnel the picture is enlarged for legibility. The smoke plane's height and the spray "
+    "volume are schematic; the smoke's colour is the engine's temperature at the stations, "
+    "interpolated between them.")
 
 
 @dataclass(frozen=True)
@@ -214,7 +214,7 @@ def _header(design: Design, result) -> None:
         f'<div class="sim-head">◉ SOLIT² VIRTUAL FIRE TEST · '
         f'{html.escape(str(result.meta["engine_version"]))} · Tier 1 · '
         f'{html.escape(design.meta.name)} '
-        f'<span class="chip unset">Class {html.escape(design.fire.fire_class)}</span></div>'
+        f'<span class="chip neutral">Class {html.escape(design.fire.fire_class)}</span></div>'
         f'<div class="tiles">{tiles}</div>'
         f'<div class="diag"><span class="pill"><span class="dot"></span>TIER 1 · PREDICTION'
         f'</span> {html.escape(readings.diagnostics(result))}</div>',
@@ -233,7 +233,7 @@ def _cfd_panel(design: Design) -> None:
             state.set_step(4)
             st.rerun()
         return
-    chip = CHIP.get(found.state, "unset")
+    chip = run_states.chip_class(found.state)
     st.markdown(f'<span class="chip {chip}">{html.escape(found.state)}</span>',
                 unsafe_allow_html=True)
     st.progress(min(max(found.progress, 0.0), 1.0))
