@@ -84,11 +84,11 @@ def _finish_layout(fig: go.Figure, geom: SectionGeometry, window_m: tuple[float,
     """Sets the figure's height, 3D scene, legend, play controls and chart axis titles."""
     fig.update_layout(
         height=FIGURE_HEIGHT_PX, template=template,
-        margin={"l": 40, "r": 20, "t": 30, "b": 170},
+        margin={"l": 40, "r": 20, "t": 140, "b": 150},
         scene=tunnel3d.scene_layout(geom, window_m),
         legend={"orientation": "h", "y": -0.16},
-        updatemenus=[twin_canvas.play_menu(y=-0.03)],
-        sliders=[twin_canvas.time_slider(names, 0, y=-0.03)])
+        updatemenus=[twin_canvas.play_menu(y=1.12)],
+        sliders=[twin_canvas.time_slider(names, 0, y=1.075)])
     for col, title in zip(CHART_COLUMNS, CHART_TITLES):
         fig.update_xaxes(title_text="test clock (s)", row=3, col=col)
         fig.update_yaxes(title_text=title, row=3, col=col)

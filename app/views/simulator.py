@@ -10,7 +10,6 @@ survives unchanged. The test protocol's own values are shown, not edited.
 from __future__ import annotations
 
 import html
-import json
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -18,9 +17,9 @@ import streamlit as st
 
 from app import state
 from app.components import cfd_live, live_figure, readings, twin_canvas
+from app.components.design_files import design_files
 from app.views.fire_test import ensure_trace
 from app.views.result import ensure_result
-from solit2.compliance.spec import is_design_payload
 from solit2.engines.reduced.geometry import nozzle_positions, section_geometry
 from solit2.schema.design import Design
 
@@ -30,7 +29,10 @@ _APPLIED_PRESET = "_sim_applied_preset"
 _SEEDED_FROM = "_sim_seeded_from"
 VELOCITY_KEY = "sim_velocity"
 VELOCITY_PATH = ("ventilation", "velocity_range_ms")
-VELOCITY_RANGE_MS = (0.0, 8.0)     # the schema's own bounds on a ventilation velocity
+# The velocity slider's own default span -- not a schema bound: `velocity_range_ms` carries
+# none of its own (only the scalar `velocity_ms` does). Widened in `_sidebar()` to hold
+# whatever range the current design actually declares.
+VELOCITY_RANGE_MS = (0.0, 8.0)
 CHIP = {"done": "pass", "running": "pass", "failed": "fail", "stopped": "fail",
         "unreadable": "fail"}
 CAPTION = (
@@ -64,20 +66,8 @@ SLIDERS: tuple[Slider, ...] = (
 
 
 def preset_files() -> list[Path]:
-    """Design files in the user's own space and in the shipped examples; a compliance
-    spec or a project rules file is not a design and is left out."""
-    found = []
-    for root in PRESET_ROOTS:
-        if not root.is_dir():
-            continue
-        for path in sorted(root.glob("*.json")):
-            try:
-                raw = json.loads(path.read_text())
-            except (OSError, ValueError):
-                continue
-            if is_design_payload(raw):
-                found.append(path)
-    return found
+    """Design files in the user's own space and in the shipped examples."""
+    return design_files(PRESET_ROOTS)
 
 
 def _get(raw: dict, path: tuple) -> object:
@@ -169,7 +159,12 @@ def _sidebar(design: Design) -> dict[tuple, object]:
             if chosen != value_now:
                 changes[slider.path] = chosen
         lo, hi = _get(raw, VELOCITY_PATH)
-        v_lo, v_hi = st.slider("Ventilation velocity (m/s)", *VELOCITY_RANGE_MS, step=0.1,
+        # Widened exactly as `_bounds()` widens each parameter slider above: the design's
+        # own range is not clipped by the slider's default span, or loading a design whose
+        # range already runs wider than (0.0, 8.0) would crash on the very first render.
+        v_low = min(VELOCITY_RANGE_MS[0], lo)
+        v_high = max(VELOCITY_RANGE_MS[1], hi)
+        v_lo, v_hi = st.slider("Ventilation velocity (m/s)", v_low, v_high, step=0.1,
                                key=VELOCITY_KEY)
         if (v_lo, v_hi) != (lo, hi):
             changes[VELOCITY_PATH] = [float(v_lo), float(v_hi)]
@@ -244,7 +239,7 @@ def render() -> None:
     with main:
         fig = live_figure.figure(design, result, trace,
                                  window_m=twin_canvas.core_window_m(design))
-        st.plotly_chart(fig, key="sim_figure", theme=None)
+        st.plotly_chart(fig, key="sim_figure", theme=None, config={"scrollZoom": False})
         st.caption(CAPTION)
     with side:
         _cfd_panel(design)

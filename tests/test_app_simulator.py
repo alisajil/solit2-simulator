@@ -51,6 +51,24 @@ def test_moving_a_slider_rebuilds_the_design_and_reruns_the_engine(monkeypatch, 
     assert at.session_state["result"].meta["design_sha"] != before
 
 
+def test_a_velocity_range_wider_than_the_sliders_default_does_not_crash(monkeypatch, tmp_path):
+    """`ventilation.velocity_range_ms` carries no schema bound of its own (unlike the
+    scalar `velocity_ms`), so a design declaring a range outside the slider's default
+    (0.0, 8.0) span must still render -- the slider widens to hold it, not the other
+    way round."""
+    monkeypatch.setattr(history, "DEFAULT_PATH", tmp_path / "h.jsonl")
+    monkeypatch.setattr(cfd, "RUNS_DIR", tmp_path / "runs")
+    raw = Design.load(simulator.DEFAULT_PRESET).model_dump(by_alias=True, mode="json")
+    raw["ventilation"]["velocity_range_ms"] = [9.0, 10.5]
+    wide = Design.from_dict(raw)
+    at = AppTest.from_file(APP, default_timeout=180)
+    at.session_state["design"] = wide
+    at.run()
+    assert not at.exception
+    assert at.session_state["design"] == wide
+    assert at.sidebar.slider(key="sim_velocity").value == (9.0, 10.5)
+
+
 def test_settings_that_make_no_valid_design_are_reported_and_the_last_design_kept(
         monkeypatch, tmp_path):
     def refuse(design, changes):

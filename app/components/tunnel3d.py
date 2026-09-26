@@ -235,4 +235,5 @@ def scene_layout(geom: SectionGeometry, window_m: tuple[float, float]) -> dict:
             "zaxis": {"title": {"text": "height (m)"},
                       "range": [0.0, geom.crown_height_m + 0.5]},
             "aspectmode": "manual", "aspectratio": ASPECT,
-            "camera": {"eye": {"x": -1.4, "y": -1.8, "z": 0.9}}}
+            "camera": {"eye": {"x": -0.9, "y": -1.2, "z": 0.55},
+                       "center": {"x": 0.0, "y": 0.0, "z": -0.1}}}
