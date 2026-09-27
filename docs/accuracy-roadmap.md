@@ -64,7 +64,10 @@ an assumed nozzle and cannot transfer off it.
 - [ ] **Sauter mean diameter (D32)** at three or more pressures, explicitly
       labelled D32 and not Dv50
 - [ ] **Drop size distribution** by volume: Dv10/Dv50/Dv90, or a
-      Rosin-Rammler spread, or the raw cumulative curve
+      Rosin-Rammler spread, or the raw cumulative curve. Since 2026-09-27
+      Dv50 and Dv90 are REQUIRED inputs: the Rosin-Rammler n is solved from
+      their ratio (`Nozzles.spread_n`) and a nozzle without them refuses to
+      run, in place of the hard-coded n = 2.5 the tool used to assume.
 - [ ] **Spray cone angle**, stated as full or half angle
 - [ ] **Discharge velocity** at the orifice, or a note that it is estimated
 - [ ] **How the drop data was measured** and at what distance from the orifice
@@ -104,7 +107,7 @@ Each is a real disagreement with a measured test, not a tolerance to widen.
 - [x] **Ventilation ran on the fire's uncooled convective heat**, while the
       thermal field already removed the mist's share from the same heat.
 
-- [ ] **Ceiling temperature is 3× low, and the cause is now pinned.** It is
+- [x] **Ceiling temperature is 3× low, and the cause is now pinned.** It is
       not the correlation. With the decay corrected, setting
       `thermal.ceiling_excess_coefficient` to 1.0 -- the published Li & Ingason
       form with no multiplier -- gives:
@@ -128,6 +131,20 @@ Each is a real disagreement with a measured test, not a tolerance to widen.
       lands: a measured spectrum with a real coarse tail delivers water at
       temperatures the assumed one cannot survive. Do not settle it by
       choosing a multiplier.
+
+      **Resolved 2026-09-27 on the temperature side.** The correlation is the
+      published one (`ceiling_excess_coefficient` 1.0) and is out of the fit;
+      the Fire test graphs now show gas temperatures on it. **Open on the
+      spray side.** The assumed reference nozzle was withdrawn: SOLIT2 Annex 2
+      publishes none, so the anchors run only on a tester-supplied one
+      (`designs/solit2-reference-nozzle.json`), and until it exists the fitted
+      mist constants still carry the withdrawn nozzle and the superseded 0.314.
+      With them, `validate` on the old nozzle shows c4 at 91.8 MW against 30:
+      the trade above, made visible rather than hidden in the temperatures.
+      Scratch evidence, not used anywhere: at 1.0 with a 200 um reference SMD,
+      c4 gave 29.3 MW / 657 C / D15 70.5 C and c5 15.0 MW / 476 C / D15 56 C,
+      both inside tolerance -- which says the unknown is the reference spray,
+      and only the SOLIT2 test system's own data can settle it.
 
 - [x] **The mist's cooling fraction was pinned to a fitted constant.** It sat
       at exactly 0.558 for 94 % of every run and at all three of 150, 200 and

@@ -162,6 +162,15 @@ Two habits that keep the loop honest:
 - Treat a suppressed HRR far below the design target, or a ceiling temperature that looks too
   cool, as a reason to check the engine rather than as a win.
 
+Since 2026-09-27 the gas temperatures are the published Li & Ingason correlation, unscaled; the
+0.314 multiplier that made them 3× cool is gone. The mist constants fitted alongside it, and
+the assumed SOLIT² reference nozzle they were fitted with, have NOT been replaced: that needs the
+SOLIT² test system's real nozzle data in `designs/solit2-reference-nozzle.json` and a refit.
+Every nozzle — the project's and the reference — is tester input: K-factor, pressure, D32,
+Dv50/Dv90, cone, discharge velocity and mounting, none assumed. The Fire test step runs the
+Annex 7 test proper, and asks for the conditions Annex 7 leaves to the AHJ (activation time,
+test-day ambient, design-fire growth) instead of choosing them.
+
 ---
 
 ## What this loop may never do
