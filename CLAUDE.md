@@ -173,7 +173,10 @@ Since 2026-09-27 the gas temperatures are the published Li & Ingason correlation
 through (`mist.heads_in_hot_gas`). The fit cannot hold fire size, ceiling temperature and
 backlayering at once, because a single cooling fraction is applied at the fire. It trades the
 ceiling temperatures away. That is a structural limit to fix, not to tune around
-(`docs/accuracy-roadmap.md`). Every nozzle — the project's and the reference — is tester input:
+(`docs/accuracy-roadmap.md`). Do not read the backlayering passes as evidence. They exist only
+because water falling downstream of the fire is credited to its plume. Once cooling acts where
+the water actually is (draft PR #9), the engine has no way for the spray to hold the smoke back.
+Every nozzle — the project's and the reference — is tester input:
 K-factor, pressure, D32,
 Dv50/Dv90, cone, discharge velocity and mounting, none assumed. The Fire test step runs the
 Annex 7 test proper, and asks for the conditions Annex 7 leaves to the AHJ (activation time,
