@@ -93,6 +93,15 @@ def test_the_database_refuses_a_state_and_role_that_do_not_fit(db, state, role):
         _add(conn, state=state, role=role)
 
 
+def test_has_admin_is_false_until_one_exists(db):
+    with store.connect(db) as conn:
+        assert store.has_admin(conn) is False
+        _add(conn, email="team@example.test", state="approved", role="team")
+        assert store.has_admin(conn) is False
+        _add(conn, email="admin@example.test", state="approved", role="admin")
+        assert store.has_admin(conn) is True
+
+
 def test_credentials_come_only_through_their_own_readers(db):
     with store.connect(db) as conn:
         user_id = _add(conn)

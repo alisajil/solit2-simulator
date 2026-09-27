@@ -70,6 +70,18 @@ def test_a_visitor_sees_only_the_login_and_the_sign_up(monkeypatch, tmp_path):
     assert not any("CFD runs" in h.value for h in at.header)
 
 
+def test_the_gate_bootstraps_an_admin_from_the_deploy_secret(monkeypatch, tmp_path):
+    from app import bootstrap
+    monkeypatch.setenv(bootstrap.EMAIL_KEY, "admin@example.test")
+    monkeypatch.setenv(bootstrap.PASSWORD_KEY, TEST_PASSWORD)
+    at = _app(monkeypatch, tmp_path)
+    at.run()
+    assert not at.exception
+    _log_in(at, "admin@example.test", TEST_PASSWORD)
+    assert not at.exception
+    assert "nav_admin" in _nav(at)
+
+
 def test_nothing_below_the_gate_runs_for_a_visitor(monkeypatch, tmp_path):
     def rendered(*_args, **_kwargs):
         raise AssertionError("rendered for a visitor")

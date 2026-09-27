@@ -12,7 +12,7 @@ from pathlib import Path
 
 import streamlit as st
 
-from app import auth
+from app import auth, bootstrap
 from app.accounts import passwords, service, store
 from app.accounts.store import User
 from app.components.local_time import CLOCK, local_time
@@ -41,6 +41,7 @@ def gate() -> User:
 
 def _gate(db: Path) -> User:
     store.init(db)
+    bootstrap.ensure_admin(db)
     user = auth.current_user(touch=True)
     if user is None:
         _visitor(db)
