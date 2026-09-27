@@ -235,11 +235,11 @@ def test_run_with_engine_fds_completes_end_to_end(tmp_path, monkeypatch, capsys)
 
     from solit2 import cli
     from solit2.engines.fds import runner as fds_runner
-    from solit2.engines.reduced.envelope import _design_sha
+    from solit2.engines.reduced.envelope import design_sha
     from solit2.schema.design import Design
 
     design_path = "designs/og-dbr-rev0.json"
-    chid = _design_sha(Design.load(design_path))
+    chid = design_sha(Design.load(design_path))
     fixtures = Path("tests/fixtures/fds")
     states = [{"state": "running", "progress": 0.0, "detail": ""},
               {"state": "done", "progress": 1.0, "detail": ""}]

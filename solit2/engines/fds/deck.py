@@ -24,7 +24,7 @@ from pathlib import Path
 from functools import lru_cache
 
 from solit2.engines.reduced import fire as fire_mod
-from solit2.engines.reduced.envelope import _design_sha
+from solit2.engines.reduced.envelope import design_sha
 from solit2.engines.reduced.fire import (DIESEL_HEAT_OF_COMBUSTION_MJKG,
                                          RADIATIVE_FRACTION_CLASS_A,
                                          RADIATIVE_FRACTION_CLASS_B,
@@ -172,7 +172,7 @@ _REAC_RADIATIVE_FRACTION = {"A": RADIATIVE_FRACTION_CLASS_A,
 def chid(design: Design, suppression: bool = True) -> str:
     """FDS's CHID, which names every output file. The free-burn deck of the same
     design is a different run and must not overwrite the mist run's files."""
-    sha = _design_sha(design)
+    sha = design_sha(design)
     return sha if suppression else sha + FREE_BURN_SUFFIX
 
 
