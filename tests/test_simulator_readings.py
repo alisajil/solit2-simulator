@@ -136,8 +136,12 @@ def test_judged_elsewhere_is_empty_when_the_envelope_has_only_one_case(run):
 
 def test_judged_elsewhere_names_the_case_that_actually_decided_a_criterion(run):
     """I-1: the protocol's own 1.5/3.0 m/s envelope judges heat flux on the 3.0 m/s
-    case (8.78 kW/m2) while the figure replays the worst case, 1.5 m/s -- so a gauge
-    that never enters the red band during playback can still be why a gate failed."""
+    case while the figure replays the worst case, 1.5 m/s -- so a gauge that never
+    enters the red band during playback can still be why a gate failed.
+
+    One line per criterion decided off the replayed case, no more and no fewer:
+    which criteria those are is the engine's answer, read off the result, not a
+    count pinned to one calibration."""
     design = _with_limit(run[0], "max_heat_flux_kwm2", 7.5)
     result = envelope.run(design)
     assert result.criteria_cases["max_heat_flux_kwm2"] != result.worst_case
@@ -145,9 +149,11 @@ def test_judged_elsewhere_names_the_case_that_actually_decided_a_criterion(run):
 
     lines = readings.judged_elsewhere(result)
 
-    assert len(lines) == 1
-    line = lines[0]
-    assert "Heat flux" in line
+    elsewhere = [k for k, case in result.criteria_cases.items() if case != result.worst_case]
+    assert len(lines) == len(elsewhere)
+    flux_lines = [line for line in lines if "Heat flux" in line]
+    assert len(flux_lines) == 1
+    line = flux_lines[0]
     assert f"{result.worst_case['velocity_ms']:.2f} m/s" in line
     case = result.criteria_cases["max_heat_flux_kwm2"]
     assert f"{case['velocity_ms']:.2f} m/s" in line

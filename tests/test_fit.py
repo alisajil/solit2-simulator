@@ -144,3 +144,66 @@ def test_apply_vector_is_visible_to_the_memoised_loader(restored_calibration):
     fit.apply_vector(moved)
 
     assert load_calibration()[group][name]["value"] == pytest.approx(moved[0])
+
+
+def _outcome():
+    return fit.FitOutcome(cost_before=2.0, cost_after=1.0, fitted={}, pinned=(), nfev=3,
+                          njev=2, residual_calls=9, seconds=1.0, message="xtol")
+
+
+def _report(ok):
+    from validation.compare import AnchorReport
+    return AnchorReport("c9", [("peak_hrr_mw", 40.0, 30.0, "relative 0.25", ok),
+                               ("backlayering", True, False, "exact", True)])
+
+
+def _ident(uninformed=()):
+    return {"rank": 11, "informed_by": {}, "uninformed": list(uninformed)}
+
+
+def _reference(status):
+    return {"path": "designs/solit2-reference-nozzle.json", "sha256": "ab" * 32,
+            "data_status": status}
+
+
+def test_the_provenance_note_is_generated_from_what_the_fit_did():
+    from datetime import datetime
+    block = fit.provenance(_outcome(), [_report(False)], _reference("placeholder"),
+                           datetime(2026, 9, 27, tzinfo=fit.IST),
+                           _ident(["fire.pool_extinction_flux_mm_min"]))
+    note = block["note"]
+    assert "1 of 2 comparisons" in note
+    assert "c9 peak_hrr_mw 40 vs 30 measured" in note
+    assert "FITTED IS NOT VALIDATED" in note and "solit2 validate" in note
+    assert "abababababab" in note and "'placeholder'" in note
+    assert fit.NOT_INDEPENDENT in note
+    assert block["fit"]["reference_nozzle"]["sha256"] == "ab" * 32
+    assert block["fit"]["passed"] == 1 and block["fit"]["comparisons"] == 2
+    assert "constrain 11 of the" in note
+    assert "no comparison responds to fire.pool_extinction_flux_mm_min" in note
+
+
+def test_only_a_measured_reference_nozzle_drops_the_not_independent_sentence():
+    from datetime import datetime
+    block = fit.provenance(_outcome(), [_report(True)], _reference("measured"),
+                           datetime(2026, 9, 27, tzinfo=fit.IST), _ident())
+    assert fit.NOT_INDEPENDENT not in block["note"]
+
+
+def test_identifiability_names_the_constants_no_comparison_responds_to(monkeypatch,
+                                                                      restored_calibration):
+    from types import SimpleNamespace
+    group, name = fit.FITTED_KEYS[0][:2]
+
+    def only_the_first_constant_matters(anchors):
+        value = load_calibration()[group][name]["value"]
+        return [value, 2.0 * value]
+
+    monkeypatch.setattr(fit.compare, "residuals", only_the_first_constant_matters)
+    anchors = (SimpleNamespace(id="cX", measured={"a": 1.0, "b": 2.0}),)
+    before = fit.CALIBRATION_PATH.read_text()
+    out = fit.identifiability(anchors)
+    assert out["informed_by"][f"{group}.{name}"] == ["cX"]
+    assert set(out["uninformed"]) == {f"{g}.{n}" for g, n, *_ in fit.FITTED_KEYS[1:]}
+    assert out["rank"] == 1
+    assert fit.CALIBRATION_PATH.read_text() == before, "the probe must leave the file as it was"

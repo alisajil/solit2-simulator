@@ -6,6 +6,7 @@ import json
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from solit2.engines.reduced import constraints as constraints_mod
@@ -29,6 +30,8 @@ DESIGN_SHA_CHARS = 12
 # is arithmetic, not an assessment, and has to say so in its own output.
 TEMPLATE_PRESET = "template"
 NO_ANCHOR = "none"
+# Provenance paths are recorded relative to the repository, where designs/ lives.
+REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
 @dataclass(frozen=True)
@@ -242,9 +245,41 @@ def _calibration_meta() -> dict[str, Any]:
         for entry in entries.values():
             cited = str(entry.get("anchor", NO_ANCHOR)).split(",")
             anchors.update(a.strip() for a in cited if a.strip() not in ("", NO_ANCHOR))
+    reference = declared.get("fit", {}).get("reference_nozzle", {})
     return {"calibration_fitted": bool(declared.get("fitted", False)),
             "calibration_anchors": sorted(anchors),
-            "calibration_note": declared.get("note", "")}
+            "calibration_note": declared.get("note", ""),
+            "calibration_reference_nozzle": reference.get("data_status")}
+
+
+def calibration_warnings() -> list[str]:
+    """Say, in every result, when the constants cannot be shown to rest on measured data.
+
+    Read from the provenance `validation/fit.py` writes, and checked against the
+    reference nozzle file itself, so an edit to that file after the fit -- or a
+    hand-edited calibration -- shows up in the result instead of passing silently.
+    """
+    fit = load_calibration().get("provenance", {}).get("fit")
+    if not fit:
+        return ["calibration: calibration.json records no fit provenance, so this result "
+                "cannot state what its constants rest on; refit with validation.fit"]
+    reference = fit["reference_nozzle"]
+    out = []
+    if reference["data_status"] != "measured":
+        out.append(
+            f"calibration: the fitted constants rest on a reference nozzle declared "
+            f"{reference['data_status']!r}, not the SOLIT2 test system's measured nozzle; no "
+            f"figure in this result is independent evidence (meta.calibration_note, "
+            f"`solit2 validate`)")
+    path = REPO_ROOT / reference["path"]
+    if not path.exists():
+        out.append(f"calibration: {reference['path']}, the reference nozzle the constants "
+                   f"were fitted on, is not present, so this result cannot show they match it")
+    elif hashlib.sha256(path.read_bytes()).hexdigest() != reference["sha256"]:
+        out.append(f"calibration: {reference['path']} has changed since the constants were "
+                   f"fitted on it; refit before trusting any figure (uv run python -m "
+                   f"validation.fit --reference-nozzle {reference['path']} --max-nfev N)")
+    return out
 
 
 def run(design: Design, sections: tuple[str, ...] | None = None,
@@ -270,7 +305,8 @@ def run(design: Design, sections: tuple[str, ...] | None = None,
     # this still cannot turn a local limit into a SOLIT2 failure.
     scored = score_mod.compute(merged, hyd, cost, trace, peak_lining,
                                design.constraints.max_application_density_mm_min)
-    warnings = (_placeholder_warnings(design)
+    warnings = (calibration_warnings()
+                + _placeholder_warnings(design)
                 + _head_count_warnings(design)
                 + _critical_velocity_warnings(trace)
                 + _constraint_warnings(constraints)

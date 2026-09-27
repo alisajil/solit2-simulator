@@ -12,10 +12,9 @@ announces itself as a placeholder in every result computed from it. Real nozzle
 performance — K-factor, drop spectrum, spray geometry, mounting — is a user
 input, supplied as a preset of the user's own.
 
-The one exception is named as such: `nozzle_solit2_reference.json` carries
-*assumed* values used only to reproduce the published reference cases, because
-SOLIT² Annex 2 publishes neither a K-factor nor a drop spectrum. It is not a
-product, not an endorsement, and not fit for assessing a real system.
+There is no exception. The SOLIT² reference test nozzle is not shipped either:
+Annex 2 publishes no K-factor, pressure, drop spectrum or mounting for it, so it
+is the tester's input too (§3).
 
 *Enforced by:* `tests/test_independence.py::test_no_file_in_the_package_names_a_vendor_or_a_project`,
 which greps every file under `solit2/` — code, presets, docstrings and comments
@@ -60,43 +59,64 @@ Every result states what the constants rest on, in its own `meta` block:
 
 - `calibration_fitted` — whether a fit against reference data has been run at all.
 - `calibration_anchors` — the reference case ids the constants cite.
-- `calibration_note` — what the basis is, in a sentence.
+- `calibration_note` — what the basis is: written by the fit, not by hand.
+- `calibration_reference_nozzle` — what the tester declared the reference nozzle
+  data to be.
 
-**`calibration_fitted` is now `true`**: a least-squares fit of twelve constants
-against `c4`–`c6` has been run, and the tool says so rather than letting a reader
-assume the constants are still hand-set. Everything else in `calibration.json` is
-hand-set from published literature and is not a fitted value.
+**The fit writes its own provenance.** `validation/fit.py` records, in
+`calibration.json`'s `provenance` block, the reference nozzle file it ran on
+(path and sha256), that file's declared `data_status`, how many constants were
+fitted against how many comparisons, how many pass afterwards, and each miss. The
+`calibration_note` every result carries is generated from that record, so it
+cannot go on describing a fit that is no longer the one in the file. A
+hand-written note did exactly that once: after a refit it still reported the
+superseded constants' misses.
 
-**Fitted is not validated.** The fit moved the cost by 0.02 % and did not reach
-the reference values: `c4` and `c5` still model a 150 MW peak against 30 and
-20 MW measured. `calibration_note` says so in every result and names
-`solit2 validate` as the command that lists the misses, so `fitted: true` can
-never be read as a claim that the model agrees with the tests.
+**Fitted is not validated.** The same comparisons that set the constants are
+the ones `solit2 validate` checks, so passing them is weak evidence and failing
+them is a finding. `calibration_note` says so in every result and names
+`solit2 validate` as the command that lists the misses.
+
+**The reference nozzle is the tester's, not ours.** Annex 2 publishes what
+`c4`–`c6` measured and nothing about the nozzle that produced it: its §4.1.3
+lists "Type of the nozzle (Shape, K-factor, etc.)" only as a parameter that
+"corresponded to the real installation" and never gives a value. So the anchors
+run only on a reference nozzle the tester supplies
+(`designs/solit2-reference-nozzle.json`, or `--reference-nozzle PATH`), and that
+file must declare its `data_status`:
+
+- `measured` — the SOLIT² test system's own nozzle, measured;
+- `estimated` — that nozzle, with estimated values;
+- `placeholder` — not that nozzle at all.
+
+The tool does not assume it. Only `measured` makes the calibration independent.
+With anything else, the fitted constants have absorbed whatever the stand-in gets
+wrong, and **every result carries a warning that no figure in it is independent
+evidence**. That matters most when the stand-in is the nozzle being assessed. A
+calibration tuned so that nozzle reproduces the reference tests will then agree
+with itself when it assesses that nozzle, which is circular. The warning is how
+the tool says so.
+
+A result also warns if the reference nozzle file has changed since the fit
+(its sha256 no longer matches), or if `calibration.json` carries no fit record at
+all.
 
 *Enforced by:*
 `test_meta_reports_the_calibration_as_fitted_without_claiming_it_is_validated`,
-which fails if the note stops pointing at that command, and
-`test_every_anchor_the_calibration_cites_still_exists`, which fails if any
-constant cites a reference case that is not in `validation/anchors/`.
-
-**The reference nozzle is the tester's, not ours (2026-09-27).** Annex 2
-publishes what `c4`–`c6` measured and nothing about the nozzle that produced it:
-no K-factor, pressure, drop spectrum or mounting. The shipped
-`nozzle_solit2_reference` preset was back-figured and has been withdrawn.
-`validation.compare.load_anchors` now runs the anchors only on a reference nozzle
-the tester supplies (`designs/solit2-reference-nozzle.json`, or
-`--reference-nozzle PATH`), and `solit2 validate` refuses with exit 2 without
-one. The constants fitted before that date still carry the withdrawn nozzle and
-the superseded 0.314 ceiling multiplier, and `calibration_note` says so, until
-they are refit against the tester's file.
-
-*Enforced by:* `test_no_reference_nozzle_ships_with_the_tool`,
-`test_anchors_refuse_without_a_tester_supplied_reference_nozzle` and
-`test_validate_refuses_cleanly_without_a_reference_nozzle`.
+`test_every_anchor_the_calibration_cites_still_exists`,
+`test_no_reference_nozzle_ships_with_the_tool`,
+`test_anchors_refuse_without_a_tester_supplied_reference_nozzle`,
+`test_validate_refuses_cleanly_without_a_reference_nozzle`,
+`test_a_reference_nozzle_must_say_whether_it_is_measured`,
+`test_the_shipped_calibration_was_fitted_on_the_reference_nozzle_that_ships_beside_it`
+(fails if the reference nozzle is edited without a refit),
+`test_the_calibration_note_is_the_one_the_fit_wrote`,
+`test_a_result_on_a_calibration_not_fitted_on_measured_data_says_it_is_not_independent`
+and `test_a_reference_nozzle_changed_after_the_fit_is_flagged`.
 
 ## What this does not claim
 
 Independence is about having no stake in the answer. It is not a claim that the
-model is right. The engine is a reduced-order one; `solit2 validate` reports how
-far it lands from the published tests, and `calibration_fitted: false` is there
-so nobody mistakes a hand-set constant for a fitted one.
+model is right. The engine is a reduced-order one. `solit2 validate` reports how
+far it lands from the published tests, and the calibration warnings say when the
+constants cannot be shown to rest on measured reference data.

@@ -232,3 +232,42 @@ def test_a_reference_nozzle_without_a_spectrum_is_refused(monkeypatch, tmp_path)
     monkeypatch.setenv("SOLIT2_REFERENCE_NOZZLE", str(path))
     with pytest.raises(MissingNozzleData, match="Dv50 and Dv90"):
         compare.load_anchors()
+
+
+def _fixture_without(monkeypatch, tmp_path, **changes):
+    import json
+    import os
+    from pathlib import Path
+    raw = json.loads(Path(os.environ["SOLIT2_REFERENCE_NOZZLE"]).read_text())
+    for key, value in changes.items():
+        if value is None:
+            raw.pop(key)
+        else:
+            raw[key] = value
+    path = tmp_path / "reference.json"
+    path.write_text(json.dumps(raw))
+    monkeypatch.setenv("SOLIT2_REFERENCE_NOZZLE", str(path))
+    return path
+
+
+def test_a_reference_nozzle_must_say_whether_it_is_measured(monkeypatch, tmp_path):
+    from solit2.schema.design import MissingNozzleData
+    _fixture_without(monkeypatch, tmp_path, data_status=None)
+    with pytest.raises(MissingNozzleData, match="data_status"):
+        compare.load_reference_nozzle()
+
+
+def test_a_reference_nozzle_status_outside_the_three_is_refused(monkeypatch, tmp_path):
+    from solit2.schema.design import MissingNozzleData
+    _fixture_without(monkeypatch, tmp_path, data_status="roughly measured")
+    with pytest.raises(MissingNozzleData, match="'measured'"):
+        compare.load_reference_nozzle()
+
+
+def test_the_reference_record_is_the_exact_file(monkeypatch, tmp_path):
+    import hashlib
+    path = _fixture_without(monkeypatch, tmp_path, data_status="estimated")
+    record = compare.reference_nozzle_record()
+    assert record["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
+    assert record["data_status"] == "estimated"
+    assert "data_status" not in compare.load_reference_nozzle()

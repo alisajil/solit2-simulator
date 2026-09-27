@@ -1,4 +1,5 @@
 {
+  "data_status": "placeholder",
   "preset": "tester_input",
   "note": "TEST FIXTURE, NOT DATA. The values of the withdrawn nozzle_solit2_reference preset (back-figured to the reported application density, never published by SOLIT2; Dv50/Dv90 chosen to reproduce a Rosin-Rammler n of 2.5), kept only so the test suite can exercise the c4-c6 anchors. Never read by the product.",
   "k_factor_lpm_bar05": 2.8,
