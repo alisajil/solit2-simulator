@@ -1,0 +1,23 @@
+{
+  "note": "PLACEHOLDER -- NOT the real SOLIT2 test-system nozzle. Confirmed 2026-09-27 against the primary source (SOLIT2 Engineering Guidance Annex 2, http://www.solit.info/PDF/SOLIT_EG_Annex2_EN_v2.1.pdf) that SOLIT2 does not publish the reference test system's nozzle hydraulics anywhere: Annex 2 section 4.1.3 lists 'Type of the nozzle (Shape, K-factor, etc.)' only as a category of layout parameter that 'corresponded to the real installation in the tunnel' and never gives a value; no manufacturer or model is named. No public document exists to source this from. Every value below is instead taken from Mistelix's OWN nozzle datasheet (MTX-WMS-NOZ-DS-001 Rev 1, 2026-09-21, Part B MTX-REV01P proposal) as a mechanical stand-in ONLY, to exercise the refit pipeline -- it is a different nozzle, from a different manufacturer, entered here only because no real SOLIT2 reference-nozzle data exists to enter. That datasheet states explicitly 'no Mistelix nozzle measured' -- every number is ESTIMATED (Merrington-Richardson/Elkotb correlations, Rosin-Rammler spread q=2.5 assumed) or read from CAD, none measured. Per instruction, the LOWEST value at each point was taken: the C_d=0.673 measured-hole bound (itself only a client test-hole datum of unconfirmed provenance, DS-01 Q-041) rather than the 0.78 literature bound, at the lowest tabulated pressure (35 bar, the NFPA750 floor is 34.5). mounting.rows/pitch_m/row_lateral_offsets_m have no source in this datasheet at all -- it documents a single nozzle's hydraulics, not a test-rig's row layout -- and are pure schema-required filler with no physical meaning (rows=1, pitch_m=1.0, one offset of 0.0). height_above_carriageway_m=4.6 and tilt_deg=35 are the datasheet's one stated install note ('35 deg below horizontal, wall-mounted at 4.6 m'); note this schema's mounting.type is fixed to ceiling_rows, so the datasheet's actual wall-mounted geometry does not fit this model either. Any refit or validate output produced against this file is NOT a validated SOLIT2 calibration and must not be reported as one.",
+  "k_factor_lpm_bar05": 4.279,
+  "pressure_bar": 35.0,
+  "modes": [
+    {
+      "id": "reference_estimate",
+      "fraction": 1.0,
+      "smd_um": 79.0,
+      "cone_half_angle_deg": 45.0,
+      "launch_velocity_ms": 70.0,
+      "dv50_um": 107.0,
+      "dv90_um": 207.0
+    }
+  ],
+  "mounting": {
+    "rows": 1,
+    "row_lateral_offsets_m": [0.0],
+    "height_above_carriageway_m": 4.6,
+    "pitch_m": 1.0,
+    "tilt_deg": 35.0
+  }
+}
