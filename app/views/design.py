@@ -1,11 +1,13 @@
-"""The Design view: pick a starting preset per block, override the nine
-parameters an engineer actually varies, and produce a `Design`.
+"""The Design view: pick a starting preset for the tunnel, fire and hydraulics,
+enter the nozzle, override the parameters an engineer actually varies, and
+produce a `Design`.
 
-Presets supply everything else -- this mirrors `solit2/schema/presets.py`'s
-own stated philosophy ("a design JSON names a preset per block and
-overrides individual fields; the preset supplies everything else"), so a
-form that starts from a preset and overrides a handful of fields is not a
-shortcut, it is how this schema is meant to be driven.
+Presets supply the tunnel, fire and hydraulics -- this mirrors
+`solit2/schema/presets.py`'s own stated philosophy ("a design JSON names a
+preset per block and overrides individual fields; the preset supplies
+everything else"). The NOZZLE is different: it is the system under test, and
+every value of it is the tester's own. No preset or form default fills any of
+it in, and the design cannot be built until all of it has been entered.
 """
 from __future__ import annotations
 
@@ -20,7 +22,7 @@ from app.components import overview
 from app.components.design_files import design_files
 from solit2.engines.reduced.geometry import section_geometry
 from solit2.engines.reduced.hydraulics import size_system
-from solit2.schema.design import Design
+from solit2.schema.design import TESTER_INPUT, Design
 from solit2.schema.presets import list_presets
 
 
@@ -49,20 +51,24 @@ def _render_summary(raw: dict) -> None:
 
 def render() -> None:
     st.header("Design")
-    st.caption("Pick a starting preset for each block, then set the parameters an engineer "
-               "actually varies. Everything else comes from the presets.")
+    st.caption("Pick a starting preset for the tunnel, fire and hydraulics, then enter "
+               "the nozzle. The nozzle is yours to enter; nothing about it is assumed.")
     raw_source = _render_source_picker()
-    tunnel_preset, fire_preset, nozzle_preset, hydraulics_preset = _render_preset_pickers(raw_source)
-    k_factor, pressure_bar, rows, pitch_m = _render_nozzle_hydraulics_inputs(raw_source)
-    section_length_m, sections_simultaneous = _render_zoning_inputs(raw_source)
+    tunnel_preset, fire_preset, hydraulics_preset = _render_preset_pickers(raw_source)
+    nozzles, missing = _render_nozzle_inputs(raw_source)
+    section_length_m, sections_simultaneous, pump_ramp_s = _render_zoning_inputs(raw_source)
+    if pump_ramp_s is None:
+        missing = [*missing, PUMP_RAMP_LABEL]
     velocity_lo, velocity_hi = _render_ventilation_inputs(raw_source)
     ahj = _render_ahj_inputs(raw_source)
-    raw = _assemble(tunnel_preset, fire_preset, nozzle_preset, hydraulics_preset,
-                    k_factor, pressure_bar, int(rows), pitch_m,
+    raw = _assemble(tunnel_preset, fire_preset, hydraulics_preset, nozzles,
                     section_length_m, int(sections_simultaneous), velocity_lo, velocity_hi,
-                    ahj, raw_source)
+                    ahj, raw_source, pump_ramp_s=pump_ramp_s)
     _render_summary(raw)
-    if st.button("Build & continue →", key="build_design", type="primary"):
+    if missing:
+        st.warning("Nozzle data still needed: " + ", ".join(missing))
+    if st.button("Build & continue →", key="build_design", type="primary",
+                 disabled=bool(missing)):
         try:
             design = Design.from_dict(raw)
         except Exception as exc:  # noqa: BLE001 -- surfaced to the user, not swallowed
@@ -85,8 +91,8 @@ def _default_index(options: list[str], name: str) -> int:
     return options.index(name) if name in options else 0
 
 
-def _render_preset_pickers(raw: dict) -> tuple[str, str, str, str]:
-    """The four per-block preset selectors: tunnel, fire, nozzle, hydraulics.
+def _render_preset_pickers(raw: dict) -> tuple[str, str, str]:
+    """The per-block preset selectors: tunnel, fire, hydraulics. Never the nozzle.
 
     Each defaults to a verified-compatible combination (`examples/designs/
     road-tunnel-twin-bore-single-mode.json`) rather than position 0 of the
@@ -94,7 +100,7 @@ def _render_preset_pickers(raw: dict) -> tuple[str, str, str, str]:
     and nozzle (e.g. a nozzle mounted above the crown) with zero user
     interaction.
     """
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     with col1:
         tunnel_options = list_presets("tunnel")
         tunnel_preset = st.selectbox(
@@ -105,46 +111,106 @@ def _render_preset_pickers(raw: dict) -> tuple[str, str, str, str]:
         fire_preset = st.selectbox(
             "Fire preset", fire_options, index=_default_index(fire_options, _dig(raw, "fire", "preset") or "hgv_150mw"),
             key="d_fire")
-    with col3:
-        nozzle_options = list_presets("nozzle")
-        nozzle_preset = st.selectbox(
-            "Nozzle preset", nozzle_options,
-            index=_default_index(nozzle_options, _dig(raw, "nozzle", "preset") or "single_mode_fine_example"), key="d_nozzle")
     hydraulics_options = list_presets("hydraulics")
     hydraulics_preset = st.selectbox(
         "Hydraulics preset", hydraulics_options, index=_default_index(hydraulics_options, _dig(raw, "hydraulics", "preset") or "example"),
         key="d_hydraulics")
-    return tunnel_preset, fire_preset, nozzle_preset, hydraulics_preset
+    return tunnel_preset, fire_preset, hydraulics_preset
 
 
-def _render_nozzle_hydraulics_inputs(raw: dict) -> tuple[float, float, int, float]:
-    """K-factor, working pressure, nozzle row count, and pitch."""
-    st.subheader("Nozzle & hydraulics")
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        k_factor = st.number_input(
-            "K-factor (L/min·bar⁰·⁵)", min_value=0.6, max_value=20.0, step=0.1,
-            value=_seed(raw, ("nozzles", "k_factor_lpm_bar05"), 4.1, 0.6, 20.0),
-            key="d_k")
-    with c2:
-        pressure_bar = st.number_input(
-            "Working pressure (bar)", min_value=34.5, max_value=140.0, step=0.5,
-            value=_seed(raw, ("nozzles", "pressure_bar"), 50.0, 34.5, 140.0),
-            key="d_pressure")
-    with c3:
-        rows = st.number_input("Nozzle rows", min_value=1, max_value=3, step=1, key="d_rows",
-                               value=_seed(raw, ("nozzles", "mounting", "rows"), 2, 1, 3))
-    pitch_m = st.number_input(
-        "Nozzle spacing / pitch (m)", min_value=0.1, max_value=10.0, step=0.1,
-        value=_seed(raw, ("nozzles", "mounting", "pitch_m"), 2.4, 0.1, 10.0),
-        key="d_pitch")
-    return k_factor, pressure_bar, rows, pitch_m
+NOZZLE_FIELDS = (
+    ("d_k", ("nozzles", "k_factor_lpm_bar05"), "K-factor (L/min·bar⁰·⁵)", 0.6, 20.0, 0.1),
+    ("d_pressure", ("nozzles", "pressure_bar"), "Working pressure (bar)", 34.5, 140.0, 0.5),
+    ("d_smd", ("nozzles", "modes", 0, "smd_um"), "Sauter mean D32 (µm)", 1.0, 3000.0, 1.0),
+    ("d_dv50", ("nozzles", "modes", 0, "dv50_um"), "Dv50 (µm)", 1.0, 3000.0, 1.0),
+    ("d_dv90", ("nozzles", "modes", 0, "dv90_um"), "Dv90 (µm)", 1.0, 5000.0, 1.0),
+    ("d_cone", ("nozzles", "modes", 0, "cone_half_angle_deg"), "Spray cone half-angle (°)",
+     1.0, 89.0, 1.0),
+    ("d_launch", ("nozzles", "modes", 0, "launch_velocity_ms"), "Discharge velocity (m/s)",
+     0.1, 200.0, 0.5),
+    ("d_mount_h", ("nozzles", "mounting", "height_above_carriageway_m"),
+     "Head height above road (m)", 0.1, 20.0, 0.05),
+    ("d_rows", ("nozzles", "mounting", "rows"), "Nozzle rows", 1, 3, 1),
+    ("d_pitch", ("nozzles", "mounting", "pitch_m"), "Nozzle spacing / pitch (m)", 0.1, 10.0, 0.1),
+    ("d_tilt", ("nozzles", "mounting", "tilt_deg"), "Head tilt (°)", -45.0, 45.0, 1.0),
+)
+NOZZLE_COLUMNS = 3
+OFFSETS_KEY = "d_offsets"
+OFFSETS_LABEL = "Row lateral offsets from centre line (m, comma-separated)"
+OFFSETS_PATH = ("nozzles", "mounting", "row_lateral_offsets_m")
+# The system's own time from activation to full pressure: it sets when the spray
+# arrives in every run, the Annex 7 test included, so it is entered, never assumed.
+PUMP_RAMP_KEY = "d_pump_ramp"
+PUMP_RAMP_PATH = ("zones", "pump_ramp_s")
+PUMP_RAMP_LABEL = "Pump ramp to full pressure (s)"
+PUMP_RAMP_BOUNDS_S = (0.0, 3600.0)
 
 
-def _render_zoning_inputs(raw: dict) -> tuple[float, int]:
-    """Section length and how many sections activate simultaneously."""
+def nozzle_block(values: dict) -> tuple[dict | None, list[str]]:
+    """The tester's nozzle as a preset-free design block, or the fields still missing."""
+    missing = [label for key, _path, label, *_ in NOZZLE_FIELDS if values.get(key) is None]
+    offsets_text = (values.get(OFFSETS_KEY) or "").strip()
+    if not offsets_text:
+        missing.append(OFFSETS_LABEL)
+    if missing:
+        return None, missing
+    try:
+        offsets = [float(x) for x in offsets_text.split(",")]
+    except ValueError:
+        return None, [f"{OFFSETS_LABEL}: {offsets_text!r} is not a list of numbers"]
+    v = values
+    return {
+        "preset": TESTER_INPUT,
+        "k_factor_lpm_bar05": v["d_k"], "pressure_bar": v["d_pressure"],
+        "modes": [{"id": "fine", "fraction": 1.0, "smd_um": v["d_smd"], "dv50_um": v["d_dv50"],
+                   "dv90_um": v["d_dv90"], "cone_half_angle_deg": v["d_cone"],
+                   "launch_velocity_ms": v["d_launch"]}],
+        "mounting": {"type": "ceiling_rows", "rows": int(v["d_rows"]),
+                     "row_lateral_offsets_m": offsets,
+                     "height_above_carriageway_m": v["d_mount_h"], "pitch_m": v["d_pitch"],
+                     "tilt_deg": v["d_tilt"]},
+    }, []
+
+
+def _nozzle_seed(raw: dict, path: tuple, low, high):
+    """A file's value for one nozzle field, clamped into range, or None: no default."""
+    found = _dig(raw, *path)
+    return None if found is None else min(max(type(low)(found), low), high)
+
+
+def _offsets_seed(raw: dict) -> str:
+    found = _dig(raw, *OFFSETS_PATH)
+    return "" if found is None else ", ".join(f"{float(x):g}" for x in found)
+
+
+def _render_nozzle_inputs(raw: dict) -> tuple[dict | None, list[str]]:
+    """Every nozzle value the engine uses, typed by the tester. No defaults."""
+    st.subheader("Nozzle (tester input)")
+    st.caption("Enter the nozzle's measured data. Nothing here is filled in for you, and "
+               "the design cannot be built until every field is set.")
+    file_modes = _dig(raw, "nozzles", "modes") or []
+    if len(file_modes) > 1:
+        st.error(f"This file's nozzle has {len(file_modes)} spray modes; this form enters a "
+                 f"single-mode head. Edit the file to change it, or run it from the CLI.")
+        return None, ["a single-mode nozzle"]
+    values = {}
+    columns = st.columns(NOZZLE_COLUMNS)
+    for i, (key, path, label, low, high, step) in enumerate(NOZZLE_FIELDS):
+        values[key] = columns[i % NOZZLE_COLUMNS].number_input(
+            label, min_value=low, max_value=high, step=step, key=key,
+            value=_nozzle_seed(raw, path, low, high), placeholder="not set")
+    values[OFFSETS_KEY] = st.text_input(OFFSETS_LABEL, key=OFFSETS_KEY, value=_offsets_seed(raw),
+                                        placeholder="e.g. -2.75, 2.75")
+    return nozzle_block(values)
+
+
+def _render_zoning_inputs(raw: dict) -> tuple[float, int, float | None]:
+    """Section length, how many sections activate simultaneously, and the pump ramp.
+
+    The pump ramp has no default: None until the tester enters it or a file gives it.
+    """
     st.subheader("Zoning")
-    z1, z2 = st.columns(2)
+    z1, z2, z3 = st.columns(3)
     with z1:
         section_length_m = st.number_input(
             "Section length (m)", min_value=8.0, max_value=100.0, step=1.0,
@@ -155,7 +221,12 @@ def _render_zoning_inputs(raw: dict) -> tuple[float, int]:
             "Sections activated simultaneously", min_value=1, max_value=6, step=1,
             value=_seed(raw, ("zones", "sections_simultaneous"), 3, 1, 6),
             key="d_sections")
-    return section_length_m, sections_simultaneous
+    with z3:
+        pump_ramp_s = st.number_input(
+            PUMP_RAMP_LABEL, min_value=PUMP_RAMP_BOUNDS_S[0], max_value=PUMP_RAMP_BOUNDS_S[1],
+            step=1.0, value=_nozzle_seed(raw, PUMP_RAMP_PATH, *PUMP_RAMP_BOUNDS_S),
+            key=PUMP_RAMP_KEY, placeholder="not set")
+    return section_length_m, sections_simultaneous, pump_ramp_s
 
 
 def _render_ventilation_inputs(raw: dict) -> tuple[float, float]:
@@ -200,12 +271,7 @@ _APPLIED_SOURCE = "_applied_source"
 SEEDED_FIELDS = (
     ("d_tunnel", ("tunnel", "preset"), "twin_bore_11m", None, None),
     ("d_fire", ("fire", "preset"), "hgv_150mw", None, None),
-    ("d_nozzle", ("nozzles", "preset"), "single_mode_fine_example", None, None),
     ("d_hydraulics", ("hydraulics", "preset"), "example", None, None),
-    ("d_k", ("nozzles", "k_factor_lpm_bar05"), 4.1, 0.6, 20.0),
-    ("d_pressure", ("nozzles", "pressure_bar"), 50.0, 34.5, 140.0),
-    ("d_rows", ("nozzles", "mounting", "rows"), 2, 1, 3),
-    ("d_pitch", ("nozzles", "mounting", "pitch_m"), 2.4, 0.1, 10.0),
     ("d_section_len", ("zones", "section_length_m"), 30.0, 8.0, 100.0),
     ("d_sections", ("zones", "sections_simultaneous"), 3, 1, 6),
     ("d_v_lo", ("ventilation", "velocity_range_ms", 0), 3.88, 0.0, 8.0),
@@ -275,6 +341,12 @@ def _apply_to_widgets(raw: dict) -> None:
         else:
             st.session_state[key] = (found if low is None
                                      else min(max(type(low)(found), low), high))
+    # The nozzle has no form default to return to: a value this file is silent on
+    # is cleared, so a previous file's head cannot survive into this one.
+    for key, path, _label, low, high, _step in NOZZLE_FIELDS:
+        st.session_state[key] = _nozzle_seed(raw, path, low, high)
+    st.session_state[OFFSETS_KEY] = _offsets_seed(raw)
+    st.session_state[PUMP_RAMP_KEY] = _nozzle_seed(raw, PUMP_RAMP_PATH, *PUMP_RAMP_BOUNDS_S)
     declared = (raw.get("ahj") or {})
     for field, key, *_rest in AHJ_FIELDS:
         value = declared.get(field)
@@ -368,9 +440,6 @@ def design_identity(raw_source: dict) -> dict:
                        "whether it is still identical to the file."}
 
 
-DEFAULT_ROW_OFFSETS_M = {1: [0.0], 2: [-2.5, 2.5], 3: [-2.8, 0.0, 2.8]}
-
-
 def _deep_merge(base: dict, over: dict) -> dict:
     """`over` laid on `base`, nested dicts merged rather than replaced."""
     out = copy.deepcopy(base)
@@ -382,21 +451,21 @@ def _deep_merge(base: dict, over: dict) -> dict:
     return out
 
 
-def _overlay(scratch: dict, raw_source: dict, k_factor: float, pressure_bar: float,
-             rows: int, pitch_m: float, section_length_m: float,
-             sections_simultaneous: int, velocity_lo: float, velocity_hi: float,
-             ahj: dict) -> dict:
+def _overlay(scratch: dict, raw_source: dict, nozzles: dict | None,
+             section_length_m: float, sections_simultaneous: int,
+             velocity_lo: float, velocity_hi: float, ahj: dict) -> dict:
     """Three layers, in order: the form's own defaults, then the source FILE, then
-    the twelve fields the form actually edits.
+    the fields the form actually edits.
 
     The file sits in the middle rather than being composed away, so everything
-    the form cannot show -- drop size, cone angle, launch velocity, mounting
-    height, detection, activation delay, discharge duration -- survives. The
-    defaults stay underneath so a partial file still yields a complete design.
+    the form cannot show -- detection, activation delay, discharge duration --
+    survives. The defaults stay underneath so a partial file still yields a
+    complete design.
 
-    Row offsets are the one field that cannot simply be kept: a file listing two
-    offsets cannot describe three rows. They survive while the row COUNT is
-    unchanged, and fall back to the spaced default when the user changes it.
+    The nozzle is not layered at all. The file SEEDED the form's nozzle fields,
+    the tester has seen and completed them, and what the form holds is the
+    nozzle, whole: merging the file's block (or a preset it names) underneath
+    would bring back values the tester never saw.
     """
     raw = _deep_merge(scratch, raw_source)
     # An OVERRIDE the file did not ask for must not arrive from the defaults.
@@ -409,15 +478,7 @@ def _overlay(scratch: dict, raw_source: dict, k_factor: float, pressure_bar: flo
     if "zones" in raw_source and "manual_activation_s" not in raw_source["zones"]:
         raw["zones"].pop("manual_activation_s", None)
     raw["meta"] = design_identity(raw_source)
-    nozzles = raw.setdefault("nozzles", {})
-    nozzles["k_factor_lpm_bar05"] = k_factor
-    nozzles["pressure_bar"] = pressure_bar
-    kept = (raw_source.get("nozzles", {}).get("mounting", {}) or {}).get("row_lateral_offsets_m")
-    mount = nozzles.setdefault("mounting", {})
-    mount["rows"] = rows
-    mount["pitch_m"] = pitch_m
-    mount["row_lateral_offsets_m"] = (list(kept) if kept and len(kept) == rows
-                                      else DEFAULT_ROW_OFFSETS_M[rows])
+    raw["nozzles"] = scratch["nozzles"]
     zones = raw.setdefault("zones", {})
     zones["section_length_m"] = section_length_m
     zones["sections_simultaneous"] = sections_simultaneous
@@ -426,38 +487,34 @@ def _overlay(scratch: dict, raw_source: dict, k_factor: float, pressure_bar: flo
     return raw
 
 
-def _assemble(tunnel_preset: str, fire_preset: str, nozzle_preset: str,
-             hydraulics_preset: str, k_factor: float, pressure_bar: float,
-             rows: int, pitch_m: float, section_length_m: float,
-             sections_simultaneous: int, velocity_lo: float, velocity_hi: float,
-             ahj: dict, raw_source: dict | None = None) -> dict:
+def _assemble(tunnel_preset: str, fire_preset: str, hydraulics_preset: str,
+              nozzles: dict | None, section_length_m: float,
+              sections_simultaneous: int, velocity_lo: float, velocity_hi: float,
+              ahj: dict, raw_source: dict | None = None, *,
+              pump_ramp_s: float | None = None) -> dict:
     """Every override lands inside its own block, on top of the chosen preset.
 
-    With a source file, the FILE is the base and the form's twelve fields are
-    edits on top of it. Composing from the presets instead silently replaced
+    With a source file, the FILE is the base and the form's fields are edits on
+    top of it; the nozzle is the form's alone (see `_overlay`). `nozzles` is
+    None while the tester has not finished entering it, and the design then
+    stays unbuildable rather than borrowing a value from anywhere; `pump_ramp_s`
+    likewise, which is the form's own and overrides the file's. Composing from the presets instead silently replaced
     everything the form cannot show -- drop size, cone angle, launch velocity,
     row offsets, detection, activation delay, discharge duration -- while the
     caption still said every field started from that file. A design file
     carrying a real nozzle's measured spray came back as the placeholder
     preset's, and the user had no way to see it.
     """
-    offsets = DEFAULT_ROW_OFFSETS_M[rows]
     scratch = {
         "meta": design_identity(raw_source or {}),
         "tunnel": {"preset": tunnel_preset},
         "fire": {"preset": fire_preset},
-        "nozzles": {
-            "preset": nozzle_preset,
-            "k_factor_lpm_bar05": k_factor,
-            "pressure_bar": pressure_bar,
-            "mounting": {"rows": rows, "row_lateral_offsets_m": offsets, "pitch_m": pitch_m},
-        },
+        "nozzles": nozzles if nozzles is not None else {"preset": TESTER_INPUT},
         "zones": {
             "section_length_m": section_length_m,
             "sections_simultaneous": sections_simultaneous,
             "manual_activation_s": 60.0,
             "activation_delay_s": 0.0,
-            "pump_ramp_s": 30.0,
             "duration_min": 60.0,
         },
         "ventilation": {
@@ -468,8 +525,11 @@ def _assemble(tunnel_preset: str, fire_preset: str, nozzle_preset: str,
         "hydraulics": {"preset": hydraulics_preset},
         "ahj": ahj,
     }
-    if not raw_source:
-        return scratch
-    return _overlay(scratch, raw_source, k_factor, pressure_bar, rows, pitch_m,
-                    section_length_m, sections_simultaneous,
-                    velocity_lo, velocity_hi, ahj)
+    raw = scratch if not raw_source else _overlay(
+        scratch, raw_source, nozzles, section_length_m, sections_simultaneous,
+        velocity_lo, velocity_hi, ahj)
+    if pump_ramp_s is None:
+        raw["zones"].pop("pump_ramp_s", None)
+    else:
+        raw["zones"]["pump_ramp_s"] = pump_ramp_s
+    return raw

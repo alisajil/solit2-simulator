@@ -8,15 +8,50 @@ from __future__ import annotations
 
 import json
 import math
+import os
 from dataclasses import dataclass
 from pathlib import Path
 
 from solit2.engines.reduced import envelope
 from solit2.engines.reduced.criteria import (FLAME_CONTACT_FLUX_KWM2, IGNITION_EXPOSURE_S,
                                              STATIONS)
-from solit2.schema.design import Design
+from solit2.schema.design import TESTER_INPUT, Design, Nozzles
 
 ANCHOR_DIR = Path(__file__).resolve().parent / "anchors"
+REFERENCE_NOZZLE_ENV = "SOLIT2_REFERENCE_NOZZLE"
+# The user's project space, where a tester's own data belongs (CLAUDE.md).
+DEFAULT_REFERENCE_NOZZLE_PATH = (Path(__file__).resolve().parent.parent / "designs"
+                                 / "solit2-reference-nozzle.json")
+REFERENCE_NOZZLE_FIELDS = (
+    "k_factor_lpm_bar05", "pressure_bar",
+    "modes[].smd_um / dv50_um / dv90_um / cone_half_angle_deg / launch_velocity_ms",
+    "mounting.rows / row_lateral_offsets_m / height_above_carriageway_m / pitch_m / tilt_deg",
+)
+
+
+class ReferenceNozzleMissing(FileNotFoundError):
+    """The SOLIT2 reference test nozzle's data has not been supplied."""
+
+
+def load_reference_nozzle(path: Path | None = None) -> dict:
+    """The nozzle of the SOLIT2 reference tests, as the tester supplied it.
+
+    SOLIT2 Annex 2 publishes the measured results of c4-c6 but none of the test
+    system's nozzle data (K-factor, pressure, drop spectrum, mounting), so the
+    anchors cannot be run until someone who holds that data enters it. Nothing
+    here is filled in on their behalf.
+    """
+    path = path or Path(os.environ.get(REFERENCE_NOZZLE_ENV) or DEFAULT_REFERENCE_NOZZLE_PATH)
+    if not path.exists():
+        raise ReferenceNozzleMissing(
+            f"no SOLIT2 reference test nozzle at {path}. SOLIT2 Annex 2 does not publish it; "
+            f"create that file with the reference test system's measured "
+            f"{', '.join(REFERENCE_NOZZLE_FIELDS)}.")
+    raw = {**json.loads(path.read_text()), "preset": TESTER_INPUT}
+    nozzles = Nozzles.model_validate(raw)
+    for mode in nozzles.modes:
+        nozzles.spread_n(mode.id)  # raises MissingNozzleData naming what to add
+    return raw
 
 
 @dataclass(frozen=True)
@@ -58,14 +93,18 @@ def _load_design(path: Path, raw_design: dict) -> Design:
         design_path.unlink(missing_ok=True)
 
 
-def load_anchors(ids: tuple[str, ...] | None = None) -> tuple[Anchor, ...]:
+def load_anchors(ids: tuple[str, ...] | None = None, *,
+                 reference_nozzle: dict | None = None) -> tuple[Anchor, ...]:
+    """The anchors, each run on the SOLIT2 reference test nozzle the tester supplied."""
+    nozzle = reference_nozzle if reference_nozzle is not None else load_reference_nozzle()
     out = []
     for path in sorted(ANCHOR_DIR.glob("c*.json")):
         raw = json.loads(path.read_text())
         if ids and raw["id"] not in ids:
             continue
+        design = {**raw["design"], "nozzles": nozzle}
         out.append(Anchor(raw["id"], raw["weight"], raw["source"],
-                          _load_design(path, raw["design"]), raw["measured"], raw["tolerances"]))
+                          _load_design(path, design), raw["measured"], raw["tolerances"]))
     if not out:
         raise FileNotFoundError(f"no anchors matched {ids} in {ANCHOR_DIR}")
     return tuple(out)

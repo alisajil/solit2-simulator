@@ -3,20 +3,26 @@
 Streamlit's `st.session_state` is an untyped dict that persists across
 reruns of the script within one browser session. Every view reads and
 writes through these functions rather than touching the dict directly, so
-the keys in use — design, result, twin_result, tier2_result, step and view
-— are named in exactly one place.
+the keys in use — design, result, twin_result, tier2_result, annex7_inputs,
+step and view — are named in exactly one place.
 """
 from __future__ import annotations
+
+from typing import TYPE_CHECKING
 
 import streamlit as st
 
 from solit2.schema.design import Design
 from solit2.schema.result import Result
 
+if TYPE_CHECKING:
+    from solit2.reports.twin import Annex7Inputs
+
 _DESIGN_KEY = "design"
 _RESULT_KEY = "result"
 _TWIN_KEY = "twin_result"
 _TIER2_KEY = "tier2_result"
+_ANNEX7_KEY = "annex7_inputs"
 _STEP_KEY = "step"
 STEP_MIN, STEP_MAX = 1, 6
 _DERIVED_KEYS = (_RESULT_KEY, _TWIN_KEY, _TIER2_KEY)
@@ -104,3 +110,15 @@ def set_tier2_result(result: Result | None) -> None:
         st.session_state.pop(_TIER2_KEY, None)
         return
     st.session_state[_TIER2_KEY] = result
+
+
+def get_annex7_inputs() -> Annex7Inputs | None:
+    """The Annex 7 test conditions the tester entered on the Fire test step, if any."""
+    return st.session_state.get(_ANNEX7_KEY)
+
+
+def set_annex7_inputs(inputs: Annex7Inputs) -> None:
+    """Store the test conditions; a change makes the twin result describe another test."""
+    if st.session_state.get(_ANNEX7_KEY) != inputs:
+        st.session_state.pop(_TWIN_KEY, None)
+    st.session_state[_ANNEX7_KEY] = inputs

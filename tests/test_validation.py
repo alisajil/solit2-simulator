@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 
+import pytest
+
 from solit2.engines.reduced import envelope
 from validation import compare
 
@@ -195,3 +197,38 @@ def test_backlayering_is_judged_where_the_tests_judged_it():
     assert judge(result(3.0)) is False
     assert judge(result(15.0)) is True
     assert judge(result(0.0)) is False
+
+
+def test_no_reference_nozzle_ships_with_the_tool():
+    from solit2.schema.presets import list_presets
+    assert "solit2_reference" not in list_presets("nozzle")
+
+
+def test_anchors_refuse_without_a_tester_supplied_reference_nozzle(monkeypatch, tmp_path):
+    monkeypatch.setenv("SOLIT2_REFERENCE_NOZZLE", str(tmp_path / "absent.json"))
+    with pytest.raises(compare.ReferenceNozzleMissing, match="SOLIT2 reference test nozzle"):
+        compare.load_anchors()
+
+
+def test_anchor_designs_carry_the_testers_reference_nozzle():
+    nozzle = compare.load_reference_nozzle()
+    for anchor in compare.load_anchors():
+        assert anchor.design.nozzles.k_factor_lpm_bar05 == nozzle["k_factor_lpm_bar05"]
+        assert anchor.design.nozzles.spread_n("fine") == pytest.approx(2.5, abs=1e-6)
+
+
+def test_a_reference_nozzle_without_a_spectrum_is_refused(monkeypatch, tmp_path):
+    import json
+    import os
+    from pathlib import Path
+
+    from solit2.schema.design import MissingNozzleData
+    # the autouse conftest fixture points this at the labelled test fixture
+    raw = json.loads(Path(os.environ["SOLIT2_REFERENCE_NOZZLE"]).read_text())
+    for mode in raw["modes"]:
+        mode.pop("dv50_um"), mode.pop("dv90_um")
+    path = tmp_path / "no-spectrum.json"
+    path.write_text(json.dumps(raw))
+    monkeypatch.setenv("SOLIT2_REFERENCE_NOZZLE", str(path))
+    with pytest.raises(MissingNozzleData, match="Dv50 and Dv90"):
+        compare.load_anchors()

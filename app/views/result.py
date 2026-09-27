@@ -13,7 +13,7 @@ from app import state
 from app.components.charts import criteria_table, timeseries_chart
 from solit2 import history
 from solit2.engines.reduced import envelope
-from solit2.reports import labels
+from solit2.reports import labels, twin
 from solit2.schema.design import Design
 from solit2.schema.result import Result
 
@@ -127,3 +127,27 @@ def render() -> None:
     for warning in result.warnings:
         st.warning(warning)
     _leaderboard(result)
+
+
+def ensure_twin_result(design: Design) -> tuple[Design, Result] | None:
+    """The test-facility twin and its Tier 1 result, or None after reporting why not."""
+    inputs = state.get_annex7_inputs()
+    if inputs is None:
+        st.info("Enter the Annex 7 test inputs on the Fire test step first: SOLIT2 leaves "
+                "the activation time, test-day ambient and design-fire growth to the AHJ.")
+        return None
+    try:
+        twin_design = twin.test_facility_twin(design, inputs)
+    except ValueError as exc:
+        st.error(f"The test-facility twin could not be built: {exc}")
+        return None
+    result = state.get_twin_result()
+    if result is None:
+        try:
+            with st.spinner("Running the test-facility twin…"):
+                result = envelope.run(twin_design)
+        except (ArithmeticError, RuntimeError, ValueError, KeyError) as exc:
+            st.error(f"The test-facility twin could not be run: {exc}")
+            return None
+        state.set_twin_result(result)
+    return twin_design, result

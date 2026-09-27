@@ -1,7 +1,7 @@
 import pytest
 
 from solit2.engines.reduced import envelope
-from solit2.schema.design import Design
+from solit2.schema.design import Design, MissingNozzleData
 
 BASELINE = "designs/og-dbr-rev0.json"
 
@@ -23,6 +23,7 @@ def test_the_baseline_matches_the_dbr_hydraulics_numbers():
     assert design.flow_lpm == pytest.approx(2175.0, rel=0.005)
 
 
+@pytest.mark.xfail(strict=True, raises=MissingNozzleData, reason="designs/ is the project's own data: its MTX nozzle refuses to run until the tester enters the measured Dv50/Dv90 (the tool no longer assumes a spread). Remove this mark once they are in the file.")
 def test_the_baseline_runs_through_tier_1():
     result = envelope.run(Design.load(BASELINE))
     assert result.meta["design_name"] == "og-dbr-rev0"

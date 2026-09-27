@@ -79,6 +79,21 @@ which fails if the note stops pointing at that command, and
 `test_every_anchor_the_calibration_cites_still_exists`, which fails if any
 constant cites a reference case that is not in `validation/anchors/`.
 
+**The reference nozzle is the tester's, not ours (2026-09-27).** Annex 2
+publishes what `c4`–`c6` measured and nothing about the nozzle that produced it:
+no K-factor, pressure, drop spectrum or mounting. The shipped
+`nozzle_solit2_reference` preset was back-figured and has been withdrawn.
+`validation.compare.load_anchors` now runs the anchors only on a reference nozzle
+the tester supplies (`designs/solit2-reference-nozzle.json`, or
+`--reference-nozzle PATH`), and `solit2 validate` refuses with exit 2 without
+one. The constants fitted before that date still carry the withdrawn nozzle and
+the superseded 0.314 ceiling multiplier, and `calibration_note` says so, until
+they are refit against the tester's file.
+
+*Enforced by:* `test_no_reference_nozzle_ships_with_the_tool`,
+`test_anchors_refuse_without_a_tester_supplied_reference_nozzle` and
+`test_validate_refuses_cleanly_without_a_reference_nozzle`.
+
 ## What this does not claim
 
 Independence is about having no stake in the answer. It is not a claim that the

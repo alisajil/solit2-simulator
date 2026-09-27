@@ -730,7 +730,7 @@ def test_a_mode_survives_by_volume_share_and_not_by_droplet_count():
         launch_velocity_ms=mode.launch_velocity_ms,
         diameter_um=smd, drop_height_m=drop_height_m)
 
-    bins = droplet.size_distribution(smd)
+    bins = droplet.size_distribution(smd, d.nozzles.spread_n(mode.id))
     survival = [droplet.integrate(b.diameter_um, mode.launch_velocity_ms, 0.0,
                                   drop_height_m, 2.25,
                                   gas_excess_k=gas_excess_k * shield).surviving_fraction
@@ -759,24 +759,23 @@ def test_the_delivery_never_exceeds_the_water_the_heads_are_flowing():
     assert 0.0 < delivered <= d.nozzles.flow_per_head_lpm * len(pos)
 
 
-def test_reloading_calibration_busts_the_geometry_cache_for_the_spectrum_too(
-        real_calibration_file):
-    """`droplet_size_spread` is the second constant to reach `_compute_geometry`
-    without passing through `_geometry_key` -- `size_distribution` reads it
-    internally, exactly as `spray_shielding_factor` reads its own. The
-    unconditional invalidation hook is what covers it; this proves it does."""
+def test_two_designs_differing_only_in_measured_spread_never_share_geometry():
+    """The spread is the tester's measured Dv50/Dv90, a property of the design, so
+    `_geometry_key` must carry it: two designs identical except for Dv90 would
+    otherwise read one cache entry and one of them would get the other's spray."""
     d, _, pos, env, _ = _setup()
     mist._GEOMETRY_CACHE.clear()
 
-    _write_mist_constants(droplet_size_spread=1.5)
-    wide = _coarse_survival(d, pos, env)
+    def with_dv90(factor):
+        modes = tuple(m.model_copy(update={"dv90_um": m.dv50_um * factor})
+                      for m in d.nozzles.modes)
+        return d.model_copy(update={"nozzles": d.nozzles.model_copy(update={"modes": modes})})
 
-    _write_mist_constants(droplet_size_spread=4.0)
-    narrow = _coarse_survival(d, pos, env)
-
+    wide = _coarse_survival(with_dv90(2.2), pos, env)
+    narrow = _coarse_survival(with_dv90(1.3), pos, env)
     assert wide != narrow, (
-        "the second call was served trajectories computed under the FIRST "
-        "droplet_size_spread, not the value just reloaded")
+        "the second design was served the first design's trajectories: the "
+        "geometry cache key does not carry the measured spread")
 
 
 def test_spray_delivery_is_continuous_in_gas_temperature():
@@ -824,13 +823,16 @@ def test_the_engine_does_not_oscillate_step_to_step():
     design = Design.load("examples/designs/road-tunnel-twin-bore.json")
     result = env.run(design)
     trace = run_once(design, result.worst_case["section"], result.worst_case["velocity_ms"])
-    tops = [s.stations["D03"].temps_c[-1] for s in trace.steps]
+    # Judged once the pumps are at full pressure. Before that the valves opening
+    # and the pumps ramping are real step changes in the system, not artefacts
+    # of the model: at the published ceiling correlation the first second of
+    # spray drops D03 by about 9 C, once, monotonically, where the 0.314
+    # multiplier had compressed the same step under 2 C.
+    settled = trace.events["t_full_pressure_s"]
+    tops = [s.stations["D03"].temps_c[-1] for s in trace.steps if s.t_s >= settled]
     jumps = [abs(b - a) for a, b in zip(tops, tops[1:])]
     assert max(jumps) < 2.0, f"largest one-second change {max(jumps):.1f} C"
-    # and the cooling fraction that drives it, once the pumps are at full
-    # pressure. Before that the valves opening and the pumps ramping are real
-    # step changes in the system, not artefacts of the model.
-    settled = trace.events["t_full_pressure_s"]
+    # and the cooling fraction that drives it, over the same window.
     chis = [s.mist.chi_cool for s in trace.steps if s.t_s >= settled]
     chi_jumps = [abs(b - a) for a, b in zip(chis, chis[1:])]
     assert max(chi_jumps) < 0.02, (

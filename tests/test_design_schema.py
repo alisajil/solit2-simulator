@@ -1,9 +1,10 @@
+import math
 import json
 from pathlib import Path
 
 import pytest
 from pydantic import ValidationError
-from solit2.schema.design import AHJ, Design, Nozzles
+from solit2.schema.design import AHJ, Design, MissingNozzleData, Nozzles
 
 BASELINE = "examples/designs/road-tunnel-twin-bore.json"
 
@@ -210,7 +211,7 @@ def test_from_dict_merges_presets_exactly_like_load(tmp_path):
 
 def test_from_dict_rejects_an_unknown_preset_kind_the_same_way_load_does():
     raw = {"meta": {"name": "x"}, "tunnel": {"preset": "does_not_exist"},
-           "fire": {"preset": "hgv_150mw"}, "nozzles": {"preset": "solit2_reference"},
+           "fire": {"preset": "hgv_150mw"}, "nozzles": {"preset": "template"},
            "zones": {"section_length_m": 30.0, "sections_simultaneous": 1,
                      "manual_activation_s": 60.0, "activation_delay_s": 0.0,
                      "pump_ramp_s": 30.0, "duration_min": 30.0},
@@ -219,3 +220,35 @@ def test_from_dict_rejects_an_unknown_preset_kind_the_same_way_load_does():
            "hydraulics": {"preset": "template"}}
     with pytest.raises(FileNotFoundError):
         Design.from_dict(raw)
+
+
+def _spectrum_nozzles(**mode_extra):
+    mode = {"id": "fine", "fraction": 1.0, "smd_um": 90.0,
+            "cone_half_angle_deg": 50.0, "launch_velocity_ms": 25.0, **mode_extra}
+    return Nozzles.model_validate({
+        "preset": "tester_input", "k_factor_lpm_bar05": 2.8, "pressure_bar": 100.0,
+        "modes": [mode],
+        "mounting": {"rows": 2, "row_lateral_offsets_m": [-2.2, 2.2],
+                     "height_above_carriageway_m": 4.9, "pitch_m": 4.0}})
+
+
+def test_spread_is_solved_from_the_testers_dv50_and_dv90():
+    n = _spectrum_nozzles(dv50_um=100.0, dv90_um=161.6398).spread_n("fine")
+    assert n == pytest.approx(2.5, abs=1e-4)
+    assert n == pytest.approx(math.log(math.log(10) / math.log(2)) / math.log(1.616398), rel=1e-6)
+
+
+def test_a_mode_without_a_measured_spectrum_refuses_rather_than_assuming_one():
+    with pytest.raises(MissingNozzleData, match="Dv50 and Dv90"):
+        _spectrum_nozzles().spread_n("fine")
+
+
+def test_dv90_must_be_coarser_than_dv50():
+    with pytest.raises(MissingNozzleData, match="coarser"):
+        _spectrum_nozzles(dv50_um=150.0, dv90_um=120.0).spread_n("fine")
+
+
+def test_a_spectrum_too_wide_for_a_finite_sauter_mean_is_refused():
+    # Dv90/Dv50 = 4 gives n = ln(ln10/ln2)/ln 4 = 0.87, and n <= 1 has no finite D32.
+    with pytest.raises(MissingNozzleData, match="too wide"):
+        _spectrum_nozzles(dv50_um=100.0, dv90_um=400.0).spread_n("fine")

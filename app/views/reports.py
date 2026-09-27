@@ -7,32 +7,10 @@ import streamlit as st
 
 from app import state
 from app.views import cfd
-from app.views.result import ensure_result
-from solit2.engines.reduced import envelope
-from solit2.reports import correlation, test_plan, twin
-from solit2.schema.design import Design
-from solit2.schema.result import Result
+from app.views.result import ensure_result, ensure_twin_result
+from solit2.reports import correlation, test_plan
 
 EXPORT_COLUMNS = 3
-
-
-def ensure_twin_result(design: Design) -> tuple[Design, Result] | None:
-    """The test-facility twin and its Tier 1 result, or None after reporting why not."""
-    try:
-        twin_design = twin.test_facility_twin(design)
-    except ValueError as exc:
-        st.error(f"The test-facility twin could not be built: {exc}")
-        return None
-    result = state.get_twin_result()
-    if result is None:
-        try:
-            with st.spinner("Running the test-facility twin…"):
-                result = envelope.run(twin_design)
-        except (ArithmeticError, RuntimeError, ValueError, KeyError) as exc:
-            st.error(f"The test-facility twin could not be run: {exc}")
-            return None
-        state.set_twin_result(result)
-    return twin_design, result
 
 
 def _exports(items: list[tuple[str, str, str]]) -> None:

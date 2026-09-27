@@ -157,14 +157,14 @@ class SizeBin:
     volume_fraction: float
 
 
-def size_distribution(smd_um: float,
+def size_distribution(smd_um: float, spread_n: float,
                       bin_count: int | None = None) -> tuple[SizeBin, ...]:
     """A mode's Sauter mean diameter expanded into the spectrum it stands for.
 
     Rosin-Rammler, the standard form for pressure-atomised sprays: the volume
     fraction of the spray held in droplets coarser than `d` is
-    `exp(-(d / X) ** n)`, with `n` the spread exponent (`droplet_size_spread` in
-    calibration.json; lower is wider) and `X` a characteristic diameter. Its
+    `exp(-(d / X) ** n)`, with `n` the spread exponent (`spread_n`, from the
+    mode's measured Dv50/Dv90 via `Nozzles.spread_n`; lower is wider) and `X` a characteristic diameter. Its
     spread parameter is a quantity nozzle datasheets actually quote, which is
     why it is the right form here rather than a log-normal.
 
@@ -191,11 +191,11 @@ def size_distribution(smd_um: float,
     if bin_count < 1:
         raise ValueError(f"a spectrum needs at least one size bin, got {bin_count}")
 
-    spread = load_calibration()["mist"]["droplet_size_spread"]["value"]
+    spread = spread_n
     if spread <= 1.0:
         raise ValueError(
-            f"droplet_size_spread={spread} is not a spray: the Rosin-Rammler Sauter "
-            f"mean is X * gamma(1 - 1/n), which diverges at n = 1 and is negative "
+            f"spread_n={spread} is not a spray: the Rosin-Rammler Sauter mean is "
+            f"X / gamma(1 - 1/n), and gamma(1 - 1/n) diverges at n = 1 and is negative "
             f"below it, so such a spectrum has unbounded surface area per unit volume"
         )
 

@@ -17,9 +17,6 @@
       "covered": true,
       "incubation_s": 243.0
     },
-    "nozzles": {
-      "preset": "solit2_reference"
-    },
     "zones": {
       "section_length_m": 60.0,
       "sections_simultaneous": 1,

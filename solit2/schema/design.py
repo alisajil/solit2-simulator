@@ -119,12 +119,27 @@ class Fire(Frozen):
         return self.footprint.length_m / 2.0 + self.target_distance_m
 
 
+# Rosin-Rammler: Dv50 = X (ln 2)^(1/n) and Dv90 = X (ln 10)^(1/n), so their
+# ratio fixes n in closed form. Both come from the tester's own drop-size
+# measurement; nothing here assumes a spread.
+_RR_DV90_DV50_LOG = math.log(math.log(10.0) / math.log(2.0))
+
+
+class MissingNozzleData(ValueError):
+    """A nozzle quantity the engine needs was not supplied by the tester."""
+
+
 class Mode(Frozen):
     id: str
     fraction: float = Field(gt=0, le=1)
     smd_um: float | None = None
     cone_half_angle_deg: float
     launch_velocity_ms: float
+    # Volume-median and 90th-percentile diameters, from the tester's drop-size
+    # measurement at the working pressure. Optional in the schema so an older
+    # design file still loads and the refusal can say exactly what to add.
+    dv50_um: float | None = Field(default=None, gt=0)
+    dv90_um: float | None = Field(default=None, gt=0)
 
 
 class Mounting(Frozen):
@@ -145,8 +160,12 @@ class Mounting(Frozen):
         return self
 
 
+# The `preset` a nozzles block carries when the tester supplied every value.
+TESTER_INPUT = "tester_input"
+
+
 class Nozzles(Frozen):
-    preset: str
+    preset: str = TESTER_INPUT
     note: str = ""
     k_factor_lpm_bar05: float = Field(gt=0.5, le=20)
     pressure_bar: float
@@ -186,6 +205,24 @@ class Nozzles(Frozen):
 
     def mode_flow_lpm(self, mode_id: str) -> float:
         return self.flow_per_head_lpm * self._mode(mode_id).fraction
+
+    def spread_n(self, mode_id: str) -> float:
+        """The mode's Rosin-Rammler spread exponent, from its measured Dv50 and Dv90."""
+        mode = self._mode(mode_id)
+        if mode.dv50_um is None or mode.dv90_um is None:
+            raise MissingNozzleData(
+                f"nozzle mode {mode_id!r} has no measured drop spectrum: enter Dv50 and Dv90 "
+                f"(um, measured at the working pressure). The tool does not assume a spread.")
+        if mode.dv90_um <= mode.dv50_um:
+            raise MissingNozzleData(
+                f"nozzle mode {mode_id!r}: Dv90 {mode.dv90_um} um must be coarser than "
+                f"Dv50 {mode.dv50_um} um")
+        n = _RR_DV90_DV50_LOG / math.log(mode.dv90_um / mode.dv50_um)
+        if n <= 1.0:
+            raise MissingNozzleData(
+                f"nozzle mode {mode_id!r}: Dv90/Dv50 = {mode.dv90_um / mode.dv50_um:.2f} is a "
+                f"spectrum too wide to have a finite Sauter mean (Rosin-Rammler n = {n:.2f} <= 1)")
+        return n
 
     def smd_um(self, mode_id: str) -> float:
         """Mode droplet size: explicit value, else log-log interpolation of the preset table."""
@@ -326,10 +363,16 @@ class Design(Frozen):
         merged = dict(raw)
         for block, kind in (("tunnel", "tunnel"), ("fire", "fire"),
                             ("nozzles", "nozzle"), ("hydraulics", "hydraulics")):
-            name = merged.get(block, {}).get("preset")
+            block_raw = merged.get(block, {})
+            name = block_raw.get("preset")
+            if block == "nozzles" and name in (None, TESTER_INPUT):
+                # The tester typed every field (or supplied a file of them): there is
+                # no preset to merge and nothing may be filled in behind their back.
+                merged[block] = {**block_raw, "preset": TESTER_INPUT}
+                continue
             if name is None:
                 raise ValueError(f"design block {block!r} must name a preset")
-            merged[block] = deep_merge(load_preset(kind, name), merged[block])
+            merged[block] = deep_merge(load_preset(kind, name), block_raw)
         return cls.model_validate(merged)
 
     @classmethod

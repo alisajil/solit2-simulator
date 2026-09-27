@@ -24,6 +24,7 @@ import json
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
+from pathlib import Path
 
 from scipy.optimize import least_squares
 
@@ -48,7 +49,6 @@ FITTED_KEYS = (
     # One order of magnitude either side of the 0.05 starting value,
     # symmetric in log space (0.05/0.005 == 0.50/0.05 == 10).
     ("mist", "shielding_reference_loading_kgm3", 0.005, 0.50),
-    ("thermal", "ceiling_excess_coefficient", 0.3, 2.0),
     # Reachable only since the droplet size distribution removed the delivery
     # cliff: peak HRR is now a CONTINUOUS function of this exponent (c5 peak
     # 12.0 -> 15.4 -> 23.3 MW across 0.0 -> 0.5 -> 0.7), so least_squares has a
@@ -206,9 +206,14 @@ def _main() -> int:
                         help="evaluation budget; choose it from a timed residuals call")
     parser.add_argument("--anchor", action="append",
                         help="restrict the fit to these anchor ids")
+    parser.add_argument("--reference-nozzle", required=True,
+                        help="the SOLIT2 reference test nozzle's measured data; SOLIT2 does "
+                             "not publish it, so the fit will not run on an assumed one")
     args = parser.parse_args()
 
-    anchors = compare.load_anchors(tuple(args.anchor)) if args.anchor else None
+    nozzle = compare.load_reference_nozzle(Path(args.reference_nozzle))
+    anchors = compare.load_anchors(tuple(args.anchor) if args.anchor else None,
+                                   reference_nozzle=nozzle)
     outcome = run(args.max_nfev, anchors)
 
     print(f"cost before      {outcome.cost_before:.6f}")

@@ -1,11 +1,11 @@
 {
   "preset": "single_mode_fine_example",
-  "note": "ILLUSTRATION ONLY, not a default and not an endorsement. A single-fluid, single-mode high-pressure head: fine mist only, no deliberate coarse/ballistic fraction. Same hydraulic and droplet-vs-pressure basis as `bimodal_example` (K-factor, design pressure, SMD-vs-pressure table) with the coarse mode removed, so the two presets isolate the effect of the coarse fraction on its own -- everything else about the head is unchanged. Replace with the measured performance of the head actually being assessed.",
+  "note": "ILLUSTRATION ONLY, not a default and not an endorsement. A single-fluid, single-mode high-pressure head: fine mist only, no deliberate coarse/ballistic fraction. Same hydraulic and droplet-vs-pressure basis as `bimodal_example` (K-factor, design pressure, SMD-vs-pressure table) with the coarse mode removed, so the two presets isolate the effect of the coarse fraction on its own -- everything else about the head is unchanged. Replace with the measured performance of the head actually being assessed. Dv50/Dv90 are illustrative, chosen to reproduce a Rosin-Rammler n of 2.5; replace with measured values.",
   "k_factor_lpm_bar05": 4.1,
   "pressure_bar": 50.0,
   "smd_table": {"34.5": 118.0, "45": 107.0, "50": 102.0, "60": 95.0},
   "modes": [
-    {"id": "fine", "fraction": 1.0, "cone_half_angle_deg": 45.0, "launch_velocity_ms": 15.0}
+    {"id": "fine", "fraction": 1.0, "cone_half_angle_deg": 45.0, "launch_velocity_ms": 15.0, "dv50_um": 131.184077, "dv90_um": 212.049481}
   ],
   "mounting": {
     "type": "ceiling_rows",

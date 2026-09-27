@@ -3,7 +3,7 @@ from streamlit.testing.v1 import AppTest
 
 from app.views import cfd
 from solit2 import history
-from tests.conftest import sign_in
+from tests.conftest import fill_nozzle, sign_in
 
 APP = "../app/streamlit_app.py"
 
@@ -29,7 +29,7 @@ def test_the_wizard_opens_on_the_design_step_with_later_steps_locked(monkeypatch
 
 def test_build_and_continue_runs_tier_one_without_another_click(monkeypatch, tmp_path):
     at = _app(monkeypatch, tmp_path)
-    at.button(key="build_design").click().run()
+    fill_nozzle(at).button(key="build_design").click().run()
     assert at.session_state["step"] == 2
     assert at.session_state["result"] is not None
     assert any('class="verdict' in m.value for m in at.markdown)
@@ -38,19 +38,22 @@ def test_build_and_continue_runs_tier_one_without_another_click(monkeypatch, tmp
 
 def test_every_step_renders_and_none_asks_for_a_file(monkeypatch, tmp_path):
     at = _app(monkeypatch, tmp_path)
-    at.button(key="build_design").click().run()
+    fill_nozzle(at).button(key="build_design").click().run()
     for i in range(2, 7):
         at.button(key=f"step_{i}").click().run()
         assert not at.exception, i
         assert at.session_state["step"] == i
         assert not at.get("file_uploader"), i
-    assert at.session_state["twin_result"] is not None
+    # No Annex 7 test inputs were entered on the way through, and SOLIT2 leaves them
+    # to the AHJ: the twin is not built, the step says why, and the rest renders.
+    assert "twin_result" not in at.session_state
+    assert any("Annex 7 test inputs" in i.value for i in at.info)
     assert at.get("download_button")            # exports live on the last step only
 
 
 def test_back_and_next_walk_the_wizard(monkeypatch, tmp_path):
     at = _app(monkeypatch, tmp_path)
-    at.button(key="build_design").click().run()
+    fill_nozzle(at).button(key="build_design").click().run()
     at.button(key="nav_next").click().run()
     assert at.session_state["step"] == 3
     at.button(key="nav_back").click().run()
