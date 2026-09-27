@@ -128,17 +128,23 @@ class LoadedSpec:
 
 
 def is_design_payload(raw: dict) -> bool:
-    """Whether `raw` looks like a design file rather than a compliance spec or
-    a project rules file that happens to sit beside them in `designs/`.
+    """Whether `raw` looks like a design file rather than a compliance spec, a
+    project rules file, or a bare reference-nozzle file that happens to sit
+    beside them in `designs/`.
 
     Narrow by construction rather than by validating `raw` as a `Design`: a
-    compliance spec always carries `spec_version` (`ComplianceSpec`), and a
+    compliance spec always carries `spec_version` (`ComplianceSpec`), a
     project rules file always carries both `source_document` and `rules`
-    (`ProjectRuleFile`). Neither marker exists on a design, so checking their
-    absence is enough to keep a spec or a rules file from being offered as a
-    design to build from.
+    (`ProjectRuleFile`), and `designs/solit2-reference-nozzle.json`
+    (`validation.compare.load_reference_nozzle`) is a bare `Nozzles` payload,
+    so it carries `k_factor_lpm_bar05` at its own top level -- a design only
+    ever has that field nested under its own `nozzles` block. None of the
+    three markers exists on a design, so checking their absence is enough to
+    keep a spec, a rules file, or the reference-nozzle file from being offered
+    as a design to build from.
     """
-    return not ("spec_version" in raw or {"rules", "source_document"} <= raw.keys())
+    return not ("spec_version" in raw or {"rules", "source_document"} <= raw.keys()
+                or "k_factor_lpm_bar05" in raw)
 
 
 def _resolve(base: Path, relative: str, field: str) -> Path:
