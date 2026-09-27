@@ -42,7 +42,7 @@
     "criteria": {}
   },
   "measured": {
-    "peak_hrr_mw": 60.0,
+    "peak_hrr_mw": 70.0,
     "backlayering": true,
     "pools_extinguished": true
   },
@@ -63,6 +63,7 @@
     "velocity_ms": "Digitised from the SOLIT2 Engineering Guidance Annex 2 v2.1 PDF at 250 dpi: the plot frame fixes both axes, the red 'Start BBA/FFFS' line fixes activation, and the velocity is the per-column median of the five coloured height traces. Annex 2 gives no velocity in words for this test. The value follows the convention the c4 and c5 anchors already use, which take section 6.1's '2-2,5 m/s' and section 6.2's '1-1,5 m/s' -- the U45 velocity while the fire burns, not the fans' pre-fire duty: Figure 10 reads 2.31 m/s over c4's 420-900 s, matching its anchor's 2.25. Figure 28 reads 2.44 m/s over 175-300 s and 2.30 m/s over 300-480 s, so 2.35 m/s; before the fire it read 3.7 m/s. The previous 1.5 m/s had no source."
   },
   "measured_notes": {
+    "peak_hrr_mw": "Read off Figure 27, not the fire load's nominal rating. Digitised at 250 dpi the same way as c5's Figure 18 (plot frame fixes both axes, per-column median of the blue trace; the legend's blue key at ~700-780 s excluded), the HRR peaks at 69.4 MW as a 30 s median near 0:05:21 and 72.1 MW at its highest single point; 70 MW is kept between the two, as c5 does. The anchor used to carry 60 MW, which is section 3.2.2's nominal pool rating ('In order to create a fire of a HRR of 60 MW'), not a measurement -- the figure's own caption says the FFFS was activated before the fire reached its maximum, and section 3.2 notes the tunnel's ventilation drove pool fires above their nominal HRR. The digitisation reproduces the figure's own checkpoints: the ~24 MW pre-activation bump and ~2 MW by 570 s.",
     "backlayering": "Read off the U15 thermocouple tree, as Annex 2 judged it: Figure 29, 'A strong backlayering before the activation of the FFFS can be observed', peaking near 190 C at 5.0 m just before activation; section 6.3: 'The fire created a large back layering of smoke which completely disappeared shortly after activation'.",
     "pools_extinguished": "Section 6.3: 'After a few minutes the fire was extinguished pool by pool', and the pools were re-ignited afterwards, which 'ensures that the fire was extinguished by the FFFS and not by a lack of fuel'. Figure 27 has the HRR down to about 2 MW by roughly 570 s."
   }
