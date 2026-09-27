@@ -2,6 +2,7 @@ import json
 
 import pytest
 
+from app.components import save_design
 from app.views import design as design_view
 from solit2.engines.reduced import envelope
 from tests.conftest import TEST_NOZZLE_FIELDS, TEST_NOZZLE_OFFSETS, TEST_PUMP_RAMP_S, fill_nozzle
@@ -227,7 +228,7 @@ def test_every_seeded_widget_is_written_so_none_can_go_stale(monkeypatch):
     expected = {key for key, *_rest in design_view.SEEDED_FIELDS}
     expected |= {key for _field, key, *_rest in design_view.AHJ_FIELDS}
     expected |= {key for key, *_rest in design_view.NOZZLE_FIELDS} | {design_view.OFFSETS_KEY}
-    expected |= {design_view.PUMP_RAMP_KEY}
+    expected |= {design_view.PUMP_RAMP_KEY, save_design.NAME_KEY}
     assert set(written) == expected
 
 

@@ -13,8 +13,8 @@ FIXTURES = Path("tests/fixtures/fds")
 @pytest.fixture
 def run_dir(tmp_path):
     """A finished run directory, named the way `deck.generate` names its CHID."""
-    from solit2.engines.reduced.envelope import _design_sha
-    chid = _design_sha(Design.load(BASELINE))
+    from solit2.engines.reduced.envelope import design_sha
+    chid = design_sha(Design.load(BASELINE))
     shutil.copy(FIXTURES / "sample_devc.csv", tmp_path / f"{chid}_devc.csv")
     shutil.copy(FIXTURES / "sample_hrr.csv", tmp_path / f"{chid}_hrr.csv")
     shutil.copy(FIXTURES / "sample_ctrl.csv", tmp_path / f"{chid}_ctrl.csv")
@@ -50,8 +50,8 @@ def test_the_hrr_peak_comes_from_the_hrr_csv_in_megawatts(run_dir):
 
 
 def test_a_missing_device_column_is_fatal(run_dir):
-    from solit2.engines.reduced.envelope import _design_sha
-    chid = _design_sha(Design.load(BASELINE))
+    from solit2.engines.reduced.envelope import design_sha
+    chid = design_sha(Design.load(BASELINE))
     devc = run_dir / f"{chid}_devc.csv"
     lines = devc.read_text().splitlines()
     # drop the target gauge column entirely
@@ -83,8 +83,8 @@ def _set_ceiling(run_dir, values: dict[str, float], others_c: float = 40.0):
     a single device proves nothing about which one the reader picked.
     """
     from solit2.engines.fds import deck as deck_mod
-    from solit2.engines.reduced.envelope import _design_sha
-    chid = _design_sha(Design.load(BASELINE))
+    from solit2.engines.reduced.envelope import design_sha
+    chid = design_sha(Design.load(BASELINE))
     devc = run_dir / f"{chid}_devc.csv"
     lines = devc.read_text().splitlines()
     header = [c.strip() for c in lines[1].split(",")]
@@ -230,8 +230,8 @@ def test_water_arrives_at_the_recorded_activation_and_ramps_with_the_pumps():
 
 
 def test_a_run_whose_detectors_never_tripped_is_refused_as_a_mist_result(run_dir):
-    from solit2.engines.reduced.envelope import _design_sha
-    chid = _design_sha(Design.load(BASELINE))
+    from solit2.engines.reduced.envelope import design_sha
+    chid = design_sha(Design.load(BASELINE))
     ctrl = run_dir / f"{chid}_ctrl.csv"
     ctrl.write_text("s,status,status\nTime,DETECT,ACT\n0.0,-1,-1\n1.0,-1,-1\n2.0,-1,-1\n")
     with pytest.raises(ValueError, match="never tripped"):
@@ -239,8 +239,8 @@ def test_a_run_whose_detectors_never_tripped_is_refused_as_a_mist_result(run_dir
 
 
 def test_a_missing_control_log_is_fatal(run_dir):
-    from solit2.engines.reduced.envelope import _design_sha
-    chid = _design_sha(Design.load(BASELINE))
+    from solit2.engines.reduced.envelope import design_sha
+    chid = design_sha(Design.load(BASELINE))
     (run_dir / f"{chid}_ctrl.csv").unlink()
     with pytest.raises(FileNotFoundError):
         reader.read(run_dir, Design.load(BASELINE))
@@ -279,8 +279,8 @@ def test_the_result_names_every_stand_in_the_deck_makes(run_dir):
 def test_the_hrr_column_is_found_by_name_not_by_position(run_dir):
     # FDS's _hrr.csv carries a different column count with and without
     # particles, so a fixed index is a guess that happens to hold.
-    from solit2.engines.reduced.envelope import _design_sha
-    chid = _design_sha(Design.load(BASELINE))
+    from solit2.engines.reduced.envelope import design_sha
+    chid = design_sha(Design.load(BASELINE))
     path = run_dir / f"{chid}_hrr.csv"
     lines = path.read_text().splitlines()
     shifted = [",".join([p.split(",")[0], "0.0"] + p.split(",")[1:]) for p in lines[2:]]
@@ -353,8 +353,8 @@ def _extend_run(run_dir, hrr_kw_extra: list[float]):
     the last real row's values -- only the clock and the HRR move -- because
     these tests are about the HRR peak-passed rule, not about what every
     other device reads."""
-    from solit2.engines.reduced.envelope import _design_sha
-    chid = _design_sha(Design.load(BASELINE))
+    from solit2.engines.reduced.envelope import design_sha
+    chid = design_sha(Design.load(BASELINE))
     hrr_path = run_dir / f"{chid}_hrr.csv"
     hrr_lines = hrr_path.read_text().splitlines()
     last_t = float(hrr_lines[-1].split(",")[0])
@@ -437,12 +437,12 @@ def test_the_e_coefficient_warning_falls_back_to_the_module_default_with_no_deck
 def test_a_run_that_passes_full_pressure_carries_no_such_caveat(run_dir):
     import shutil
 
-    from solit2.engines.reduced.envelope import _design_sha
+    from solit2.engines.reduced.envelope import design_sha
     design = Design.load(BASELINE)
     # No pump ramp, so ACT at 2.0 s IS full pressure and the last sample reaches it.
     instant = design.model_copy(
         update={"zones": design.zones.model_copy(update={"pump_ramp_s": 0.0})})
-    old_chid, new_chid = _design_sha(design), _design_sha(instant)
+    old_chid, new_chid = design_sha(design), design_sha(instant)
     assert old_chid != new_chid, "the sha covers the design, so the run dir must be renamed"
     for suffix in ("_devc.csv", "_hrr.csv", "_ctrl.csv"):
         shutil.copy(run_dir / f"{old_chid}{suffix}", run_dir / f"{new_chid}{suffix}")

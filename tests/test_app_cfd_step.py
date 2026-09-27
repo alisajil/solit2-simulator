@@ -6,7 +6,7 @@ from solit2 import history
 from solit2.engines.fds import reader as fds_reader
 from solit2.engines.fds import runner as fds_runner
 from solit2.engines.reduced import envelope
-from solit2.engines.reduced.envelope import _design_sha
+from solit2.engines.reduced.envelope import design_sha
 from solit2.schema.design import Design
 
 EXAMPLE = "examples/designs/road-tunnel-twin-bore.json"
@@ -18,7 +18,7 @@ def _isolate(monkeypatch, tmp_path, problems):
     monkeypatch.setattr(cfd, "RUNS_DIR", tmp_path / "runs")
     monkeypatch.setattr(fds_runner, "preflight", lambda: problems)
     monkeypatch.setattr(fds_runner, "smokeview_binary", lambda: None)
-    return tmp_path / "runs" / _design_sha(Design.load(EXAMPLE))
+    return tmp_path / "runs" / design_sha(Design.load(EXAMPLE))
 
 
 def _fake_run(run_dir: Path, log: str, t_end: float = 1200.0, pid: str | None = None) -> None:

@@ -72,8 +72,9 @@ A **workspace** is where a user's files live: team members and admins share the 
 `runs/` and `history.jsonl`. Everything that lists or writes files takes the current user's workspace: the
 simulator's presets (plus `examples/designs/`), the Design step's file picker, the compliance specs, the CFD run
 directories (`cfd.RUNS_DIR`), the history, the reports. The CFD runs manager is admin and team only; a customer's
-CFD panel and CFD step show only their own runs. A customer brings designs in by **saving** one built in the app
-("Save to my workspace") or **uploading** a design JSON, validated with the schema before it is stored.
+CFD panel and CFD step show only their own runs. A customer brings designs in by **saving** one built in the app,
+into the saved-design store (`2026-09-27-saved-designs-design.md`), which already keeps designs per owner with
+versions, or by **uploading** a design JSON, validated with the schema before it is stored.
 
 Isolation is tested directly: a customer's session never lists, loads or runs a file outside its workspace and
 `examples/`.

@@ -18,10 +18,10 @@ def test_the_deck_is_deterministic():
     assert deck.generate(design) == deck.generate(design)
 
 
-def test_the_chid_is_the_design_sha():
-    from solit2.engines.reduced.envelope import _design_sha
+def test_the_chid_is_thedesign_sha():
+    from solit2.engines.reduced.envelope import design_sha
     design = Design.load(BASELINE)
-    assert f"CHID='{_design_sha(design)}'" in deck.generate(design)
+    assert f"CHID='{design_sha(design)}'" in deck.generate(design)
 
 
 def test_the_domain_holds_every_station_the_criteria_read():

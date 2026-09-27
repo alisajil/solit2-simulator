@@ -173,8 +173,8 @@ def _run_fds(design: Design, args: argparse.Namespace) -> Result:
     problems = fds_runner.preflight()
     if problems:
         raise RuntimeError("; ".join(problems))
-    from solit2.engines.reduced.envelope import _design_sha
-    out_dir = Path(args.history).parent / _design_sha(design)
+    from solit2.engines.reduced.envelope import design_sha
+    out_dir = Path(args.history).parent / design_sha(design)
     out_dir.mkdir(parents=True, exist_ok=True)
     deck_path = out_dir / "deck.fds"
     deck_path.write_text(fds_deck.generate(design))
