@@ -6,6 +6,7 @@ produces the normalised errors the calibration fit minimises.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import os
@@ -15,7 +16,7 @@ from pathlib import Path
 from solit2.engines.reduced import envelope
 from solit2.engines.reduced.criteria import (FLAME_CONTACT_FLUX_KWM2, IGNITION_EXPOSURE_S,
                                              STATIONS)
-from solit2.schema.design import TESTER_INPUT, Design, Nozzles
+from solit2.schema.design import TESTER_INPUT, Design, MissingNozzleData, Nozzles
 
 ANCHOR_DIR = Path(__file__).resolve().parent / "anchors"
 REFERENCE_NOZZLE_ENV = "SOLIT2_REFERENCE_NOZZLE"
@@ -29,8 +30,49 @@ REFERENCE_NOZZLE_FIELDS = (
 )
 
 
+# What the tester says the reference nozzle file IS. Only "measured" is the
+# SOLIT2 test system's own nozzle, measured; anything else means the constants
+# fitted on it absorb whatever it gets wrong, and every result must say so.
+REFERENCE_DATA_STATUSES = {
+    "measured": "the SOLIT2 test system's own nozzle, measured",
+    "estimated": "the SOLIT2 test system's own nozzle, with estimated values",
+    "placeholder": "not the SOLIT2 test system's nozzle at all",
+}
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
 class ReferenceNozzleMissing(FileNotFoundError):
     """The SOLIT2 reference test nozzle's data has not been supplied."""
+
+
+def reference_nozzle_path(path: Path | None = None) -> Path:
+    return path or Path(os.environ.get(REFERENCE_NOZZLE_ENV) or DEFAULT_REFERENCE_NOZZLE_PATH)
+
+
+def _read_reference_nozzle(path: Path) -> tuple[bytes, dict]:
+    if not path.exists():
+        raise ReferenceNozzleMissing(
+            f"no SOLIT2 reference test nozzle at {path}. SOLIT2 Annex 2 does not publish it; "
+            f"create that file with the reference test system's measured "
+            f"{', '.join(REFERENCE_NOZZLE_FIELDS)}, and its data_status.")
+    content = path.read_bytes()
+    raw = json.loads(content)
+    status = raw.get("data_status")
+    if status not in REFERENCE_DATA_STATUSES:
+        choices = "; ".join(f"{k!r} = {v}" for k, v in REFERENCE_DATA_STATUSES.items())
+        raise MissingNozzleData(
+            f"{path}: data_status is {status!r}; state what this reference nozzle data is "
+            f"({choices}). The tool does not assume it.")
+    return content, raw
+
+
+def reference_nozzle_record(path: Path | None = None) -> dict:
+    """Which reference nozzle file the anchors ran on: path, exact content, declared status."""
+    path = reference_nozzle_path(path).resolve()
+    content, raw = _read_reference_nozzle(path)
+    shown = path.relative_to(REPO_ROOT) if path.is_relative_to(REPO_ROOT) else path
+    return {"path": str(shown), "sha256": hashlib.sha256(content).hexdigest(),
+            "data_status": raw["data_status"]}
 
 
 def load_reference_nozzle(path: Path | None = None) -> dict:
@@ -39,15 +81,10 @@ def load_reference_nozzle(path: Path | None = None) -> dict:
     SOLIT2 Annex 2 publishes the measured results of c4-c6 but none of the test
     system's nozzle data (K-factor, pressure, drop spectrum, mounting), so the
     anchors cannot be run until someone who holds that data enters it. Nothing
-    here is filled in on their behalf.
+    here is filled in on their behalf, including whether it is measured.
     """
-    path = path or Path(os.environ.get(REFERENCE_NOZZLE_ENV) or DEFAULT_REFERENCE_NOZZLE_PATH)
-    if not path.exists():
-        raise ReferenceNozzleMissing(
-            f"no SOLIT2 reference test nozzle at {path}. SOLIT2 Annex 2 does not publish it; "
-            f"create that file with the reference test system's measured "
-            f"{', '.join(REFERENCE_NOZZLE_FIELDS)}.")
-    raw = {**json.loads(path.read_text()), "preset": TESTER_INPUT}
+    _, raw = _read_reference_nozzle(reference_nozzle_path(path))
+    raw = {k: v for k, v in raw.items() if k != "data_status"} | {"preset": TESTER_INPUT}
     nozzles = Nozzles.model_validate(raw)
     for mode in nozzles.modes:
         nozzles.spread_n(mode.id)  # raises MissingNozzleData naming what to add

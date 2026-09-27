@@ -1,5 +1,6 @@
 import math
 import copy
+import dataclasses
 import json
 
 import pytest
@@ -64,7 +65,8 @@ def _envelope(design, geom, reach_m=None):
 
 
 def _setup(design=None, u_ms=5.0, gas_excess_k=0.0, flow_fraction=1.0, reach_m=None,
-           fire_top_m=FIRE_TOP_M, hrr_mw=HRR_MW, hrr_free_mw=HRR_MW):
+           fire_top_m=FIRE_TOP_M, hrr_mw=HRR_MW, hrr_free_mw=HRR_MW, positions=None,
+           backlayer_m=0.0):
     """Delivery against a fully involved fire unless a test says otherwise.
 
     `hrr_mw == hrr_free_mw` is a fire the spray has taken nothing off yet, which
@@ -74,12 +76,19 @@ def _setup(design=None, u_ms=5.0, gas_excess_k=0.0, flow_fraction=1.0, reach_m=N
     """
     d = design or Design.load(BASELINE)
     geom = section_geometry(d)
-    pos = nozzle_positions(d, geom, fire_x_m=0.0)
+    pos = positions if positions is not None else nozzle_positions(d, geom, fire_x_m=0.0)
     env = _envelope(d, geom, reach_m)
     effect = mist.evaluate(d, geom, pos, env, fire_top_m, u_ms, gas_excess_k,
                            Q_CONV_KW, flow_fraction,
-                           hrr_mw=hrr_mw, hrr_free_mw=hrr_free_mw)
+                           hrr_mw=hrr_mw, hrr_free_mw=hrr_free_mw, backlayer_m=backlayer_m)
     return d, geom, pos, env, effect
+
+
+def _heads(design=None, dx_m=0.0):
+    """The design's heads, all moved `dx_m` along the tunnel (fire stays at 0)."""
+    d = design or Design.load(BASELINE)
+    pos = nozzle_positions(d, section_geometry(d), fire_x_m=0.0)
+    return tuple(dataclasses.replace(p, x_m=p.x_m + dx_m) for p in pos)
 
 
 def _solit2_reference_design():
@@ -442,6 +451,35 @@ def test_the_cooling_fraction_has_no_fitted_cap_left_to_pin_it():
     assert "chi_cool_max" not in load_calibration()["mist"], (
         "the cap is retired; its own note recorded that it had no surviving "
         "reference case behind it")
+
+
+def test_spray_into_cold_air_upstream_of_the_smoke_cools_nothing():
+    """Evaporation needs hot gas. The spectrum is flown once per mode, through
+    the fire's gas, so the evaporated share is the share for a head standing in
+    the plume. Crediting that to every head in the zone counted heads 30 m
+    upstream -- spraying into incoming tunnel air at ambient -- as if they took
+    heat off the fire. Heads beyond the backlayer tip must add nothing."""
+    near = _heads()
+    cold = _heads(dx_m=-1000.0)
+    _, _, _, _, alone = _setup(gas_excess_k=700.0, positions=near)
+    _, _, _, _, padded = _setup(gas_excess_k=700.0, positions=near + cold)
+    assert padded.chi_cool == pytest.approx(alone.chi_cool)
+
+
+def test_spray_far_downstream_cools_less_than_spray_over_the_fire():
+    """Downstream the gas has cooled along the tunnel (the engine's own
+    Ingason, Li & Lonnermark decay), so the same heads evaporate less there."""
+    _, _, _, _, over_fire = _setup(gas_excess_k=700.0, positions=_heads())
+    _, _, _, _, far = _setup(gas_excess_k=700.0, positions=_heads(dx_m=200.0))
+    assert 0.0 < far.chi_cool < over_fire.chi_cool
+
+
+def test_spray_inside_the_backlayer_meets_hot_gas_and_cools_it():
+    upstream = _heads(dx_m=-300.0)
+    _, _, _, _, clear = _setup(gas_excess_k=700.0, positions=upstream, backlayer_m=0.0)
+    _, _, _, _, smoky = _setup(gas_excess_k=700.0, positions=upstream, backlayer_m=2000.0)
+    assert clear.chi_cool == 0.0
+    assert smoky.chi_cool > 0.0
 
 
 def test_shielding_does_not_widen_the_geometry_cache_key():

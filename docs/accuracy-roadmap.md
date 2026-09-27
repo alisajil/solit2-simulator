@@ -13,43 +13,44 @@ same claim.
 
 ## Where it actually stands
 
-`uv run solit2 validate` exits non-zero today: 12 of 19 comparisons pass
-against the three SOLIT² Annex 2 full-scale reference tests. The misses:
+Refit 2026-09-27 (`calibration.json` `provenance` block, written by the fit).
+`uv run solit2 validate` passes 16 of 19 comparisons against the three SOLIT²
+Annex 2 full-scale reference tests. The misses:
 
 | case | quantity | modelled | measured | verdict |
 |---|---|---|---|---|
-| c4 | peak ceiling temperature | 201 °C | 830 °C | **4× low** |
-| c4 | temperature 15 m downstream | 34.4 °C | 75 °C | **2× low** |
-| c4 | temperature 100 m downstream | 26.0 °C | 57 °C | **2× low** |
-| c5 | peak heat release | 26.6 MW | 15.5 MW | **1.7× high** |
-| c5 | peak ceiling temperature | 227 °C | 580 °C | **2.6× low** |
-| c5 | temperature 100 m downstream | 26.9 °C | 50 °C | **2× low** |
-| c5 | backlayering at U15 | yes | no | **wrong, before activation only** |
+| c4 | peak ceiling temperature | 524 °C | 830 °C | **37 % low** |
+| c5 | peak ceiling temperature | 427 °C | 580 °C | **26 % low** |
+| c5 | backlayering at U15 | yes | no | **wrong** |
 
-Gas temperature is the defect that is left, and it now costs heat release
-too: the fit can only warm the gas by growing the fire, so it accepts c5's
-peak 70 % high to buy a few degrees. A tool that gets the gas three times too
-cool will pass tenability criteria it should fail.
+**None of this is independent evidence.** Three things stop it being so:
 
-What changed on 2026-09-23, and why the pass count is not the point: the
-anchors were corrected to their own Annex 2 figures (digitised at 250 dpi --
-see each anchor's `input_notes` and `measured_notes`), which made c5 HARDER
-to pass (its peak HRR was the text's "~20 MW"; Figure 18 shows 15.5), then
-the calibration was refit. Every constant finished off its bounds.
+1. **The reference nozzle is a placeholder.** SOLIT² does not publish the
+   test system's nozzle (Annex 2 §4.1.3 lists its K-factor only as a parameter
+   that "corresponded to the real installation"). The file the anchors run on
+   is this project's own estimated datasheet, declared `data_status:
+   "placeholder"`. Constants tuned so that head reproduces the reference tests
+   will agree with themselves when they assess that head. That is circular, and
+   every result's `warnings` says so. The mounting pitch in that file has no
+   source at all, and it sets the head count, so it sets the water.
+2. **The comparisons cannot pin the constants down.** 13 constants against 19
+   comparisons leaves 6 spare. The Jacobian at the fit has rank 8, so 5
+   directions are free. `fire.pool_burning_rate_reduction` and
+   `fire.pool_extinction_flux_mm_min` respond to no comparison and keep their
+   starting values. `fire.pool_ventilation_factor` rests on c6's one peak
+   heat release, and `fire.cover_shielding_factor` on c4 alone. There is no
+   held-back test, so the fit is checked on the data that set it.
+3. **The model cannot hold fire size, ceiling temperature and backlayering
+   together** (item 3, cooling location). The fit trades the ceiling
+   temperatures away. With the evaporation fix alone and the constants
+   unchanged, both ceilings passed (751 vs 830 °C, 553 vs 580 °C). The refit then
+   gave that back for heat release and backlayering.
 
----|---|---|---|---|
-| c4 | peak heat release | 30.6 MW | 30 MW | pass |
-| c4 | peak ceiling temperature | 283 °C | 830 °C | **3× low** |
-| c4 | temperature 100 m downstream | 28.8 °C | 57 °C | **2× low** |
-| c4 | heat flux at D15 | 2.61 kW/m² | 1 kW/m² | **2.6× high** |
-| c4 | backlayering | yes | no | **wrong** |
-| c5 | peak ceiling temperature | 197 °C | 580 °C | **3× low** |
-| c5 | backlayering | yes | no | **wrong** |
-| c6 | pools extinguished | no | yes | **wrong** |
-
-Heat release is right in all three. Almost nothing else is. A tool that gets
-the fire size right and the gas temperature three times too low will pass
-tenability criteria it should fail.
+What changed on 2026-09-27: spray is credited with evaporation only where it
+meets hot gas (`mist.heads_in_hot_gas`; heads upstream of the smoke used to
+count as if they stood in the plume, which removed 57 % of c4's ceiling heat),
+and the c6 anchor now carries its measured peak (70 MW, digitised from
+Figure 27) instead of the pool's nominal 60 MW rating.
 
 ---
 
@@ -187,6 +188,23 @@ Each is a real disagreement with a measured test, not a tolerance to widen.
 - [x] **c6's inputs had no source.** Activation 300 s -> 175 s and velocity
       1.5 -> 2.35 m/s, both read off Figures 27-29 on the same convention the
       c4 and c5 anchors already used.
+
+- [ ] **Cooling acts at the fire, as one fraction.** `mist.chi_cool` is a
+      single number applied to the ceiling excess at the fire, to the
+      buoyancy that drives backlayering, and to the smoke going upstream. In
+      the tests the ceiling above the fire stays near flame temperature (830 °C
+      in c4's direct flame zone, 1.2 m above a 10 m flame). Meanwhile spray
+      downstream cools the gas that has already passed, and spray upstream
+      cools the backlayer. A scalar cannot do all three, and the fit shows it:
+      it gives up the ceiling to buy heat release and backlayering. Cooling
+      needs to act where each head's water meets the gas, along the tunnel.
+      Do not settle it by picking whichever version lands nearer 830 °C. Settle
+      it from a CFD (Tier 2) case or a test that measures temperature along the
+      spray.
+- [ ] **Constants no comparison informs.** Stop listing
+      `fire.pool_burning_rate_reduction` and `fire.pool_extinction_flux_mm_min`
+      as fitted, or add a reference case that exercises them (a Class B test
+      where water actually reaches the pools).
 
 ## 4. Earn the Tier 2 numbers
 

@@ -235,19 +235,44 @@ def _cmd_history(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _print_calibration_basis(reference: dict) -> None:
+    from solit2.schema.presets import load_calibration
+    from validation import compare
+
+    status = reference["data_status"]
+    print(f"reference nozzle {reference['path']}: declared {status!r} "
+          f"({compare.REFERENCE_DATA_STATUSES[status]})")
+    fit = load_calibration().get("provenance", {}).get("fit")
+    if not fit:
+        print("calibration: no fit record; these constants cannot be traced to a fit")
+        return
+    print(f"calibration: {fit['fitted_constants']} constants fitted against "
+          f"{fit['comparisons']} comparisons on {fit['reference_nozzle']['path']} "
+          f"(sha256 {fit['reference_nozzle']['sha256'][:12]}); the same comparisons are "
+          f"checked below, so a pass is weak evidence and a miss is a finding")
+    if fit["reference_nozzle"]["sha256"] != reference["sha256"]:
+        print("WARNING: the constants were fitted on a different reference nozzle file "
+              "from the one this check runs on")
+    if status != "measured":
+        print("WARNING: not the SOLIT2 test system's measured nozzle -- no result is "
+              "independent evidence")
+
+
 def _cmd_validate(args: argparse.Namespace) -> int:
     from validation import compare
 
     ids = tuple(args.anchor) if args.anchor else None
+    path = Path(args.reference_nozzle) if args.reference_nozzle else None
     try:
-        nozzle = compare.load_reference_nozzle(
-            Path(args.reference_nozzle) if args.reference_nozzle else None)
+        reference = compare.reference_nozzle_record(path)
+        nozzle = compare.load_reference_nozzle(path)
         anchors = compare.load_anchors(ids, reference_nozzle=nozzle)
     except (compare.ReferenceNozzleMissing, MissingNozzleData) as exc:
         return _fail(str(exc), "reference_nozzle",
                      f"create {compare.DEFAULT_REFERENCE_NOZZLE_PATH}, or pass --reference-nozzle "
                      f"PATH, with the SOLIT2 reference test nozzle's measured data",
                      EXIT_BAD_INPUT)
+    _print_calibration_basis(reference)
     all_passed = True
     for anchor in anchors:
         report = compare.check(anchor, args.engine)

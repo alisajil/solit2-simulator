@@ -150,10 +150,16 @@ the loop must not blur it.
 
 ## Reading a result honestly
 
-The engine is calibrated against reference cases c4–c6, which used a different manufacturer's
-nozzle and are weighted 0.5 in the fit. **No reference case uses the head this project is
-assessing.** Every number the loop produces for it is an extrapolation until a full-scale test
-exists, and `meta.calibration_note` says so in every result.
+The engine is calibrated against reference cases c4–c6 (SOLIT² Annex 2, equal weight). SOLIT²
+publishes what those tests measured but not their nozzle. **The reference nozzle the constants
+are fitted on is a placeholder**: `designs/solit2-reference-nozzle.json` is this project's own
+estimated datasheet (`data_status: "placeholder"`). The constants are therefore tuned so the
+head being assessed reproduces the reference tests, and assessing that head with them is
+circular. Every result's `warnings` says no figure in it is independent evidence, and
+`meta.calibration_note` (written by the fit) gives the pass count, the misses, and which
+constants no comparison constrains. Every number the loop produces is an extrapolation until a
+full-scale test of this head exists. The real SOLIT² system data can only come from the
+consortium (Annex 2: contact@solit.info, project coordinator FOGTEC).
 
 Two habits that keep the loop honest:
 
@@ -163,10 +169,12 @@ Two habits that keep the loop honest:
   cool, as a reason to check the engine rather than as a win.
 
 Since 2026-09-27 the gas temperatures are the published Li & Ingason correlation, unscaled; the
-0.314 multiplier that made them 3× cool is gone. The mist constants fitted alongside it, and
-the assumed SOLIT² reference nozzle they were fitted with, have NOT been replaced: that needs the
-SOLIT² test system's real nozzle data in `designs/solit2-reference-nozzle.json` and a refit.
-Every nozzle — the project's and the reference — is tester input: K-factor, pressure, D32,
+0.314 multiplier that made them 3× cool is gone, and spray only cools gas it actually falls
+through (`mist.heads_in_hot_gas`). The fit cannot hold fire size, ceiling temperature and
+backlayering at once, because a single cooling fraction is applied at the fire. It trades the
+ceiling temperatures away. That is a structural limit to fix, not to tune around
+(`docs/accuracy-roadmap.md`). Every nozzle — the project's and the reference — is tester input:
+K-factor, pressure, D32,
 Dv50/Dv90, cone, discharge velocity and mounting, none assumed. The Fire test step runs the
 Annex 7 test proper, and asks for the conditions Annex 7 leaves to the AHJ (activation time,
 test-day ambient, design-fire growth) instead of choosing them.

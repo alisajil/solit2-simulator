@@ -68,6 +68,7 @@ from solit2.engines.reduced.droplet import (
 )
 from solit2.engines.reduced.geometry import NozzlePosition, SectionGeometry
 from solit2.engines.reduced.state import MistEffect
+from solit2.engines.reduced.thermal import longitudinal_decay
 from solit2.schema.design import Design, Mode
 from solit2.schema.presets import load_calibration, register_cache_invalidation_hook
 
@@ -565,7 +566,29 @@ def _coverage(geometries: tuple[_ModeGeometry, ...],
     return float(covered.mean())
 
 
-def _cooling_fraction(design: Design, geometries: tuple[_ModeGeometry, ...], head_count: int,
+def heads_in_hot_gas(positions: tuple[NozzlePosition, ...], crown_height_m: float,
+                     backlayer_m: float) -> float:
+    """How many heads' worth of spray actually falls through the fire's gas.
+
+    The spectrum is flown once per mode, through the gas at the fire, so the
+    evaporated share `_mode_geometry` returns is the share for a head standing
+    in the plume. A head elsewhere meets gas that has cooled with distance --
+    the engine's own Ingason, Li & Lonnermark decay, `thermal.longitudinal_decay`
+    -- and a head upstream of the backlayer tip meets incoming tunnel air at
+    ambient, where nothing evaporates. Each head is therefore weighted by the
+    ratio of its local gas excess to the fire's.
+
+    Weighting the evaporated share linearly by that ratio is first order in the
+    local excess: exact at the fire, where the ratio is 1, and exact in ambient
+    air, where it is 0, which are the two cases that matter. Counting every head
+    at the fire's excess, as before, credited heads 30 m upstream in cold air
+    with the plume's evaporation and removed 57 % of the ceiling heat on the c4
+    reference case.
+    """
+    return sum(longitudinal_decay(p.x_m, crown_height_m, backlayer_m) for p in positions)
+
+
+def _cooling_fraction(design: Design, geometries: tuple[_ModeGeometry, ...], head_count: float,
                       flow_fraction: float, q_conv_kw: float) -> float:
     """Fraction of the fire's convective heat the evaporating spray removes.
 
@@ -730,7 +753,7 @@ def _suppression_efficiency(cal: dict, w_fuel: float, f_cov: float,
 def evaluate(design: Design, geom: SectionGeometry, positions: tuple[NozzlePosition, ...],
              envelope: FuelEnvelope, fire_top_m: float, u_eff_ms: float, gas_excess_k: float,
              q_conv_kw: float, flow_fraction: float, *,
-             hrr_mw: float, hrr_free_mw: float) -> MistEffect:
+             hrr_mw: float, hrr_free_mw: float, backlayer_m: float) -> MistEffect:
     """What the spray is doing to the fire this step.
 
     `hrr_mw` and `hrr_free_mw` are the fire as it stands and the fire that would
@@ -755,7 +778,9 @@ def evaluate(design: Design, geom: SectionGeometry, positions: tuple[NozzlePosit
                                   burning_fraction(hrr_mw, hrr_free_mw))
 
     head_count = len(positions)
-    chi_cool = _cooling_fraction(design, geometries, head_count, flow_fraction, q_conv_kw)
+    chi_cool = _cooling_fraction(design, geometries,
+                                 heads_in_hot_gas(positions, geom.crown_height_m, backlayer_m),
+                                 flow_fraction, q_conv_kw)
     tau_mist = _curtain_transmissivity(design, geom, geometries, head_count,
                                        flow_fraction, u_eff_ms)
 

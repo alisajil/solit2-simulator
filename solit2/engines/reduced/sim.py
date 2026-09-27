@@ -380,7 +380,8 @@ def run_once(design: Design, section: str, velocity_ms: float) -> RunTrace:
         mist = mist_mod.evaluate(scene.design, scene.geom, scene.positions, scene.envelope,
                                  scene.fire_top_m, vent.u_eff_ms, field.ceiling_excess_k,
                                  q_conv, flow_fraction,
-                                 hrr_mw=state.hrr_mw, hrr_free_mw=state.hrr_free_mw)
+                                 hrr_mw=state.hrr_mw, hrr_free_mw=state.hrr_free_mw,
+                                 backlayer_m=vent.backlayer_m)
 
         species = tenability.species_at(scene.model, state.hrr_mw, scene.air_m3s,
                                         field.strat_factor)

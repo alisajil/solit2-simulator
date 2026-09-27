@@ -24,8 +24,10 @@ import json
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import numpy as np
 from scipy.optimize import least_squares
 
 from solit2.schema.presets import PRESET_DIR, load_calibration, reload_calibration
@@ -196,6 +198,115 @@ def run(max_nfev: int, anchors: tuple[compare.Anchor, ...] | None = None) -> Fit
     )
 
 
+# A constant "informs" a comparison when a step of IDENT_STEP of its bound span
+# moves that comparison's normalised residual by more than IDENT_THRESHOLD per
+# span; directions whose singular value is below IDENT_RANK_FRACTION of the
+# largest are ones the comparisons cannot pin down.
+IDENT_STEP = 0.05
+IDENT_THRESHOLD = 1e-3
+IDENT_RANK_FRACTION = 1e-3
+
+
+def identifiability(anchors: tuple[compare.Anchor, ...]) -> dict:
+    """Which comparisons each fitted constant actually moves, at the current values.
+
+    A least-squares fit reports a value for every constant whether or not the
+    data had anything to say about it. A constant no comparison responds to keeps
+    its starting value and is still printed as fitted; this says which those are,
+    and how many independent directions the comparisons constrain at all.
+    """
+    labels = [(a.id, q) for a in anchors for q in a.measured]
+    original = CALIBRATION_PATH.read_text()
+    columns = []
+    try:
+        x0 = current_vector()
+        base = np.array(compare.residuals(anchors))
+        for i, (_, _, low, high) in enumerate(FITTED_KEYS):
+            step = IDENT_STEP * (high - low)
+            x = list(x0)
+            x[i] = x0[i] + step if x0[i] + step <= high else x0[i] - step
+            apply_vector(x)
+            columns.append((np.array(compare.residuals(anchors)) - base)
+                           / (x[i] - x0[i]) * (high - low))
+    finally:
+        CALIBRATION_PATH.write_text(original)
+        reload_calibration()
+    jacobian = np.array(columns).T
+    informed = {}
+    for j, (group, name, _, _) in enumerate(FITTED_KEYS):
+        moved = sorted({aid for (aid, _), v in zip(labels, jacobian[:, j])
+                        if abs(v) > IDENT_THRESHOLD})
+        informed[f"{group}.{name}"] = moved
+    singular = np.linalg.svd(jacobian, compute_uv=False)
+    rank = int((singular > IDENT_RANK_FRACTION * singular[0]).sum()) if singular[0] > 0 else 0
+    return {"rank": rank, "informed_by": informed,
+            "uninformed": [k for k, v in informed.items() if not v]}
+
+
+IST = timezone(timedelta(hours=5, minutes=30))
+NOT_INDEPENDENT = (
+    "That is not the SOLIT2 test system's measured nozzle, so the fitted constants have "
+    "absorbed whatever it gets wrong: no result computed on them is independent evidence, "
+    "and none may be presented as validated.")
+
+
+def _shown(value) -> str:
+    return str(value) if isinstance(value, bool) else f"{value:.3g}"
+
+
+def provenance(outcome: FitOutcome, reports: Sequence[compare.AnchorReport],
+               reference: dict, fitted_at: datetime, ident: dict) -> dict:
+    """The calibration's `provenance` block, generated from what the fit actually did.
+
+    Written by the fit rather than by hand, so it cannot describe a fit that is no
+    longer the one in the file: the note shown in every result is rebuilt from the
+    reference nozzle's hash and declared status, the comparisons, and the misses.
+    """
+    rows = [(r.anchor_id, row) for r in reports for row in r.rows]
+    passed = sum(1 for _, row in rows if row[4])
+    misses = [f"{aid} {row[0]} {_shown(row[1])} vs {_shown(row[2])} measured"
+              for aid, row in rows if not row[4]]
+    cases = ", ".join(r.anchor_id for r in reports)
+    status = reference["data_status"]
+    note = (
+        f"Fitted {fitted_at.isoformat(timespec='seconds')} by validation/fit.py: "
+        f"{len(FITTED_KEYS)} constants (FITTED_KEYS) against {len(rows)} comparisons in "
+        f"reference cases {cases} (SOLIT2 Engineering Guidance Annex 2); every other constant "
+        f"is hand-set from published literature. After the fit {passed} of {len(rows)} "
+        f"comparisons are inside tolerance"
+        + (f"; misses: {'; '.join(misses)}. " if misses else ". ")
+        + "FITTED IS NOT VALIDATED: the same comparisons set the constants, and `solit2 "
+        f"validate` lists every miss. The comparisons constrain {ident['rank']} of the "
+        f"{len(FITTED_KEYS)} constants' directions"
+        + (f"; no comparison responds to {', '.join(ident['uninformed'])}, so those keep "
+           f"their starting values and are not fits" if ident["uninformed"] else "")
+        + f". The anchors ran on the reference nozzle "
+        f"{reference['path']} (sha256 {reference['sha256'][:12]}), declared {status!r} "
+        f"({compare.REFERENCE_DATA_STATUSES[status]}).")
+    if status != "measured":
+        note += " " + NOT_INDEPENDENT
+    return {
+        "fitted": True,
+        "note": note,
+        "reference_cases": "SOLIT2 Engineering Guidance Annex 2, full-scale fire tests "
+                           "c4 (Class A with cover), c5 (Class A without cover) and c6 "
+                           "(Class B diesel pools).",
+        "fit": {"at": fitted_at.isoformat(timespec="seconds"), "reference_nozzle": reference,
+                "anchors": [r.anchor_id for r in reports], "comparisons": len(rows),
+                "passed": passed, "fitted_constants": len(FITTED_KEYS),
+                "cost_before": outcome.cost_before, "cost_after": outcome.cost_after,
+                "termination": outcome.message, "pinned": list(outcome.pinned),
+                "identifiability": ident},
+    }
+
+
+def record_provenance(block: dict) -> None:
+    calibration = json.loads(CALIBRATION_PATH.read_text())
+    calibration["provenance"] = block
+    CALIBRATION_PATH.write_text(_dump(calibration))
+    reload_calibration()
+
+
 def _main() -> int:
     import argparse
 
@@ -211,10 +322,14 @@ def _main() -> int:
                              "not publish it, so the fit will not run on an assumed one")
     args = parser.parse_args()
 
+    reference = compare.reference_nozzle_record(Path(args.reference_nozzle))
     nozzle = compare.load_reference_nozzle(Path(args.reference_nozzle))
     anchors = compare.load_anchors(tuple(args.anchor) if args.anchor else None,
                                    reference_nozzle=nozzle)
     outcome = run(args.max_nfev, anchors)
+    reports = [compare.check(anchor) for anchor in anchors]
+    ident = identifiability(anchors)
+    record_provenance(provenance(outcome, reports, reference, datetime.now(IST), ident))
 
     print(f"cost before      {outcome.cost_before:.6f}")
     print(f"cost after       {outcome.cost_after:.6f}")

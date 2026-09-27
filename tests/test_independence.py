@@ -393,3 +393,73 @@ def test_the_wrapped_scan_stays_quiet_on_clean_text():
     assert _wrapped_offences(Path("x.py"), "a normal comment\nabout tunnels\n") == []
     # and does not double-report what the line-by-line scan already catches
     assert _wrapped_offences(Path("x.py"), "# the orange gate tunnel\n") == []
+
+
+# --- the calibration states, in every result, what it was fitted on -----------
+
+SHIPPED_REFERENCE_NOZZLE = REPO_ROOT / "designs" / "solit2-reference-nozzle.json"
+
+
+def _provenance() -> dict:
+    from solit2.schema.presets import load_calibration
+    return load_calibration()["provenance"]
+
+
+def test_the_shipped_calibration_was_fitted_on_the_reference_nozzle_that_ships_beside_it():
+    """A refit that is not recorded, or a reference nozzle edited after the fit,
+    leaves every result describing constants that are not the ones it ran on."""
+    import hashlib
+    recorded = _provenance()["fit"]["reference_nozzle"]
+    assert recorded["path"] == "designs/solit2-reference-nozzle.json"
+    assert recorded["sha256"] == hashlib.sha256(SHIPPED_REFERENCE_NOZZLE.read_bytes()).hexdigest(), (
+        "the reference nozzle changed after the fit: refit with validation.fit")
+    declared = json.loads(SHIPPED_REFERENCE_NOZZLE.read_text())["data_status"]
+    assert recorded["data_status"] == declared
+
+
+def test_the_calibration_note_is_the_one_the_fit_wrote():
+    provenance = _provenance()
+    fit = provenance["fit"]
+    assert fit["reference_nozzle"]["sha256"][:12] in provenance["note"]
+    assert f"{fit['passed']} of {fit['comparisons']}" in provenance["note"]
+
+
+def test_a_result_on_a_calibration_not_fitted_on_measured_data_says_it_is_not_independent():
+    result = envelope.run(Design.load(REPO_ROOT / EXAMPLE_DESIGN))
+    status = result.meta["calibration_reference_nozzle"]
+    assert status is not None
+    flagged = [w for w in result.warnings if "not the SOLIT2 test system's measured nozzle" in w]
+    assert bool(flagged) == (status != "measured")
+    if status != "measured":
+        assert "no result computed on them is independent evidence" in result.meta["calibration_note"]
+
+
+def _with_provenance(monkeypatch, fit):
+    import copy
+    from solit2.schema.presets import load_calibration
+    cal = copy.deepcopy(load_calibration())
+    if fit is None:
+        cal["provenance"].pop("fit", None)
+    else:
+        cal["provenance"]["fit"] = fit
+    monkeypatch.setattr(envelope, "load_calibration", lambda: cal)
+
+
+def test_a_reference_nozzle_changed_after_the_fit_is_flagged(monkeypatch):
+    fit = dict(_provenance()["fit"])
+    fit["reference_nozzle"] = {**fit["reference_nozzle"], "sha256": "0" * 64}
+    _with_provenance(monkeypatch, fit)
+    assert any("has changed since the constants were fitted" in w
+               for w in envelope.calibration_warnings())
+
+
+def test_a_measured_and_unchanged_reference_nozzle_raises_no_calibration_warning(monkeypatch):
+    fit = dict(_provenance()["fit"])
+    fit["reference_nozzle"] = {**fit["reference_nozzle"], "data_status": "measured"}
+    _with_provenance(monkeypatch, fit)
+    assert envelope.calibration_warnings() == []
+
+
+def test_a_calibration_with_no_fit_record_is_flagged(monkeypatch):
+    _with_provenance(monkeypatch, None)
+    assert any("records no fit provenance" in w for w in envelope.calibration_warnings())
