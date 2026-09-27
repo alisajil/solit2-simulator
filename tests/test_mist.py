@@ -466,20 +466,69 @@ def test_spray_into_cold_air_upstream_of_the_smoke_cools_nothing():
     assert padded.chi_cool == pytest.approx(alone.chi_cool)
 
 
-def test_spray_far_downstream_cools_less_than_spray_over_the_fire():
-    """Downstream the gas has cooled along the tunnel (the engine's own
-    Ingason, Li & Lonnermark decay), so the same heads evaporate less there."""
-    _, _, _, _, over_fire = _setup(gas_excess_k=700.0, positions=_heads())
-    _, _, _, _, far = _setup(gas_excess_k=700.0, positions=_heads(dx_m=200.0))
-    assert 0.0 < far.chi_cool < over_fire.chi_cool
+def _span(positions):
+    xs = [p.x_m for p in positions]
+    return min(xs), max(xs)
 
 
-def test_spray_inside_the_backlayer_meets_hot_gas_and_cools_it():
+def test_spray_downstream_of_the_fire_cools_the_gas_after_it_passes_not_the_fire():
+    """Cooling acts where each head's water meets the gas. Gas flows away from
+    the fire, so a head 200 m downstream meets gas that has already left the
+    fire: it cannot take heat off the plume, only off what flows past it. It
+    used to be summed into one fraction applied at the fire, which cooled the
+    ceiling above the fire with water falling 200 m away."""
+    far = _heads(dx_m=200.0)
+    first, last = _span(far)
+    _, _, _, _, effect = _setup(gas_excess_k=700.0, positions=far)
+    assert effect.chi_cool == 0.0
+    assert effect.cooling.remaining(0.0) == 1.0
+    assert effect.cooling.remaining(first - 10.0) == 1.0
+    assert effect.cooling.remaining(last + 10.0) < 1.0
+
+
+def test_spray_over_the_fire_cools_the_plume():
+    _, _, _, _, effect = _setup(gas_excess_k=700.0, positions=_heads())
+    assert effect.chi_cool > 0.0
+    assert effect.cooling.remaining(0.0) == 1.0, "the plume's own cooling is chi_cool"
+
+
+def test_gas_flowing_downstream_only_ever_loses_heat_to_the_spray():
+    _, _, pos, _, effect = _setup(gas_excess_k=700.0)
+    _, last = _span(pos)
+    shares = [effect.cooling.remaining(x) for x in range(0, int(last) + 20)]
+    assert all(b <= a for a, b in zip(shares, shares[1:]))
+    assert shares[-1] < 1.0
+
+
+def test_spray_the_gas_passes_adds_up_along_its_path():
+    """What the gas gives up to heads over the fire and to heads downstream of
+    it is one evaporation potential met in two places, so far downstream the
+    two add: 1 / (heat share left) - 1 is the potential met so far, and it is
+    the sum of what each set of heads meets on its own. Nothing is counted
+    twice and nothing is lost between the plume and the tunnel."""
+    over = _heads()
+    beyond = _heads(dx_m=500.0)
+
+    def met_far_downstream(positions):
+        _, _, _, _, e = _setup(gas_excess_k=700.0, positions=positions)
+        left = (1.0 - e.chi_cool) * e.cooling.remaining(10_000.0)
+        return 1.0 / left - 1.0
+
+    assert met_far_downstream(over + beyond) == pytest.approx(
+        met_far_downstream(over) + met_far_downstream(beyond))
+
+
+def test_spray_inside_the_backlayer_cools_the_backlayer_not_the_fire():
+    """Upstream of the fire the smoke flows the other way, toward the backlayer
+    tip, so a head there meets the backlayer after it has left the fire."""
     upstream = _heads(dx_m=-300.0)
+    first, _ = _span(upstream)
     _, _, _, _, clear = _setup(gas_excess_k=700.0, positions=upstream, backlayer_m=0.0)
     _, _, _, _, smoky = _setup(gas_excess_k=700.0, positions=upstream, backlayer_m=2000.0)
-    assert clear.chi_cool == 0.0
-    assert smoky.chi_cool > 0.0
+    assert clear.cooling.remaining(first - 10.0) == 1.0, "no smoke there to cool"
+    assert smoky.chi_cool == 0.0
+    assert smoky.cooling.remaining(first - 10.0) < 1.0
+    assert smoky.cooling.remaining(10_000.0) == 1.0, "nor the gas going downstream"
 
 
 def test_shielding_does_not_widen_the_geometry_cache_key():
@@ -878,18 +927,26 @@ def test_the_engine_does_not_oscillate_step_to_step():
 
 
 def test_backlayer_heat_is_the_plume_heat_when_no_spray_runs():
-    assert mist.backlayer_heat_kw(10_000.0, 0.0) == 10_000.0
+    assert mist.backlayer_heat_kw(10_000.0, mist.MistEffect.none()) == 10_000.0
 
 
-def test_backlayer_heat_is_cooled_again_by_the_upstream_spray():
-    """chi = 0.5 means the spray could take ratio = 1 times the plume's heat;
-    the plume stage used 0.5 of it, and half the 0.5 left over stands upstream.
-    Against the 0.5 q the smoke still carries that is a ratio of 0.5, so the
-    closure leaves 0.5 q / 1.5 = q / 3."""
-    q = 9_000.0
-    assert mist.backlayer_heat_kw(q, 0.5) == pytest.approx(q / 3.0)
-    assert mist.backlayer_heat_kw(q, 0.5) < q * (1.0 - 0.5)
+def test_backlayer_heat_is_what_the_plume_left_when_no_spray_stands_upstream():
+    effect = mist.MistEffect(eta=0.0, w_fuel_mm_min=0.0, f_cov=0.0, chi_cool=0.5,
+                             tau_mist=1.0)
+    assert mist.backlayer_heat_kw(9_000.0, effect) == pytest.approx(4_500.0)
+
+
+def test_backlayer_heat_is_cooled_again_by_the_spray_it_passes_under():
+    """The smoke that turns upstream passes under the heads upstream of the
+    fire; those heads, and only those, cool it a second time."""
+    upstream = _heads(dx_m=-300.0)
+    _, _, _, _, smoky = _setup(gas_excess_k=700.0, positions=upstream, backlayer_m=2000.0)
+    _, _, _, _, far = _setup(gas_excess_k=700.0, positions=_heads(dx_m=300.0))
+    assert mist.backlayer_heat_kw(Q_CONV_KW, smoky) < Q_CONV_KW
+    assert mist.backlayer_heat_kw(Q_CONV_KW, far) == pytest.approx(Q_CONV_KW)
 
 
 def test_backlayer_heat_vanishes_when_the_plume_is_fully_cooled():
-    assert mist.backlayer_heat_kw(9_000.0, 1.0) == 0.0
+    effect = mist.MistEffect(eta=0.0, w_fuel_mm_min=0.0, f_cov=0.0, chi_cool=1.0,
+                             tau_mist=1.0)
+    assert mist.backlayer_heat_kw(9_000.0, effect) == 0.0

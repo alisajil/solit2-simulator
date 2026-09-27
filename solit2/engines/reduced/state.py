@@ -5,7 +5,62 @@ Keeping these here avoids an import cycle: `fire` needs the mist's effect and
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from bisect import bisect_right
+from dataclasses import dataclass, field
+
+
+def _ratio_along(xs: tuple[float, ...], ratios: tuple[float, ...], x_m: float) -> float:
+    """Piecewise-linear lookup of a cumulative ratio; flat beyond both ends."""
+    i = bisect_right(xs, x_m)
+    if i == 0:
+        return 0.0
+    if i == len(xs):
+        return ratios[-1]
+    x0, x1 = xs[i - 1], xs[i]
+    return ratios[i - 1] + (ratios[i] - ratios[i - 1]) * (x_m - x0) / (x1 - x0)
+
+
+@dataclass(frozen=True)
+class CoolingProfile:
+    """Where along the tunnel the spray takes heat from gas that has left the fire.
+
+    Gas flows away from the fire: downstream with the ventilation, upstream in
+    the backlayer. Beyond the plume it meets the heads it passes, one after
+    another, and each takes its share of what is left. `remaining(x)` is the
+    share of the heat the gas left the plume with that it still carries at `x`
+    -- 1 over the plume, falling past every head it has passed.
+
+    The ratios are the cumulative evaporation potential met beyond each edge of
+    the plume, scaled by the share of the heat the plume let through, so that
+    the plume's own first-order closure carries on along the path:
+    share = 1 / (1 + ratio). Far downstream the gas has then given up exactly
+    what one closure over every head it passed would take.
+    Downstream breakpoints ascend in x; upstream ones are stored as distances
+    beyond the upstream edge, mirrored so that they ascend too.
+    """
+    downstream_edge_m: float = 0.0
+    upstream_edge_m: float = 0.0
+    downstream_x_m: tuple[float, ...] = ()
+    downstream_ratio: tuple[float, ...] = ()
+    upstream_x_m: tuple[float, ...] = ()      # -x, ascending
+    upstream_ratio: tuple[float, ...] = ()
+
+    def remaining(self, x_m: float) -> float:
+        if x_m > self.downstream_edge_m and self.downstream_x_m:
+            return 1.0 / (1.0 + _ratio_along(self.downstream_x_m, self.downstream_ratio, x_m))
+        if x_m < self.upstream_edge_m and self.upstream_x_m:
+            return 1.0 / (1.0 + _ratio_along(self.upstream_x_m, self.upstream_ratio, -x_m))
+        return 1.0
+
+    @property
+    def downstream_end(self) -> float:
+        """Share still carried by the gas once it has passed every head downstream."""
+        return 1.0 / (1.0 + self.downstream_ratio[-1]) if self.downstream_ratio else 1.0
+
+    @property
+    def upstream_end(self) -> float:
+        """Share still carried by the backlayer once it has passed every head upstream."""
+        return 1.0 / (1.0 + self.upstream_ratio[-1]) if self.upstream_ratio else 1.0
 
 
 @dataclass(frozen=True)
@@ -16,8 +71,18 @@ class MistEffect:
     # its reduced efficiency, over the top-face area
     w_fuel_mm_min: float
     f_cov: float          # fraction of the fuel's interception envelope any spray reaches
-    chi_cool: float       # fraction of the convective heat release removed by evaporation
+    # fraction of the convective heat release the spray removes IN THE PLUME, from
+    # the water falling through it; what it takes further along is `cooling`
+    chi_cool: float
     tau_mist: float       # radiant transmissivity through the mist curtain, 0..1
+    cooling: CoolingProfile = field(default_factory=CoolingProfile)
+
+    @property
+    def chi_downstream(self) -> float:
+        """Fraction of the convective heat the spray has taken from the gas by the
+        time it has passed every head downstream: the plume's share and the
+        tunnel's together."""
+        return 1.0 - (1.0 - self.chi_cool) * self.cooling.downstream_end
 
     @classmethod
     def none(cls) -> "MistEffect":

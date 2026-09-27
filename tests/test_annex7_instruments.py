@@ -430,3 +430,13 @@ def test_evaporated_mist_water_is_the_water_the_mist_module_charged_for():
     expected_kgs = 0.2 * 30_000.0 / sim_mod.MIST_EVAPORATION_ENTHALPY_KJKG
     assert ratio == pytest.approx(expected_kgs / 100.0)
     assert sim_mod._mist_water_ratio(MistEffect.none(), 30_000.0, 100.0) == 0.0
+
+
+def test_humidity_counts_the_water_evaporated_downstream_of_the_fire_too():
+    """Water that evaporates into gas downstream of the fire is still water in
+    the air the stations sample, though it took no heat off the plume."""
+    from tests.test_mist import _heads, _setup
+
+    _, _, _, _, effect = _setup(gas_excess_k=700.0, positions=_heads(dx_m=200.0))
+    assert effect.chi_cool == 0.0
+    assert sim_mod._mist_water_ratio(effect, q_conv_kw=30_000.0, air_kgs=100.0) > 0.0

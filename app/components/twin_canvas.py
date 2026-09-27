@@ -302,9 +302,10 @@ def mist_layer(design: Design, geom: SectionGeometry, step: StepRecord) -> Layer
 
     Two shapes when discharging: the spray zone from floor to the nozzles, and a
     steam band from the nozzles up toward the crown once evaporation is doing
-    something worth showing. `chi_cool` -- the fraction of convective heat the
-    engine attributes to evaporation -- is the only honest signal for "how much of
-    this is turning to steam", so it drives the band's presence and depth, not a
+    something worth showing. `chi_downstream` -- the fraction of convective heat
+    the engine attributes to evaporation, in the plume and along the zone the
+    band is drawn over -- is the only honest signal for "how much of this is
+    turning to steam", so it drives the band's presence and depth, not a
     decorative animation. Shapes carry no frame-count invariant (a frame replaces
     the whole shapes list), so adding one here does not touch trace indexing.
     """
@@ -312,7 +313,7 @@ def mist_layer(design: Design, geom: SectionGeometry, step: StepRecord) -> Layer
     top = design.nozzles.mounting.height_above_carriageway_m
     if step.water_lpm <= 0:
         return [go.Scatter(x=[], y=[], mode="markers", name="mist", showlegend=False)], []
-    chi = step.mist.chi_cool
+    chi = step.mist.chi_downstream
     alpha = min(max(0.18 + 0.40 * chi, 0.18), 0.55)
     hover = go.Scatter(x=[0.0], y=[top / 2], mode="markers", name="mist", showlegend=False,
                        marker={"size": 40, "opacity": 0.0}, hoverinfo="text",

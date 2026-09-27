@@ -188,11 +188,13 @@ def _flame_cooled_out(mist: MistEffect) -> bool:
     fuel". A liquid pool is put out in the gas phase, by flame cooling, which is
     the mechanism this adds alongside wetting.
 
-    AN UPPER BOUND, and stated as one: `chi_cool` counts heat the spray takes
-    anywhere in the fire's gas, and this compares all of it with what the FLAME
-    can lose. Water evaporating in the plume above the flame cools gas the flame
-    has already finished with, so this puts a pool out as early as it could go
-    out, and later only if much of the evaporation happens above the flame.
+    AN UPPER BOUND, and stated as one: `chi_cool` counts the heat taken by the
+    water falling through the plume -- not the spray up- or downstream of it,
+    which meets gas the flame has already finished with -- and this compares
+    all of it with what the FLAME can lose. Water evaporating in the plume above
+    the flame cools gas the flame has also finished with, so this puts a pool
+    out as early as it could go out, and later only if much of the evaporation
+    happens above the flame.
     Nothing resolves that split in a reduced-order model; the FDS tier, whose
     extinction model applies this criterion cell by cell, does.
     """

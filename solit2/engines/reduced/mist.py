@@ -67,7 +67,7 @@ from solit2.engines.reduced.droplet import (
     spray_shielding_factor,
 )
 from solit2.engines.reduced.geometry import NozzlePosition, SectionGeometry
-from solit2.engines.reduced.state import MistEffect
+from solit2.engines.reduced.state import CoolingProfile, MistEffect
 from solit2.engines.reduced.thermal import longitudinal_decay
 from solit2.schema.design import Design, Mode
 from solit2.schema.presets import load_calibration, register_cache_invalidation_hook
@@ -566,43 +566,89 @@ def _coverage(geometries: tuple[_ModeGeometry, ...],
     return float(covered.mean())
 
 
-def heads_in_hot_gas(positions: tuple[NozzlePosition, ...], crown_height_m: float,
-                     backlayer_m: float) -> float:
-    """How many heads' worth of spray actually falls through the fire's gas.
+@dataclass(frozen=True)
+class _HeadSpray:
+    """One head's evaporation potential for one mode, and where it acts.
 
-    The spectrum is flown once per mode, through the gas at the fire, so the
-    evaporated share `_mode_geometry` returns is the share for a head standing
-    in the plume. A head elsewhere meets gas that has cooled with distance --
-    the engine's own Ingason, Li & Lonnermark decay, `thermal.longitudinal_decay`
-    -- and a head upstream of the backlayer tip meets incoming tunnel air at
-    ambient, where nothing evaporates. Each head is therefore weighted by the
-    ratio of its local gas excess to the fire's.
-
-    Weighting the evaporated share linearly by that ratio is first order in the
-    local excess: exact at the fire, where the ratio is 1, and exact in ambient
-    air, where it is 0, which are the two cases that matter. Counting every head
-    at the fire's excess, as before, credited heads 30 m upstream in cold air
-    with the plume's evaporation and removed 57 % of the ceiling heat on the c4
-    reference case.
+    `ratio` is the heat the head's evaporating water could take, as a multiple
+    of the fire's convective output, at the gas it actually meets. `lo_m` to
+    `hi_m` is its cone's footprint along the tunnel, over which that water
+    evaporates.
     """
-    return sum(longitudinal_decay(p.x_m, crown_height_m, backlayer_m) for p in positions)
+    lo_m: float
+    hi_m: float
+    ratio: float
+
+    def share_within(self, a_m: float, b_m: float) -> float:
+        """Fraction of this head's footprint lying between `a_m` and `b_m`."""
+        if self.hi_m <= self.lo_m:
+            return 1.0 if a_m <= self.lo_m <= b_m else 0.0
+        overlap = min(self.hi_m, b_m) - max(self.lo_m, a_m)
+        return max(overlap, 0.0) / (self.hi_m - self.lo_m)
 
 
-def _cooling_fraction(design: Design, geometries: tuple[_ModeGeometry, ...], head_count: float,
-                      flow_fraction: float, q_conv_kw: float) -> float:
-    """Fraction of the fire's convective heat the evaporating spray removes.
+def _head_sprays(design: Design, geometries: tuple[_ModeGeometry, ...],
+                 positions: tuple[NozzlePosition, ...], flow_fraction: float,
+                 q_conv_kw: float, crown_height_m: float,
+                 backlayer_m: float) -> tuple[_HeadSpray, ...]:
+    """Every head's evaporation potential, placed where its water meets the gas.
 
     The demand side is straightforward: the water that evaporates in flight
-    carries off its sensible heat plus its latent heat. On this system that
-    demand comes to about three times the fire's whole convective output.
+    carries off its sensible heat plus its latent heat. The spectrum is flown
+    once per mode, through the gas at the fire, so the evaporated share
+    `_mode_geometry` returns is the share for a head standing in the plume. A
+    head elsewhere meets gas that has cooled with distance -- the engine's own
+    Ingason, Li & Lonnermark decay, `thermal.longitudinal_decay` -- and a head
+    upstream of the backlayer tip meets incoming tunnel air at ambient, where
+    nothing evaporates. Each head is therefore weighted by the ratio of its
+    local gas excess to the fire's: first order in the local excess, exact at
+    the fire, where the ratio is 1, and in ambient air, where it is 0.
 
-    It cannot have three times. Heat that is not there cannot be removed, and
-    the droplets cannot evaporate without it -- the two are the same energy.
-    The model used to resolve that by clipping the ratio at a fitted constant,
-    `mist.chi_cool_max`, which held it at exactly 0.558 for 94 % of every run
-    and at all three of 150, 200 and 250 MW. A term pinned to a constant is
-    not modelling anything: it cannot respond to a larger fire, to more water,
-    or to a better nozzle.
+    OUR ENGINEERING CHOICE, stated plainly: a head's water is taken to
+    evaporate evenly over its cone's footprint (`footprint_radius_m` either side
+    of the head), with no allowance for the fines drifting downstream as they
+    evaporate. The footprint is the engine's own; the drift of an evaporating
+    droplet is not tracked, only that of the water that lands.
+    """
+    if q_conv_kw <= 0:
+        return ()
+    enthalpy = WATER_CP_KJKGK * (WATER_BOILING_C - WATER_INLET_TEMP_C) + WATER_LATENT_HEAT_KJKG
+    per_head = []
+    for g in geometries:
+        mdot = (design.nozzles.mode_flow_lpm(g.mode_id) * flow_fraction
+                / LPM_PER_M3S * WATER_DENSITY_KGM3)
+        potential = (1.0 - g.surviving_fraction) * mdot * enthalpy / q_conv_kw
+        if potential > 0:
+            per_head.append((potential, g.footprint_radius_m))
+    sprays = []
+    for p in positions:
+        local = longitudinal_decay(p.x_m, crown_height_m, backlayer_m)
+        if local <= 0:
+            continue
+        sprays.extend(_HeadSpray(p.x_m - radius, p.x_m + radius, potential * local)
+                      for potential, radius in per_head)
+    return tuple(sprays)
+
+
+def _cooling_fraction(sprays: tuple[_HeadSpray, ...], plume: Rect) -> float:
+    """Fraction of the fire's convective heat the spray removes in the plume.
+
+    Only water falling through the plume -- over the fuel, `plume.x0_m` to
+    `plume.x1_m` -- meets the gas at the fire. Water falling anywhere else
+    meets gas that has already left the fire, and is `_cooling_profile`'s.
+    Summing every head in the zone into this one fraction, as the model used
+    to, cooled the ceiling above the fire with water falling 25 m downstream.
+    On the c4 reference case it held the ceiling at 524 C against 830 C
+    measured, and the fit could only trade it against heat release and
+    backlayering.
+
+    The demand on this system comes to several times the fire's convective
+    output, and it cannot have that. Heat that is not there cannot be removed,
+    and the droplets cannot evaporate without it -- the two are the same
+    energy. The model used to resolve that by clipping the ratio at a fitted
+    constant, `mist.chi_cool_max`, which held it at exactly 0.558 for 94 % of
+    every run and at all three of 150, 200 and 250 MW. A term pinned to a
+    constant is not modelling anything.
 
     What actually limits it is a feedback the demand calculation leaves out.
     Evaporation is driven by how far the gas is above the droplets, so as the
@@ -612,63 +658,112 @@ def _cooling_fraction(design: Design, geometries: tuple[_ModeGeometry, ...], hea
 
         chi = ratio * (1 - chi)   ->   chi = ratio / (1 + ratio)
 
-    which needs no constant, is smooth, and behaves correctly at both ends:
-    a weak spray removes `ratio` of the heat, and an overwhelming one
-    approaches all of it without ever exceeding it, because the gas it is
-    cooling runs out.
+    which needs no constant, is smooth, and behaves correctly at both ends.
     """
-    if q_conv_kw <= 0:
-        return 0.0
-    sensible = WATER_CP_KJKGK * (WATER_BOILING_C - WATER_INLET_TEMP_C) + WATER_LATENT_HEAT_KJKG
-    ratio = 0.0
-    for g in geometries:
-        evaporated = 1.0 - g.surviving_fraction
-        mdot = (design.nozzles.mode_flow_lpm(g.mode_id) * head_count * flow_fraction
-                / LPM_PER_M3S * WATER_DENSITY_KGM3)
-        ratio += evaporated * mdot * sensible / q_conv_kw
+    ratio = sum(s.ratio * s.share_within(plume.x0_m, plume.x1_m) for s in sprays)
     return ratio / (1.0 + ratio)
 
 
-# The share of the active zone's spray that stands upstream of the fire, over
-# the path a backlayer has to take. The engine centres the zone on the fire --
-# `sim._Scene.half_active_length_m` is used both ways -- so half of it does.
-UPSTREAM_SPRAY_SHARE = 0.5
+def _cumulative_beyond(edge_m: float, spans: list[tuple[float, float, float]]
+                       ) -> tuple[tuple[float, ...], tuple[float, ...]]:
+    """Breakpoints of the potential met by gas flowing from `edge_m` towards +x.
+
+    `spans` are (lo, hi, ratio) with each ratio spread evenly over lo..hi (a
+    point when lo == hi); only what lies beyond `edge_m` counts. The result is
+    piecewise linear between the returned breakpoints, which start at the edge.
+    """
+    rates: dict[float, float] = {}
+    jumps: dict[float, float] = {}
+    for lo, hi, ratio in spans:
+        if hi <= edge_m:
+            continue
+        if hi <= lo:
+            jumps[lo] = jumps.get(lo, 0.0) + ratio
+            continue
+        density = ratio / (hi - lo)
+        start = max(lo, edge_m)
+        rates[start] = rates.get(start, 0.0) + density
+        rates[hi] = rates.get(hi, 0.0) - density
+    if not rates and not jumps:
+        return (), ()
+    xs, ratios = [edge_m], [0.0]
+    total, rate, last = 0.0, 0.0, edge_m
+    for x in sorted(set(rates) | set(jumps)):
+        total += rate * (x - last)
+        xs.append(x)
+        ratios.append(total)
+        if x in jumps:
+            total += jumps[x]
+            xs.append(x)
+            ratios.append(total)
+        rate += rates.get(x, 0.0)
+        last = x
+    return tuple(xs), tuple(ratios)
 
 
-def backlayer_heat_kw(q_conv_kw: float, chi_cool: float) -> float:
+def _cooling_profile(sprays: tuple[_HeadSpray, ...], plume: Rect,
+                     chi_cool: float) -> CoolingProfile:
+    """Where the rest of the spray takes heat from the gas after it leaves the fire.
+
+    Downstream of the plume the gas has passed every head between the fuel and
+    where it now is; upstream, the backlayer has passed every head between the
+    fuel and the layer's current position. Each head acts only on the gas that
+    has reached it, so the ceiling above the fire keeps the plume's
+    temperature and the tunnel cools progressively away from it. Far
+    downstream the gas has met every head on its side and the plume's
+    cooling and the tunnel's add, through the same closure.
+
+    OUR ENGINEERING CHOICE, stated plainly: the backlayer's cooling is booked
+    against the backlayer only. The layer does eventually turn back into the
+    downstream flow, but it carries a share of the heat no correlation here
+    resolves, and crediting its spray to the whole downstream flow would be the
+    same overcount the plume stage just stopped making.
+    """
+    carried = 1.0 - chi_cool
+    if carried <= 0 or not sprays:
+        return CoolingProfile(plume.x1_m, plume.x0_m)
+    # The plume's closure, applied to all the potential the gas has met by x:
+    # it carries 1 / (1 + R_plume + e(x)) of the fire's convective heat, which
+    # is 1 / (1 + e(x) * (1 - chi)) of what it carried out of the plume. So the
+    # profile holds e(x) scaled by the share the plume let through.
+    down = [(s.lo_m, s.hi_m, s.ratio * carried) for s in sprays]
+    up = [(-s.hi_m, -s.lo_m, s.ratio * carried) for s in sprays]
+    down_x, down_r = _cumulative_beyond(plume.x1_m, down)
+    up_x, up_r = _cumulative_beyond(-plume.x0_m, up)
+    return CoolingProfile(downstream_edge_m=plume.x1_m, upstream_edge_m=plume.x0_m,
+                          downstream_x_m=down_x, downstream_ratio=down_r,
+                          upstream_x_m=up_x, upstream_ratio=up_r)
+
+
+def backlayer_heat_kw(q_conv_kw: float, mist: MistEffect) -> float:
     """Convective heat the smoke still carries once it has pushed upstream
     through the spray -- what drives backlayering under an operating system.
 
-    `chi_cool` cools the fire's plume. The backlayer then has to travel
-    UPSTREAM under the same zone's upstream half, and is cooled again there.
-    Treating the plume stage as the whole effect was the defect behind the
-    backlayering misses: on c5 it left 2.5 MW of buoyancy at 1.25 m/s and a
-    49 m layer, where Annex 2 section 6.2 reports "Although the fire reached ~
-    20 MW with an air velocity of only 1-1,5 m/s, no back layering was
-    observed". The published finding this follows is that the critical Froude
-    number still governs with water mist, but "only when the mist cools the
-    rising hot plume and backlayering flow can the critical velocity be
-    reduced" (Tunnelling and Underground Space Technology, 2021, "Estimation
-    of the effects of water mist system on the tunnel critical velocity due to
-    smoke cooling").
+    The plume stage, `chi_cool`, cools the fire's plume. The backlayer then has
+    to travel UPSTREAM under the heads upstream of the fire, and is cooled again
+    by exactly those heads (`CoolingProfile.upstream_end`). Treating the plume
+    stage as the whole effect was the defect behind the backlayering misses: on
+    c5 it left 2.5 MW of buoyancy at 1.25 m/s and a 49 m layer, where Annex 2
+    section 6.2 reports "Although the fire reached ~ 20 MW with an air velocity
+    of only 1-1,5 m/s, no back layering was observed". The published finding
+    this follows is that the critical Froude number still governs with water
+    mist, but "only when the mist cools the rising hot plume and backlayering
+    flow can the critical velocity be reduced" (Tunnelling and Underground
+    Space Technology, 2021, "Estimation of the effects of water mist system on
+    the tunnel critical velocity due to smoke cooling").
 
-    No new constant. `_cooling_fraction` returns chi = ratio / (1 + ratio), so
-    the spray's full evaporative capacity is ratio = chi / (1 - chi) times the
-    plume's heat; the plume stage used chi of it, and the upstream share of
-    what is left meets the backlayer's remaining heat through the same
-    first-order closure. OUR ENGINEERING CHOICE, stated plainly: the second
-    stage acts on the heat entering the correlation rather than on a resolved
-    temperature profile along the layer, because the Li, Lei & Ingason
-    backlayering correlation takes a heat release and gives a length, and has
-    no profile to cool.
+    This used to take half of the whole zone's spare evaporative capacity as
+    standing upstream, on the grounds that the engine centres the zone on the
+    fire. The heads are known, and so is how far the layer reaches over them,
+    so it now takes the ones the layer actually passes under.
+
+    OUR ENGINEERING CHOICE, stated plainly: the second stage acts on the heat
+    entering the correlation rather than on a resolved temperature profile
+    along the layer, because the Li, Lei & Ingason backlayering correlation
+    takes a heat release and gives a length, and has no profile to cool.
     """
-    q_gas = q_conv_kw * (1.0 - chi_cool)
-    if q_gas <= 0 or chi_cool <= 0:
-        return max(q_gas, 0.0)
-    ratio = chi_cool / (1.0 - chi_cool)
-    spare = ratio - chi_cool
-    upstream_ratio = UPSTREAM_SPRAY_SHARE * spare * q_conv_kw / q_gas
-    return q_gas / (1.0 + upstream_ratio)
+    q_gas = q_conv_kw * (1.0 - mist.chi_cool)
+    return max(q_gas, 0.0) * mist.cooling.upstream_end
 
 
 def _curtain_transmissivity(design: Design, geom: SectionGeometry,
@@ -778,11 +873,12 @@ def evaluate(design: Design, geom: SectionGeometry, positions: tuple[NozzlePosit
                                   burning_fraction(hrr_mw, hrr_free_mw))
 
     head_count = len(positions)
-    chi_cool = _cooling_fraction(design, geometries,
-                                 heads_in_hot_gas(positions, geom.crown_height_m, backlayer_m),
-                                 flow_fraction, q_conv_kw)
+    sprays = _head_sprays(design, geometries, positions, flow_fraction, q_conv_kw,
+                          geom.crown_height_m, backlayer_m)
+    chi_cool = _cooling_fraction(sprays, envelope.top)
     tau_mist = _curtain_transmissivity(design, geom, geometries, head_count,
                                        flow_fraction, u_eff_ms)
 
     return MistEffect(eta=eta, w_fuel_mm_min=w_fuel, f_cov=f_cov,
-                      chi_cool=chi_cool, tau_mist=tau_mist)
+                      chi_cool=chi_cool, tau_mist=tau_mist,
+                      cooling=_cooling_profile(sprays, envelope.top, chi_cool))
