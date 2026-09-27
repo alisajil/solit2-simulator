@@ -259,7 +259,13 @@ def _worst_station_value(trace: RunTrace, field: str, worst,
                  for step in trace.steps)
 
 
-def _step_interval_s(trace: RunTrace) -> float:
+def step_interval_s(trace: RunTrace) -> float:
+    """The real time between two consecutive steps of a uniformly-stepped trace.
+
+    Public: `score.compute`'s backlayering penalty counts persistent STEPS and
+    needs this to convert that count to real seconds rather than assuming
+    `sim.DT_S == 1.0`, which nothing enforces.
+    """
     if len(trace.steps) < 2:
         return DEFAULT_STEP_INTERVAL_S
     return trace.steps[1].t_s - trace.steps[0].t_s
@@ -280,7 +286,7 @@ def _target_ignited(trace: RunTrace) -> bool:
 
 def _structure_exposure_duration_s(trace: RunTrace) -> float:
     """Total time for which any length of ceiling was above the AHJ threshold."""
-    interval = _step_interval_s(trace)
+    interval = step_interval_s(trace)
     return sum(interval for s in trace.steps if s.structure_exposure_length_m > 0.0)
 
 

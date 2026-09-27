@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from solit2.engines.reduced.criteria import step_interval_s
 from solit2.schema.result import Criterion
 
 WEIGHTS = {"water": 0.30, "margin": 0.30, "cost": 0.20, "structural": 0.20}
@@ -85,9 +86,14 @@ def compute(criteria: dict[str, Criterion], hyd, cost, trace,
     if activated is not None:
         persistent = [s for s in trace.steps
                       if s.t_s >= activated and s.u_eff_ms < s.u_critical_ms]
-        if len(persistent) > BACKLAYERING_TOLERANCE_S:
+        # A COUNT of steps, not seconds: converted by the trace's own step interval
+        # rather than assumed to be 1.0, which nothing enforces (sim.DT_S could
+        # change and this would silently compare the wrong quantity -- see
+        # criteria.step_interval_s).
+        persistent_s = len(persistent) * step_interval_s(trace)
+        if persistent_s > BACKLAYERING_TOLERANCE_S:
             penalties.append(
-                f"airflow stays below the critical velocity for {len(persistent):.0f} s "
+                f"airflow stays below the critical velocity for {persistent_s:.0f} s "
                 f"after activation"
             )
             deductions += BACKLAYERING_PENALTY
