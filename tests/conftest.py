@@ -19,6 +19,8 @@ TEST_NOZZLE_FIELDS = {"d_k": 4.1, "d_pressure": 50.0, "d_smd": 100.0, "d_dv50": 
                       "d_dv90": 207.891648, "d_cone": 45.0, "d_launch": 20.0,
                       "d_mount_h": 5.0, "d_rows": 2, "d_pitch": 2.4, "d_tilt": 0.0}
 TEST_NOZZLE_OFFSETS = "-2.75, 2.75"
+# TEST VALUE, NOT DATA: the system's pump ramp, typed into the Design step.
+TEST_PUMP_RAMP_S = 30.0
 # The SOLIT2 protocol example: its template head sits at 5.0 m, inside the 5.2 m gallery.
 PROTOCOL_DESIGN = "examples/designs/solit2-test-protocol.json"
 # TEST VALUES, NOT DATA, typed into the Fire test step's Annex 7 fields: the
@@ -28,10 +30,11 @@ TEST_ANNEX7_WIDGETS = {"a7_class": "A", "a7_activation": 150.0, "a7_ambient": 20
 
 
 def fill_nozzle(at: AppTest) -> AppTest:
-    """Type the test head into the Design step, as a tester would."""
+    """Type the test head and its pump ramp into the Design step, as a tester would."""
     for key, value in TEST_NOZZLE_FIELDS.items():
         at.number_input(key=key).set_value(value)
     at.text_input(key="d_offsets").set_value(TEST_NOZZLE_OFFSETS)
+    at.number_input(key="d_pump_ramp").set_value(TEST_PUMP_RAMP_S)
     return at.run()
 TEST_PASSWORD = "a test password, long enough"
 

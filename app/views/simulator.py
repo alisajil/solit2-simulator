@@ -1,11 +1,18 @@
-"""The landing screen: move a design knob and watch the virtual fire test replay,
-every reading moving together. Tier 1 runs a whole test in about a second, so the
+"""The landing screen: the SOLIT2 Annex 7 test of the tester's own system, live.
+
+Move a knob of the system under test and watch its Annex 7 test replay, every
+reading moving together. Tier 1 runs a whole test in about a second, so the
 answer is on screen as soon as a slider is released.
 
 The sliders edit the SHARED current design (`state.get_design()`), the one the
 wizard's later steps read: the design is dumped, the changed fields are set, and
 it is rebuilt through `Design.from_dict`, so everything the sliders do not show
-survives unchanged. The test protocol's own values are shown, not edited.
+survives unchanged. What runs is that system's Annex 7 test
+(`solit2.reports.twin`) -- the gallery, the mock-up, both Annex 7 velocities,
+manual activation -- with the conditions Annex 7 leaves to the AHJ entered by
+the tester, exactly as on the Fire test step. Nothing is loaded for the tester:
+until they pick one of their own design files or build one, there is no system
+to test and the screen says so.
 """
 from __future__ import annotations
 
@@ -18,21 +25,18 @@ import streamlit as st
 from app import auth, plot_theme, state
 from app.components import cfd_live, live_figure, readings, run_states, twin_canvas
 from app.components.design_files import design_files
-from app.views.fire_test import ensure_trace
-from app.views.result import ensure_result
+from app.views.fire_test import ensure_trace, render_annex7_inputs
+from app.views.result import ensure_twin_result
 from solit2.engines.reduced.geometry import nozzle_positions, section_geometry
+from solit2.reports import twin
 from solit2.schema.design import Design
 
-PRESET_ROOTS = (Path("designs"), Path("examples/designs"))
-DEFAULT_PRESET = Path("examples/designs/solit2-test-protocol.json")
+# The tester's own design files only, as on the Design step. The shipped examples
+# carry illustrative nozzle values, and the landing screen must not run one as if
+# it were the system under test.
+PRESET_ROOTS = (Path("designs"),)
 _APPLIED_PRESET = "_sim_applied_preset"
 _SEEDED_FROM = "_sim_seeded_from"
-VELOCITY_KEY = "sim_velocity"
-VELOCITY_PATH = ("ventilation", "velocity_range_ms")
-# The velocity slider's own default span -- not a schema bound: `velocity_range_ms` carries
-# none of its own (only the scalar `velocity_ms` does). Widened in `_sidebar()` to hold
-# whatever range the current design actually declares.
-VELOCITY_RANGE_MS = (0.0, 8.0)
 CAPTION = (
     "Every reading is the Tier 1 engine's own output for this design: a prediction, not a "
     "measurement. Gauges show the worst of the Annex 7 Table 5 stations that carry each "
@@ -115,8 +119,6 @@ def _seed(design: Design) -> None:
     raw = design.model_dump(by_alias=True, mode="json")
     for slider in SLIDERS:
         st.session_state[slider.key] = _current(design, raw, slider)
-    lo, hi = _get(raw, VELOCITY_PATH)
-    st.session_state[VELOCITY_KEY] = (float(lo), float(hi))
     st.session_state[_SEEDED_FROM] = design
 
 
@@ -127,19 +129,19 @@ def _needs_seed(design: Design) -> bool:
     render that widget -- which is exactly what happens to every slider here while
     another view is showing. `_SEEDED_FROM` is a plain key (not a widget's), so it
     survives that deletion and still equals the unchanged design on return, which
-    would skip reseeding: the velocity range slider would then have no state and
-    return a single number, not a `(low, high)` pair, crashing the unpack in
-    `_sidebar` -- and had that not crashed, every OTHER slider would have silently
-    reinitialised at its own minimum, corrupting the shared design underneath it.
+    would skip reseeding: every slider would then silently reinitialise at its
+    own minimum, corrupting the shared design underneath it.
     """
     if st.session_state.get(_SEEDED_FROM) != design:
         return True
-    return any(slider.key not in st.session_state for slider in SLIDERS) or (
-        VELOCITY_KEY not in st.session_state)
+    return any(slider.key not in st.session_state for slider in SLIDERS)
 
 
 def _presets() -> None:
     files = preset_files()
+    if not files:
+        st.caption("No design files in designs/ yet.")
+        return
     labels = [p.stem for p in files]
     chosen = st.pills("Design file", labels, key="sim_preset", label_visibility="collapsed")
     if chosen is None:
@@ -160,22 +162,24 @@ def _presets() -> None:
         st.rerun()
 
 
-def _protocol(design: Design) -> None:
-    zones, det = design.zones, design.detection
-    manual = (f" · manual start {zones.manual_activation_s:.0f} s"
-              if zones.manual_activation_s is not None else "")
-    st.markdown('<div class="sim-label">Protocol (read-only)</div>', unsafe_allow_html=True)
-    st.caption(f"activation delay {zones.activation_delay_s:.0f} s · pump ramp "
-               f"{zones.pump_ramp_s:.0f} s · duration {zones.duration_min:.0f} min · "
-               f"detector {det.threshold_c:.0f} °C every {det.sensor_spacing_m:.0f} m{manual}")
+def annex7_conditions(test: Design, inputs: twin.Annex7Inputs) -> str:
+    """The Annex 7 test being run, each value an Annex 7 clause or the tester's own."""
+    velocities = " and ".join(f"{v:g}" for v in twin.ANNEX7_VELOCITIES_MS)
+    return (f"Class {inputs.fire_class} mock-up · manual activation {inputs.activation_s:g} s "
+            f"after ignition · run {test.zones.duration_min:g} min · {velocities} m/s · "
+            f"gallery {inputs.ambient_c:g} °C, {inputs.ambient_rh_pct:g} % RH · fire growth "
+            f"α {inputs.growth_alpha_kw_s2:g} kW/s² after {inputs.incubation_s:g} s · your "
+            f"system's pump ramp {test.zones.pump_ramp_s:g} s")
 
 
-def _sidebar(design: Design) -> dict[tuple, object]:
+def _sidebar(design: Design | None) -> dict[tuple, object]:
     """The knobs; returns the fields the sliders now set differently from the design."""
     changes: dict[tuple, object] = {}
     with st.sidebar:
-        st.markdown('<div class="sim-label">Presets</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sim-label">Your designs</div>', unsafe_allow_html=True)
         _presets()
+        if design is None:
+            return changes
         st.markdown('<div class="sim-label">Parameters</div>', unsafe_allow_html=True)
         st.caption("Drag a slider — the result updates when you let go.")
         raw = design.model_dump(by_alias=True, mode="json")
@@ -186,17 +190,7 @@ def _sidebar(design: Design) -> dict[tuple, object]:
                                step=slider.step, key=slider.key)
             if chosen != value_now:
                 changes[slider.path] = chosen
-        lo, hi = _get(raw, VELOCITY_PATH)
-        # Widened exactly as `_bounds()` widens each parameter slider above: the design's
-        # own range is not clipped by the slider's default span, or loading a design whose
-        # range already runs wider than (0.0, 8.0) would crash on the very first render.
-        v_low = min(VELOCITY_RANGE_MS[0], lo)
-        v_high = max(VELOCITY_RANGE_MS[1], hi)
-        v_lo, v_hi = st.slider("Ventilation velocity (m/s)", v_low, v_high, step=0.1,
-                               key=VELOCITY_KEY)
-        if (v_lo, v_hi) != (lo, hi):
-            changes[VELOCITY_PATH] = [float(v_lo), float(v_hi)]
-        _protocol(design)
+        # No velocity knob: Annex 7 5.2.7 / 5.3.6 test both 1.5 and 3.0 m/s.
         if st.button("Open the wizard →", key="sim_open_wizard", width="stretch"):
             state.set_view("wizard")
             state.set_step(2)
@@ -245,14 +239,26 @@ def _cfd_panel(design: Design) -> None:
         st.metric(label, value, help=help_text)
 
 
+def _no_system() -> None:
+    st.markdown('<div class="sim-head">◉ SOLIT² VIRTUAL FIRE TEST</div>',
+                unsafe_allow_html=True)
+    st.info("No system to test yet. This screen runs the SOLIT² Annex 7 test of YOUR "
+            "nozzle system, and nothing is loaded or assumed for you: pick one of your "
+            "design files in the sidebar, or enter the system on the Design step.")
+    if st.button("Enter the system on the Design step →", key="sim_open_design"):
+        state.set_view("wizard")
+        state.set_step(1)
+        st.rerun()
+
+
 def render() -> None:
     design = state.get_design()
-    if design is None:
-        design = Design.load(DEFAULT_PRESET)
-        state.set_design(design)
-    if _needs_seed(design):
+    if design is not None and _needs_seed(design):
         _seed(design)
     changes = _sidebar(design)
+    if design is None:
+        _no_system()
+        return
     if changes:
         try:
             candidate = edited(design, changes)
@@ -262,13 +268,24 @@ def render() -> None:
         else:
             state.set_design(candidate)
             st.rerun()
-    result = ensure_result(design, record=False)
-    trace = ensure_trace(design, result)
-    _header(design, result)
+    with st.expander("Annex 7 test conditions", expanded=state.get_annex7_inputs() is None):
+        inputs = render_annex7_inputs(heading=False)
+    if inputs is None:
+        return
+    pair = ensure_twin_result(design)
+    if pair is None:
+        return
+    test, result = pair
+    trace = ensure_trace(test, result)
+    _header(test, result)
+    with st.sidebar:
+        st.markdown('<div class="sim-label">Annex 7 test (read-only)</div>',
+                    unsafe_allow_html=True)
+        st.caption(annex7_conditions(test, inputs))
     main, side = st.columns([5, 1])
     with main:
-        fig = live_figure.figure(design, result, trace,
-                                 window_m=twin_canvas.core_window_m(design),
+        fig = live_figure.figure(test, result, trace,
+                                 window_m=twin_canvas.core_window_m(test),
                                  template=plot_theme.current())
         st.plotly_chart(fig, key="sim_figure", theme=None, config={"scrollZoom": False})
         notes = readings.judged_elsewhere(result)

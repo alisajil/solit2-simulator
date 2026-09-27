@@ -4,7 +4,7 @@ import pytest
 
 from app.views import design as design_view
 from solit2.engines.reduced import envelope
-from tests.conftest import TEST_NOZZLE_FIELDS, TEST_NOZZLE_OFFSETS, fill_nozzle
+from tests.conftest import TEST_NOZZLE_FIELDS, TEST_NOZZLE_OFFSETS, TEST_PUMP_RAMP_S, fill_nozzle
 
 
 def test_nozzle_block_lists_every_missing_field_and_builds_nothing():
@@ -28,8 +28,30 @@ def test_an_empty_nozzle_form_names_what_is_missing_and_cannot_be_built(run_view
     assert not at.exception
     for key in TEST_NOZZLE_FIELDS:
         assert at.number_input(key=key).value is None, key
+    assert at.number_input(key=design_view.PUMP_RAMP_KEY).value is None
     assert any("Nozzle data still needed" in w.value for w in at.warning)
     assert at.button(key="build_design").disabled
+
+
+def test_the_pump_ramp_is_asked_for_not_assumed(run_view):
+    """It sets when the spray reaches full pressure in every run, the Annex 7 test
+    included, and was once a hidden 30 s the tester never saw."""
+    at = fill_nozzle(run_view("design", seed_design=False))
+    at.number_input(key=design_view.PUMP_RAMP_KEY).set_value(None).run()
+    assert any(design_view.PUMP_RAMP_LABEL in w.value for w in at.warning)
+    assert at.button(key="build_design").disabled
+    nozzles, _ = design_view.nozzle_block({**TEST_NOZZLE_FIELDS, "d_offsets": TEST_NOZZLE_OFFSETS})
+    raw = design_view._assemble("twin_bore_11m", "hgv_150mw", "example", nozzles,
+                                30.0, 3, 3.88, 5.08, {}, None)
+    assert "pump_ramp_s" not in raw["zones"]
+
+
+def test_the_typed_pump_ramp_is_the_designs(run_view):
+    at = fill_nozzle(run_view("design", seed_design=False))
+    at.number_input(key=design_view.PUMP_RAMP_KEY).set_value(12.0).run()
+    at.button(key="build_design").click().run()
+    assert not at.exception
+    assert at.session_state["design"].zones.pump_ramp_s == 12.0
 
 
 def test_summary_card_shows_live_hydraulics_before_building(run_view):
@@ -113,7 +135,7 @@ def test_a_design_file_seeds_every_field_and_invents_no_limit(run_view, monkeypa
                                "launch_velocity_ms": 30.0}],
                     "mounting": {"rows": 3, "pitch_m": 1.5, "row_lateral_offsets_m": [-3.0, 0.0, 3.0],
                                  "height_above_carriageway_m": 5.5, "tilt_deg": 0.0}},
-        "zones": {"section_length_m": 42.0, "sections_simultaneous": 2},
+        "zones": {"section_length_m": 42.0, "sections_simultaneous": 2, "pump_ramp_s": 45.0},
         "ventilation": {"velocity_range_ms": [2.5, 4.0]},
         "ahj": {"tvs_design_fire_mw": 50.0, "max_air_temp_c": None,
                 "note": "Section 6 of the tender requires 150 MW reduced to <= 50 MW."}}))
@@ -131,6 +153,7 @@ def test_a_design_file_seeds_every_field_and_invents_no_limit(run_view, monkeypa
     assert at.text_input(key="d_offsets").value == "-3, 0, 3"
     assert at.number_input(key="d_section_len").value == 42.0
     assert at.number_input(key="d_sections").value == 2
+    assert at.number_input(key=design_view.PUMP_RAMP_KEY).value == 45.0
     assert at.number_input(key="d_v_lo").value == 2.5
     assert at.number_input(key="d_v_hi").value == 4.0
     assert at.selectbox(key="d_tunnel").value == "template"
@@ -145,6 +168,7 @@ def test_a_design_file_seeds_every_field_and_invents_no_limit(run_view, monkeypa
     assert design.ahj.tvs_design_fire_mw == 50.0 and design.ahj.max_air_temp_c is None
     assert design.nozzles.pressure_bar == 80.0
     assert design.zones.section_length_m == 42.0
+    assert design.zones.pump_ramp_s == 45.0
 
 
 def test_a_value_outside_the_form_range_is_clamped_not_crashed(run_view, monkeypatch, tmp_path):
@@ -203,6 +227,7 @@ def test_every_seeded_widget_is_written_so_none_can_go_stale(monkeypatch):
     expected = {key for key, *_rest in design_view.SEEDED_FIELDS}
     expected |= {key for _field, key, *_rest in design_view.AHJ_FIELDS}
     expected |= {key for key, *_rest in design_view.NOZZLE_FIELDS} | {design_view.OFFSETS_KEY}
+    expected |= {design_view.PUMP_RAMP_KEY}
     assert set(written) == expected
 
 
@@ -273,7 +298,8 @@ def test_a_design_loaded_from_a_file_is_not_quietly_rebuilt_from_presets():
         raw_source["zones"]["section_length_m"], raw_source["zones"]["sections_simultaneous"],
         raw_source["ventilation"]["velocity_range_ms"][0],
         raw_source["ventilation"]["velocity_range_ms"][1],
-        raw_source.get("ahj") or {}, raw_source)
+        raw_source.get("ahj") or {}, raw_source,
+        pump_ramp_s=raw_source["zones"]["pump_ramp_s"])
 
     from_form = Design.from_dict(built)
     form_mode = from_form.nozzles.modes[0]
@@ -296,7 +322,7 @@ def test_building_without_a_source_file_composes_the_tunnel_and_fire_from_preset
     from solit2.schema.design import Design
     nozzles, _ = design_view.nozzle_block({**TEST_NOZZLE_FIELDS, "d_offsets": TEST_NOZZLE_OFFSETS})
     raw = design_view._assemble("twin_bore_11m", "hgv_150mw", "example", nozzles,
-                                30.0, 3, 3.88, 5.08, {}, None)
+                                30.0, 3, 3.88, 5.08, {}, None, pump_ramp_s=TEST_PUMP_RAMP_S)
     built = Design.from_dict(raw)
     assert built.meta.name == "streamlit-design"
     assert built.nozzles.mounting.rows == 2 and built.nozzles.preset == "tester_input"

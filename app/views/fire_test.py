@@ -38,33 +38,56 @@ def _trace(design: Design, section: str, velocity_ms: float) -> RunTrace:
 def ensure_trace(design: Design, result: Result) -> RunTrace:
     """The step-by-step trace of the result's worst case (the envelope keeps only summaries).
 
-    Used by the Simulator and CFD steps, which study the project design itself.
+    `design` must be the one `result` was run on: the Simulator passes its Annex 7
+    test, the CFD step the project design.
     """
     return _trace(design, result.worst_case["section"], result.worst_case["velocity_ms"])
 
 
-# (label, widget key, min, max, step): what Annex 7 leaves to the AHJ or the test day.
+# (label, widget key, Annex7Inputs field, min, max, step): what Annex 7 leaves to the
+# AHJ or the test day.
 ANNEX7_FIELDS = (
     ("Activation after ignition (s) — AHJ trigger; A ≥ 60 s, B ≤ 120 s", "a7_activation",
-     0.0, 3600.0, 1.0),
-    ("Test-day ambient temperature (°C)", "a7_ambient", -30.0, 60.0, 0.5),
-    ("Test-day relative humidity (%)", "a7_rh", 0.0, 100.0, 1.0),
-    ("Mock-up fire growth α (kW/s²) — AHJ design fire", "a7_alpha", 0.001, 1.0, 0.001),
-    ("Incubation, ignition to growth (s) — AHJ design fire", "a7_incubation", 0.0, 1800.0, 1.0),
+     "activation_s", 0.0, 3600.0, 1.0),
+    ("Test-day ambient temperature (°C)", "a7_ambient", "ambient_c", -30.0, 60.0, 0.5),
+    ("Test-day relative humidity (%)", "a7_rh", "ambient_rh_pct", 0.0, 100.0, 1.0),
+    ("Mock-up fire growth α (kW/s²) — AHJ design fire", "a7_alpha", "growth_alpha_kw_s2",
+     0.001, 1.0, 0.001),
+    ("Incubation, ignition to growth (s) — AHJ design fire", "a7_incubation", "incubation_s",
+     0.0, 1800.0, 1.0),
 )
+ANNEX7_CLASS_KEY = "a7_class"
 ANNEX7_COLUMNS = 3
 FIRE_CLASSES = {"A": "Class A — 150 MW HGV mock-up, covered", "B": "Class B — diesel pools"}
 
 
-def _render_annex7_inputs() -> twin.Annex7Inputs | None:
+def _seed_annex7_widgets() -> None:
+    """Refill the fields from the inputs already entered, on this view or the other.
+
+    The Simulator and this step share the fields' keys, and Streamlit deletes a
+    widget's state on every run that does not render it, so without this the
+    inputs typed on one view would come back blank on the other. Only what the
+    tester entered is written back; nothing is filled in otherwise.
+    """
+    entered = state.get_annex7_inputs()
+    if entered is None:
+        return
+    st.session_state.setdefault(ANNEX7_CLASS_KEY, entered.fire_class)
+    for _label, key, field, *_bounds in ANNEX7_FIELDS:
+        st.session_state.setdefault(key, getattr(entered, field))
+
+
+def render_annex7_inputs(heading: bool = True) -> twin.Annex7Inputs | None:
     """The Annex 7 test conditions, as the tester enters them. None until all are set."""
-    st.subheader("Annex 7 test conditions")
+    _seed_annex7_widgets()
+    if heading:
+        st.subheader("Annex 7 test conditions")
     fire_class = st.radio("Fire", tuple(FIRE_CLASSES), format_func=FIRE_CLASSES.get,
-                          horizontal=True, key="a7_class")
+                          horizontal=True, key=ANNEX7_CLASS_KEY)
     values = {}
     columns = st.columns(ANNEX7_COLUMNS)
-    for i, (label, key, low, high, step) in enumerate(ANNEX7_FIELDS):
-        values[key] = columns[i % ANNEX7_COLUMNS].number_input(
+    for i, (label, key, field, low, high, step) in enumerate(ANNEX7_FIELDS):
+        values[field] = columns[i % ANNEX7_COLUMNS].number_input(
             label, min_value=low, max_value=high, step=step, value=None, key=key,
             placeholder="not set", format="%.4g")
     if any(v is None for v in values.values()):
@@ -72,8 +95,7 @@ def _render_annex7_inputs() -> twin.Annex7Inputs | None:
                 "the test-day ambient and the design-fire growth to the AHJ, so this "
                 "page does not choose them.")
         return None
-    inputs = twin.Annex7Inputs(fire_class, values["a7_activation"], values["a7_ambient"],
-                               values["a7_rh"], values["a7_alpha"], values["a7_incubation"])
+    inputs = twin.Annex7Inputs(fire_class, **values)
     state.set_annex7_inputs(inputs)
     return inputs
 
@@ -126,7 +148,7 @@ def render() -> None:
     if design is None:
         st.info("Build a design first.")
         return
-    if _render_annex7_inputs() is None:
+    if render_annex7_inputs() is None:
         return
     pair = ensure_twin_result(design)
     if pair is None:
