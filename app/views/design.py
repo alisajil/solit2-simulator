@@ -69,6 +69,7 @@ def render() -> None:
     _render_summary(raw)
     if missing:
         st.warning("Nozzle data still needed: " + ", ".join(missing))
+    save_design.render(raw, missing)
     if st.button("Build & continue →", key="build_design", type="primary",
                  disabled=bool(missing)):
         try:

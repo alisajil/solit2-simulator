@@ -5,7 +5,10 @@ signed-in account, and shows what they answer.
 """
 from __future__ import annotations
 
+import json
+import re
 import sqlite3
+from collections.abc import Callable
 from dataclasses import dataclass
 
 import streamlit as st
@@ -85,3 +88,58 @@ def set_seeded(row: DesignRow | None, version: int | None) -> None:
 
 def seeded() -> Seeded | None:
     return st.session_state.get(_SEEDED_KEY)
+
+
+DURABILITY_NOTE = ("Saved designs are kept on this server. On Streamlit Community Cloud a "
+                   "reboot erases them; download a copy to keep one.")
+
+
+def _file_name(name: str) -> str:
+    return (re.sub(r"[^A-Za-z0-9._-]+", "-", name).strip("-") or "design") + ".json"
+
+
+def _save(action: Callable[[], SavedVersion]) -> None:
+    try:
+        saved = action()
+    except designs.DesignError as exc:
+        st.error(str(exc))
+        return
+    except sqlite3.Error as exc:
+        st.error(f"The design store could not be written: {exc}")
+        return
+    st.session_state[_NOTICE_KEY] = f"Saved #{saved.design_id} v{saved.version} · sha {saved.sha}"
+    st.session_state[_PENDING_KEY] = (saved.design_id, saved.version)
+    st.rerun()
+
+
+def render(raw: dict, missing: list[str]) -> None:
+    """Save the design as it stands, as a new design or as the next version of the saved
+    design it was seeded from, and offer it as a download."""
+    who = requester()
+    if who is None:
+        return
+    st.subheader("Save this design")
+    notice = st.session_state.pop(_NOTICE_KEY, None)
+    if notice:
+        st.success(notice)
+    if NAME_KEY not in st.session_state:
+        st.session_state[NAME_KEY] = (raw.get("meta") or {}).get("name", "")
+    name = st.text_input("Name", key=NAME_KEY)
+    blocked = bool(missing)
+    if blocked:
+        st.caption("Saving needs the nozzle data above: " + ", ".join(missing))
+    db = designs_store.db_path()
+    source = seeded()
+    left, right = st.columns(2)
+    if source is not None and source.owner_id == who.user_id:
+        if left.button(f"Save as v{source.latest_version + 1} of #{source.design_id}",
+                       key="save_new_version", disabled=blocked):
+            _save(lambda: designs.save_version(db, who, source.design_id, name, raw))
+    if right.button("Save as new design", key="save_new_design", disabled=blocked):
+        _save(lambda: designs.save_new(db, who, name, raw))
+    if not blocked:
+        named = {**raw, "meta": {**(raw.get("meta") or {}), "name": name}}
+        st.download_button("Download JSON", data=json.dumps(named, indent=2),
+                           file_name=_file_name(name), mime="application/json",
+                           key="download_design")
+    st.caption(DURABILITY_NOTE)
