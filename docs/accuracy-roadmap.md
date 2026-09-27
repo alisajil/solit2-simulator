@@ -44,7 +44,11 @@ Annex 2 full-scale reference tests. The misses:
    together** (item 3, cooling location). The fit trades the ceiling
    temperatures away. With the evaporation fix alone and the constants
    unchanged, both ceilings passed (751 vs 830 °C, 553 vs 580 °C). The refit then
-   gave that back for heat release and backlayering.
+   gave that back for heat release and backlayering. Making cooling act where
+   the water is (draft branch `fix/cooling-location`) shows why. The
+   backlayering passes rest on water downstream of the fire being credited to
+   the plume. Without that credit, nothing in the model lets the spray hold
+   the smoke back.
 
 What changed on 2026-09-27: spray is credited with evaporation only where it
 meets hot gas (`mist.heads_in_hot_gas`; heads upstream of the smoke used to
@@ -201,6 +205,28 @@ Each is a real disagreement with a measured test, not a tolerance to widen.
       Do not settle it by picking whichever version lands nearer 830 °C. Settle
       it from a CFD (Tier 2) case or a test that measures temperature along the
       spray.
+
+      **Tried 2026-09-27 on branch `fix/cooling-location` (draft, not
+      merged).** Cooling there acts where each head's water meets the gas.
+      The water falling through the plume, over the fuel, sets `chi_cool`.
+      Heads downstream cool the gas after it passes them, and heads upstream
+      cool the backlayer (`state.CoolingProfile`). No new constant was added.
+      With the old constants, c4's ceiling came out at 850 °C against 830.
+      After the refit, 10 of 19 comparisons pass, down from 16. The refit
+      also takes c4's heat release to 19 MW against 30 and c5's to 10 MW
+      against 15.5, which is non-conservative. **The finding: the old
+      structure held back the backlayer only by crediting the plume with
+      water falling 25 m downstream.** That is physically impossible. With
+      it gone, the engine has no mechanism by which the spray stops
+      backlayering, and c4/c5 saw none. A probe backs this up. Scaling
+      `evaporation_k_ref` by 3, 10 or 30, or zeroing the fan throttling,
+      never brings c4's layer below 21 m. More evaporation makes the fire
+      larger, because less water reaches the fuel. The next structural item
+      is therefore the spray's effect on the backlayer: its momentum and drag
+      on the layer, and how the layer cools inside the spray. That needs a
+      Tier 2 case of c4 or data from the consortium, not a fitted barrier
+      term. The located cooling should land together with that, not before
+      it.
 - [ ] **Constants no comparison informs.** Stop listing
       `fire.pool_burning_rate_reduction` and `fire.pool_extinction_flux_mm_min`
       as fitted, or add a reference case that exercises them (a Class B test
