@@ -317,6 +317,36 @@ def _cmd_report_test_plan(args: argparse.Namespace) -> int:
     return _emit_report(test_plan.render(design, result), args.out)
 
 
+def _cmd_report_virtual_test(args: argparse.Namespace) -> int:
+    from solit2.compliance.spec import load_spec
+    from solit2.reports import virtual_test
+    try:
+        loaded = load_spec(args.spec)
+    except (ValidationError, ValueError, FileNotFoundError, KeyError) as exc:
+        return _fail(str(exc), getattr(exc, "field", "spec"),
+                     "correct the compliance spec and try again", EXIT_BAD_INPUT)
+    try:
+        results = {cls: envelope.run(d) for cls, d in loaded.tests.items()}
+    except (ArithmeticError, RuntimeError, ValueError, KeyError) as exc:
+        return _fail(str(exc), "engine",
+                     "the spec validated but a design could not be run", EXIT_ENGINE)
+    return _emit_html_report(virtual_test.render(loaded, results), args.out)
+
+
+def _emit_html_report(html_text: str, out: str | None) -> int:
+    if not out:
+        return _fail("an HTML report needs --out", "--out",
+                     "pass --out <path.html>; an HTML document is not printed to the terminal",
+                     EXIT_BAD_INPUT)
+    try:
+        Path(out).parent.mkdir(parents=True, exist_ok=True)
+        Path(out).write_text(html_text)
+    except OSError as exc:
+        return _fail(str(exc), "--out", "choose a writable output path", EXIT_BAD_INPUT)
+    print(f"wrote {out}")
+    return EXIT_OK
+
+
 def _cmd_report_compliance(args: argparse.Namespace) -> int:
     from solit2.compliance import check as compliance_check
     from solit2.reports import compliance as compliance_report
@@ -683,6 +713,12 @@ def build_parser() -> argparse.ArgumentParser:
     rcomp.add_argument("spec")
     rcomp.add_argument("--out")
     rcomp.set_defaults(func=_cmd_report_compliance)
+
+    rvt = report_sub.add_parser(
+        "virtual-test", help="predicted outcome of the SOLIT2 tests a compliance spec names")
+    rvt.add_argument("spec")
+    rvt.add_argument("--out")
+    rvt.set_defaults(func=_cmd_report_virtual_test)
 
     rc = report_sub.add_parser("correlation",
                                help="one design's criteria across two runs, side by side")
