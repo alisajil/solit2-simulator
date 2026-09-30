@@ -164,6 +164,10 @@ class StepRecord:
     # The spray does not change it; a step from a CFD run resolves the layer itself
     # and leaves this at 1.0.
     strat_factor: float = 1.0
+    # Visibility at the downstream edge of the spray zone, at the opacimeter height. Not
+    # an Annex 7 station (the standard puts none inside the zone), so it is reported and
+    # never judged. None for a step from a CFD run, which has no such probe.
+    zone_visibility_m: float | None = None
 
 
 @dataclass(frozen=True)
