@@ -286,6 +286,42 @@ def fuel_box(design: Design, geom: SectionGeometry, dx_m: float = DX_M) -> Box:
                         fp.base_height_m, fp.top_height_m, geom, dx_m)
 
 
+# The tarpaulin is 10.5 x 7.5 m over a 10.0 x 2.4 m mock-up (scope analysis,
+# Annex 2 §2), so it overhangs the fuel; the roof takes the same margin all round.
+COVER_OVERHANG_M = 0.25
+
+
+def cover_box(design: Design, geom: SectionGeometry, dx_m: float = DX_M) -> Box | None:
+    """The tarpaulin as a zero-thickness inert plate, one cell ABOVE the fuel top.
+
+    Zero thickness because that is what FDS offers for a thin sheet, and because
+    a one-cell slab does not fit: in the SOLIT2 test tunnel there is 1.0 m between
+    the fuel top and the ceiling, and the heads hang in it.
+
+    ponytail: a flat plate, no side skirts, and it never burns or melts. The real
+    PVC drapes the sides and gives way in a hot fire; this only stops water
+    falling straight onto the fuel, which is the effect Annex 7 5.2.2 cares
+    about. Skirts / burn-through if a comparison shows the sides matter.
+
+    The gap is not optional: FDS drops a burner face that borders another
+    solid, so a cover laid ON the fuel top would put the fire out.
+    """
+    if not design.fire.covered:
+        return None
+    fuel = fuel_box(design, geom, dx_m)
+    z = fuel.z1 + dx_m
+    ceiling = min(ceiling_z_at(geom, y, dx_m) for y in (fuel.y0, fuel.y1))
+    if z >= ceiling:
+        raise ValueError(
+            f"the tarpaulin cover does not fit: it would sit at {z:.2f} m but the "
+            f"ceiling over the mock-up is at {ceiling:.2f} m")
+    fp = design.fire.footprint
+    plate = _snapped_box(FIRE_X_M - fp.length_m / 2.0 - COVER_OVERHANG_M,
+                         FIRE_X_M + fp.length_m / 2.0 + COVER_OVERHANG_M,
+                         fuel.y_centre_m, fp.width_m + 2.0 * COVER_OVERHANG_M, z, z, geom, dx_m)
+    return Box(plate.x0, plate.x1, plate.y0, plate.y1, z, z)
+
+
 def target_box(design: Design, geom: SectionGeometry, dx_m: float = DX_M) -> Box:
     """The fire target, `target_distance_m` behind the mock-up's downstream end.
 
@@ -655,6 +691,11 @@ def _target(design: Design, geom: SectionGeometry, dx_m: float) -> list[str]:
     ]
 
 
+def _cover(design: Design, geom: SectionGeometry, dx_m: float) -> list[str]:
+    roof = cover_box(design, geom, dx_m)
+    return [] if roof is None else [f"&OBST XB={roof.xb()}, SURF_ID='INERT' /", ""]
+
+
 @lru_cache(maxsize=None)
 def _dv50_over_d32(gamma_d: float) -> float:
     """Volume-median over Sauter-mean diameter for FDS's default drop distribution.
@@ -934,7 +975,8 @@ def _stations(design: Design, geom: SectionGeometry, dx_m: float) -> list[str]:
                                                  thermocouple_heights_m)
     lines = []
     fuel, target = fuel_box(design, geom, dx_m), target_box(design, geom, dx_m)
-    solids = (fuel, target)
+    roof = cover_box(design, geom, dx_m)
+    solids = (fuel, target) + (() if roof is None else (roof,))
     load_y_m = fuel.y_centre_m
     for name, x_m in sorted(STATIONS.items(), key=lambda kv: kv[1]):
         if not (WINDOW_M[0] <= x_m <= WINDOW_M[1]):
@@ -1119,7 +1161,7 @@ def generate(design: Design, dx_m: float = DX_M,
     blocks = (_head(design, suppression) + _time(design, t_end_s, restart) + _meshes(geom, dx_m)
               + _tunnel(geom, dx_m) + _portals(design)
               + _fire(design, geom, dx_m, horizon_s, e_coefficient)
-              + _target(design, geom, dx_m)
+              + _cover(design, geom, dx_m) + _target(design, geom, dx_m)
               + (_nozzles(design, geom) if suppression else [])
               + _detection(design, geom, dx_m)
               + _stations(design, geom, dx_m) + _output(design, geom, dx_m, suppression)
