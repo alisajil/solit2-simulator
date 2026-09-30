@@ -58,7 +58,7 @@ def ensure_result(design: Design, record: bool = True) -> Result:
 def _verdict(result: Result) -> None:
     failed, unset = result.score["gates_failed"], result.score["criteria_unset"]
     label, cls = ("FAIL", "fail") if failed else ("PASS", "pass")
-    note = (f"{len(unset)} criteria not judged — no AHJ limit set" if unset
+    note = (f"{len(unset)} criteria not judged — no PMC / Authority's Engineer limit set" if unset
             else "every criterion judged")
     st.markdown(
         f'<div class="verdict {cls}"><span class="verdict-label">{label}</span>'
@@ -134,7 +134,7 @@ def ensure_twin_result(design: Design) -> tuple[Design, Result] | None:
     inputs = state.get_annex7_inputs()
     if inputs is None:
         st.info("Enter the Annex 7 test inputs on the Fire test step first: SOLIT2 leaves "
-                "the activation time, test-day ambient and design-fire growth to the AHJ.")
+                "the activation time, test-day ambient and design-fire growth to the PMC / Authority's Engineer.")
         return None
     try:
         twin_design = twin.test_facility_twin(design, inputs)

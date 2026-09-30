@@ -35,7 +35,7 @@ def render() -> None:
     st.subheader("Fire test protocol")
     st.caption("Built to Annex 7 §8.2's minimum contents for a fire test protocol, "
                "with the main document §3.6.2 and Annex 3 §3.3 requirements folded in. "
-               "Annex 7 §8.2 requires the authority having jurisdiction to approve it "
+               "Annex 7 §8.2 requires the PMC / Authority's Engineer to approve it "
                "before testing.")
     plan_md = test_plan.render(design, result)
     st.markdown(plan_md)

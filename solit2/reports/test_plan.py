@@ -116,8 +116,8 @@ def _risk_basis() -> list[str]:
         "Annex 7 §3.1 does not let a test choose its own fire: \"Fire testing should be "
         "based on the results of risk analysis for every tunnel. The risk analysis "
         "defines the vehicle types and related design fire sizes that shall be "
-        "considered for the tunnel.\" The same clause gives the authority having "
-        "jurisdiction two separate approvals to make — the **suitability of the design "
+        "considered for the tunnel.\" The same clause gives the PMC / Authority's Engineer "
+        "two separate approvals to make — the **suitability of the design "
         "fire scenarios**, and **what the minimum acceptance criteria are**.",
         "",
         "**Nothing below can be settled by this document.** The design fire, the "
@@ -177,7 +177,7 @@ def _tunnel(design: Design) -> list[str]:
         f"Section `{t.section}` ({t.shape}), preset `{t.preset}`, {t.tubes} bore(s).",
         "",
         "Annex 7 §3.6 sets geometric minimums for a test tunnel and allows the "
-        "authority having jurisdiction to accept different values where the test or "
+        "PMC / Authority's Engineer to accept different values where the test or "
         "the real tunnel is smaller.",
         "",
         *_table(["Property", "This tunnel", "Annex 7 §3.6 minimum", "Conformance"], rows),
@@ -185,7 +185,7 @@ def _tunnel(design: Design) -> list[str]:
         "",
         "Annex 7 §3.6 and main document §3.6.2 both set minimum test-tunnel dimensions "
         "and they disagree. Both are minimums, so a test tunnel has to clear the higher "
-        "of each pair. Annex 7 lets the authority accept smaller values; §3.6.2 does "
+        "of each pair. Annex 7 lets the PMC / Authority's Engineer accept smaller values; §3.6.2 does "
         "not say so, which is a reason to raise any shortfall with them explicitly "
         "rather than assume the weaker figure governs.",
         "",
@@ -407,7 +407,7 @@ def _activation(design: Design) -> list[str]:
         "in Annex 7 v2.1 as published. §6.5 makes the intent clear, stating that the "
         "heat release rate \"is used as the triggering point for activation of FFFS\" "
         f"and that its measurement delay should not exceed {HRR_MAX_DELAY_S:.0f} s. "
-        "The HRR value itself is not printed anywhere in the clause. **The authority "
+        "The HRR value itself is not printed anywhere in the clause. **The PMC / Authority's Engineer "
         "having jurisdiction must set the option B trigger, in MW, before the protocol "
         "is approved.** It is not inferred here.",
         "",
@@ -437,7 +437,7 @@ def _programme(design: Design) -> list[str]:
         "",
         f"This design declares a Class {f.fire_class} fire. **Annex 7 requires both "
         f"classes**: tests 1–4 are the minimum set, and a Class A result does not "
-        f"discharge the Class B requirement. If the authority having jurisdiction has "
+        f"discharge the Class B requirement. If the PMC / Authority's Engineer has "
         f"waived either class on the basis of the tunnel's risk analysis, record that "
         f"waiver in section 1 as a variation.",
         "",
@@ -507,7 +507,7 @@ def _instrumentation() -> list[str]:
         "",
         "### Longitudinal schedule (§6.4.10, Table 5)",
         "",
-        "Annex 7 calls this a **minimum**. The authority having jurisdiction may add "
+        "Annex 7 calls this a **minimum**. The PMC / Authority's Engineer may add "
         "to it, or reduce it, particularly where the protected tunnel carries a "
         "special risk.",
         "",
@@ -582,7 +582,7 @@ def _calibration_and_hrr() -> list[str]:
         "The oxygen-consumption method shall be **documented in detail** in the "
         "protocol and the report, its accuracy demonstrated by Class B reference tests "
         "with and without the system running, and **the method itself approved by the "
-        "authority having jurisdiction**.",
+        "PMC / Authority's Engineer**.",
         "",
     ]
 
@@ -620,7 +620,7 @@ def _acceptance(result: Result) -> list[str]:
         "### The one absolute rule",
         "",
         "§7.2.1 states a pass/fail condition that carries no adjustable limit and is "
-        "not the authority's to relax: **the fire target shall not ignite.** \"FFFS "
+        "not the PMC / Authority's Engineer's to relax: **the fire target shall not ignite.** \"FFFS "
         "has failed if fire spread has spread to the target 5 m downstream behind the "
         "mock-up (D10).\" The target is examined after extinguishment for damage "
         "indicating ignition of the target material.",
@@ -628,7 +628,7 @@ def _acceptance(result: Result) -> list[str]:
         "### Timing of the criteria (§7.4)",
         "",
         "A system needs time after its trigger before pumps run and pressure reaches "
-        "the design level, so measured conditions lag activation. **The authority "
+        "the design level, so measured conditions lag activation. **The PMC / Authority's Engineer "
         "having jurisdiction shall state the time limit by which each acceptance "
         "criterion must be satisfied.** Without it, a criterion has no meaning: any "
         "system passes eventually, and any system fails at t=0.",
@@ -642,8 +642,8 @@ def _acceptance(result: Result) -> list[str]:
         lines += [
             f"**{len(unset)} of {len(result.criteria)} criteria carry no limit.** They "
             f"are reported as `unset` and excluded from the margin score rather than "
-            f"counted as passes. Each must be given a value by the authority having "
-            f"jurisdiction before this protocol is approved.",
+            f"counted as passes. Each must be given a value by the PMC / Authority's Engineer "
+            f"before this protocol is approved.",
             "",
         ]
     return lines
@@ -689,24 +689,24 @@ def _reporting() -> list[str]:
         "## 14. Reporting (§8)",
         "",
         "Two documents cover the tests. **This protocol**, which must be approved by "
-        "the authority having jurisdiction well before testing, and the **fire test "
-        "report** afterwards. §8.4 gives the authority a role at all three stages: "
+        "the PMC / Authority's Engineer well before testing, and the **fire test "
+        "report** afterwards. §8.4 gives the PMC / Authority's Engineer a role at all three stages: "
         "approving the protocol, witnessing the tests, and approving the report.",
         "",
         "The report shall carry, at minimum:",
         "",
         "- Tested design parameters in detail — layout, design nozzle pressure, design "
         "nozzle flow rate (§8.3.1).",
-        "- **One sample nozzle**, delivered with the report for the authority's records "
+        "- **One sample nozzle**, delivered with the report for the PMC / Authority's Engineer's records "
         "(§8.3.1).",
         "- A summary of all measurements; data files may be supplied electronically by "
         "agreement (§8.3.2).",
         "- Every acceptance criterion, whether it passed, and a reference to the "
         "measurement that decides it (§8.3.3).",
-        "- Other recordings, their content agreed with the authority (§8.3.4).",
+        "- Other recordings, their content agreed with the PMC / Authority's Engineer (§8.3.4).",
         "- Empirical observations, for example firefighters' experience of conditions "
         "and of the difficulty of manual firefighting (§8.3.5, §6.4.9).",
-        "- **Copies of the original log files**, signed by the authority's witness "
+        "- **Copies of the original log files**, signed by the PMC / Authority's Engineer's witness "
         "(§8.3.6).",
         "",
         "## 15. Safety during testing (§3.8)",
@@ -730,7 +730,7 @@ def render(design: Design, result: Result) -> str:
         "SOLIT² Engineering Guidance Annex 7 v2.1.",
         "",
         "> **Status: draft for approval.** Annex 7 §8.2 requires this protocol to be "
-        "approved by the authority having jurisdiction well before testing begins. "
+        "approved by the PMC / Authority's Engineer well before testing begins. "
         "Sections marked as open items must be settled first.",
         "",
         *_standards(),

@@ -10,6 +10,11 @@ The names are the standard's own quantities, not any project's or product's word
 """
 from __future__ import annotations
 
+# Who sets a design's acceptance limits and test-day conditions, worded the way an
+# Indian tunnel project names them. Annex 7 says "authorities having jurisdiction";
+# the `ahj` block in a design file keeps its name, so saved designs still load.
+AUTHORITY = "PMC / Authority's Engineer"
+
 # id -> (name a fire engineer would use, unit, decimal places)
 LABELS: dict[str, tuple[str, str, int]] = {
     # SOLIT2 Annex 7 section 7 acceptance criteria

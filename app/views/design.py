@@ -423,7 +423,7 @@ def _render_ahj_inputs(raw: dict) -> dict:
     """
     st.subheader("Acceptance limits")
     st.caption("From the project's own authority — the tender, the fire strategy or the "
-               "AHJ's risk analysis. Leave a field empty and that criterion is reported "
+               "PMC / Authority's Engineer's risk analysis. Leave a field empty and that criterion is reported "
                "as not judged; it is never treated as passed.")
     prefill, note = _limits_from(raw)
     values: dict[str, float] = {}

@@ -47,13 +47,13 @@ def ensure_trace(design: Design, result: Result) -> RunTrace:
 # (label, widget key, Annex7Inputs field, min, max, step): what Annex 7 leaves to the
 # AHJ or the test day.
 ANNEX7_FIELDS = (
-    ("Activation after ignition (s) — AHJ trigger; A ≥ 60 s, B ≤ 120 s", "a7_activation",
+    ("Activation after ignition (s) — PMC / Authority's Engineer trigger; A ≥ 60 s, B ≤ 120 s", "a7_activation",
      "activation_s", 0.0, 3600.0, 1.0),
     ("Test-day ambient temperature (°C)", "a7_ambient", "ambient_c", -30.0, 60.0, 0.5),
     ("Test-day relative humidity (%)", "a7_rh", "ambient_rh_pct", 0.0, 100.0, 1.0),
-    ("Mock-up fire growth α (kW/s²) — AHJ design fire", "a7_alpha", "growth_alpha_kw_s2",
+    ("Mock-up fire growth α (kW/s²) — PMC / Authority's Engineer design fire", "a7_alpha", "growth_alpha_kw_s2",
      0.001, 1.0, 0.001),
-    ("Incubation, ignition to growth (s) — AHJ design fire", "a7_incubation", "incubation_s",
+    ("Incubation, ignition to growth (s) — PMC / Authority's Engineer design fire", "a7_incubation", "incubation_s",
      0.0, 1800.0, 1.0),
 )
 ANNEX7_CLASS_KEY = "a7_class"
@@ -92,7 +92,7 @@ def render_annex7_inputs(heading: bool = True) -> twin.Annex7Inputs | None:
             placeholder="not set", format="%.4g")
     if any(v is None for v in values.values()):
         st.info("Enter the Annex 7 test inputs above. SOLIT2 leaves the activation time, "
-                "the test-day ambient and the design-fire growth to the AHJ, so this "
+                "the test-day ambient and the design-fire growth to the PMC / Authority's Engineer, so this "
                 "page does not choose them.")
         return None
     inputs = twin.Annex7Inputs(fire_class, **values)
