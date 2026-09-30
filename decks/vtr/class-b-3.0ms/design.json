@@ -1,0 +1,138 @@
+{
+  "meta": {
+    "name": "solit2-test-protocol-class-b",
+    "notes": "Annex 7 Table 4 (section 5.4, p.14) rows 3 and 4, both mandatory: the Class B liquid fire at minimum 50 MW, at 1.5 m/s and at 3.0 m/s. Section 5.3.1 sets that minimum -- 'The minimum size should be 50MW representing very serious scenario having diesel spread over a large surface' -- and the `pool_60mw` preset's seven 4.0 m2 pools produce 60.1 MW free burning, above it. Section 5.3.6 mandates BOTH 1.5 and 3.0 m/s, measured 20 m upstream of the fuel for Class B (45 m for Class A, section 5.2.7), so both are carried in `ventilation.velocity_range_ms` and the envelope runs the pair. Section 5.3.7 governs activation and duration for Class B, and differs from Class A: 'Triggering of FFFS shall happen within 2 minutes after ignition', which is why activation is pinned manually at 100 s rather than left to detection plus a delay; and 'System shall discharge continuously until the fire is extinguished or the fuel is consumed completely', with no 30-minute floor -- that floor is section 5.2.8 and is Class A only. Section 5.3.4 puts at least 7 minutes of unsuppressed burning time in the pools, so duration_min 30 covers the fuel comfortably. Section 5.3.7 also requires the activation area to be at least 3x the mock-up length: 3 x 11.2 = 33.6 m minimum against the 3 x 20 = 60 m here. Replace the `nozzles` and `hydraulics` blocks with the system actually under test; everything else is the standard's own test condition."
+  },
+  "tunnel": {
+    "preset": "solit2_test",
+    "note": "The SOLIT2 test gallery AS TESTED. This is the standard, not a project. Annex 2 section 2 'Test Tunnel' (p.5) states the geometry outright: 'The tunnel has a length of 600 m with a slope of 1%. The width of the original tunnel is 9,5 m with a height of 8,20 m. To perform fire tests with semi-transversal ventilation and to protect the tunnel, some modifications were made prior to the test program. Over a length of 450 m a suspended ceiling with a height of 5,20 m was installed. Furthermore, in the surrounding of the fire area, additional walls were installed to provide a tunnel with of 7,50 m.' THIS IS A MODIFIED SECTION, NOT A NATURAL BORE: the 5.20 m height is a SUSPENDED CEILING over 450 m of a tunnel that is 8.20 m high underneath it, and the 7.50 m width comes from WALLS ADDED around the fire area inside a bore that is 9.5 m wide. The as-tested cross-section is therefore 7.50 x 5.20 m, 39.0 m2, which is what the c4/c5/c6 reference cases were measured in. This preset previously carried 9.5 m x 5.17 m / 48 m2: the 9.5 m was the ORIGINAL unmodified width and the 5.17 m matched nothing in Annex 2. clearance_m 4.5 is NOT stated anywhere in Annex 2 and is unverified against the source. Also from the same Annex 2 section, and not representable in this schema: the tunnel has 6 jet fans giving a maximum longitudinal air velocity of 6.5 m/s, and its semi-transversal system 'is designed to deal with free burning fires of approx. 30 MW'. Annex 7 5.2.6 puts the fire target 5 m downstream of the mock-up, of the same width, height and combustibility. Annex 7 5.2.7 mandates that BOTH 1.5 m/s and 3.0 m/s longitudinal velocity be tested, measured 45 m upstream of the fire -- a velocity range is a property of the TEST, not of the tunnel, so it is not carried here: see the designs under examples/designs/, which set ventilation.velocity_range_ms to [1.5, 3.0] so the envelope actually runs both. These are TEST conditions, not site conditions; Annex 7 3.3 governs transferring results between them.",
+    "tube": "LHS",
+    "section": "test",
+    "shape": "box",
+    "internal_diameter_m": null,
+    "deck_below_centre_m": null,
+    "width_m": 7.5,
+    "height_m": 5.2,
+    "area_m2": 39.0,
+    "clearance_m": 4.5,
+    "length_m": 600.0,
+    "tubes": 1,
+    "gradient_pct": 1.0,
+    "ambient_temp_c": 20.0,
+    "ambient_rh_pct": 60.0
+  },
+  "fire": {
+    "preset": "pool_60mw",
+    "note": "The Annex 7 Class B diesel pool mock-up. Section 5.3.1 sets the minimum size at 50 MW; section 5.3.2 the geometry: 'Width: minimum 2,5 m / Length: minimum 6,5 m', the pool 'placed on the road level so that the maximum height of the pool is 0,5m above it', and 'The minimum size for one pool is 4 m2'. The seven 4.0 m2 pools are laid across the tunnel rather than along it -- each 1.6 m of chainage by 2.5 m of width -- so the mock-up is 11.2 x 2.5 m and clears the 2.5 m width minimum. Per-pool area, total wetted area (28 m2) and therefore the design HRR are unchanged by that re-orientation; only the aspect ratio moves. lane_centre_offset_from_wall_m follows section 5.3.3, whose wording is identical to 5.2.3 and whose Figure 13 measures 'max 1.5m' from the near face of the mock-up to the tunnel wall: 2.5 - 2.5/2 = 1.25 m of wall clearance.",
+    "class": "B",
+    "design_hrr_mw": 60.0,
+    "growth": "fast",
+    "alpha_kw_s2": null,
+    "incubation_s": 0.0,
+    "pallets": null,
+    "energy_mj_per_pallet": 343.0,
+    "covered": false,
+    "pools": {
+      "count": 7,
+      "length_m": 1.6,
+      "width_m": 2.5,
+      "fuel": "diesel"
+    },
+    "footprint": {
+      "length_m": 11.2,
+      "width_m": 2.5,
+      "top_height_m": 0.4,
+      "base_height_m": 0.0,
+      "provenance": null
+    },
+    "lane_centre_offset_from_wall_m": 2.5,
+    "target_distance_m": 5.0
+  },
+  "nozzles": {
+    "preset": "template",
+    "note": "PLACEHOLDER, NOT DATA. A single-mode head with a K-factor of 1.0 at a 100 bar reference pressure and a round 100 um drop size: round numbers chosen so no result computed from them can be mistaken for an assessment. This is not any manufacturer's nozzle and no such head exists. Replace with measured performance data -- K-factor, drop spectrum, spray geometry and mounting -- before any result means anything. Dv50/Dv90 are illustrative, chosen to reproduce a Rosin-Rammler n of 2.5; replace with measured values.",
+    "k_factor_lpm_bar05": 1.0,
+    "pressure_bar": 100.0,
+    "smd_table": {},
+    "modes": [
+      {
+        "id": "fine",
+        "fraction": 1.0,
+        "smd_um": 100.0,
+        "cone_half_angle_deg": 45.0,
+        "launch_velocity_ms": 20.0,
+        "dv50_um": 128.61184,
+        "dv90_um": 207.891648
+      }
+    ],
+    "mounting": {
+      "type": "ceiling_rows",
+      "rows": 2,
+      "row_lateral_offsets_m": [
+        -2.0,
+        2.0
+      ],
+      "height_above_carriageway_m": 5.0,
+      "pitch_m": 3.0,
+      "tilt_deg": 0.0
+    }
+  },
+  "zones": {
+    "section_length_m": 20.0,
+    "heads_per_zone": null,
+    "sections_simultaneous": 3,
+    "activation_delay_s": 0.0,
+    "pump_ramp_s": 30.0,
+    "duration_min": 30.0,
+    "manual_activation_s": 100.0
+  },
+  "ventilation": {
+    "mode": "longitudinal",
+    "velocity_ms": 3.0,
+    "velocity_range_ms": [
+      3.0,
+      3.0
+    ]
+  },
+  "detection": {
+    "type": "linear_heat",
+    "threshold_c": 60.0,
+    "sensor_spacing_m": 12.0
+  },
+  "hydraulics": {
+    "preset": "template",
+    "note": "PLACEHOLDER, NOT DATA. Generic pipe sizes, roughness and pump/motor efficiencies carrying no project constraints, here so the tool runs out of the box. Replace with the real pipework and pump plant. Any limit on pump power, water volume or discharge density is a constraint of your project and belongs in the design's `constraints` block, never in a preset.",
+    "main_dn_mm": 150.0,
+    "zone_header_dn_mm": 65.0,
+    "row_pipe_dn_mm": 40.0,
+    "roughness_mm": 0.045,
+    "pump_unit_m3h": 60.0,
+    "pump_efficiency": 0.7,
+    "motor_efficiency": 0.95,
+    "loop_factor": 0.5,
+    "static_head_bar": 1.0,
+    "fittings_loss_bar": 1.0,
+    "safety_factor": 1.1
+  },
+  "ahj": {
+    "note": "",
+    "tvs_design_fire_mw": null,
+    "max_air_temp_c": null,
+    "max_heat_flux_kwm2": null,
+    "min_visibility_m": null,
+    "max_fed": null,
+    "max_co_ppm": null,
+    "structure_temp_threshold_c": 500.0,
+    "max_structure_exposure_length_m": null,
+    "max_structure_exposure_duration_s": null
+  },
+  "constraints": {
+    "note": "",
+    "max_pump_power_kw": null,
+    "max_application_density_mm_min": null,
+    "max_water_volume_m3": null,
+    "max_nozzle_pressure_bar": null,
+    "min_nozzle_pressure_bar": null
+  },
+  "criteria": {}
+}
