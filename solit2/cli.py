@@ -375,6 +375,27 @@ def _emit_html_report(html_text: str, out: str | None) -> int:
     return EXIT_OK
 
 
+def _cmd_report_activation_timing(args: argparse.Namespace) -> int:
+    from solit2.reports import activation_timing
+    try:
+        design = Design.load(args.design)
+    except (ValidationError, ValueError, FileNotFoundError, KeyError) as exc:
+        return _fail(str(exc), getattr(exc, "field", "design"),
+                     "correct the design JSON and try again", EXIT_BAD_INPUT)
+    try:
+        designs = activation_timing.strategies(design, args.late_s)
+    except ValueError as exc:
+        return _fail(str(exc), "--late-s",
+                     "give a time inside the run, in seconds from ignition", EXIT_BAD_INPUT)
+    try:
+        results = {name: envelope.run(d) for name, d in designs.items()}
+    except (ArithmeticError, RuntimeError, ValueError, KeyError) as exc:
+        return _fail(str(exc), "engine",
+                     "the design validated but the engine could not finish the run",
+                     EXIT_ENGINE)
+    return _emit_report(activation_timing.render(args.late_s, designs, results), args.out)
+
+
 def _cmd_report_compliance(args: argparse.Namespace) -> int:
     from solit2.compliance import check as compliance_check
     from solit2.reports import compliance as compliance_report
@@ -735,6 +756,17 @@ def build_parser() -> argparse.ArgumentParser:
     rtp.add_argument("design")
     rtp.add_argument("--out")
     rtp.set_defaults(func=_cmd_report_test_plan)
+
+    rat = report_sub.add_parser(
+        "activation-timing",
+        help="one design started as declared and started at a time you supply, side by side")
+    rat.add_argument("design")
+    rat.add_argument("--late-s", type=float, required=True,
+                     help="clock time, seconds from ignition, of the late activation. Set by "
+                          "the fire strategy or the PMC / Authority's Engineer (for example "
+                          "when a response crew can be on site); the tool does not choose it")
+    rat.add_argument("--out")
+    rat.set_defaults(func=_cmd_report_activation_timing)
 
     rcomp = report_sub.add_parser("compliance",
                                   help="clause-by-clause SOLIT2 compliance of a planned test")

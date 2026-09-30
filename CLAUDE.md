@@ -81,6 +81,7 @@ design's `meta.notes` — the next reader needs to know why, not just what.
 | `target_ignited` is true | More sections simultaneous, so the bracketing covers the target | Raising pressure; the target ignites on radiation, not on flow |
 | `power_kw` near the declared cap | Drop `nozzles.pressure_bar` inside its band — flow scales as √P, power as Q·ΔP | Removing heads, which opens coverage gaps |
 | `density_mm_min` above a declared limit | Fewer heads per zone, or a longer section | Nothing — this one is a real trade against coverage |
+| A visibility or tenability criterion fails in the flooded zone | Run `uv run solit2 report activation-timing designs/<candidate>.json --late-s <s>`, with the late time from the fire strategy or the AHJ, before changing the layout | More heads: that changes the flooded zone's density, not when it floods |
 | `cost` component low | Longer `section_length_m` (fewer zones, fewer valves) | Cheaper pipe; the model prices quantities, not procurement |
 
 **This project's nozzle is single-mode.** Advice that turns a coarse/ballistic fraction does
