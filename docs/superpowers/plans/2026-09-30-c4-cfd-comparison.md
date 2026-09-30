@@ -17,10 +17,10 @@ measurement? It is **not** evidence about the Mistelix head (see §5).
 | | mist | free-burn |
 |---|---|---|
 | CHID | `6f4c7007aaec` | `6f4c7007aaec_free` |
-| Mesh | 10 × `IJK=100,17,13`, dx 0.6 m, x ∈ [−360, 240] m (≈221 k cells) | same |
+| Mesh | 10 meshes, dx 0.5 m (1.0 m in the far field), x ∈ [−360, 240] m (≈135 k cells) | same |
 | `T_END` | 2520 s (42 min, `zones.duration_min`) | same |
 | Ambient | 20 °C | same |
-| Fire | `hgv_150mw` + inert cover plate at z 4.8 m, 16 segment ramps from the free-burn curve, incubation 243 s, `E_COEFFICIENT=0.4` | same, no water |
+| Fire | `hgv_150mw` + inert cover plate at z 4.5 m, 16 segment ramps from the free-burn curve, incubation 243 s, `E_COEFFICIENT=0.4` | same, no water |
 | Activation | `DEVC 'MANUAL' QUANTITY='TIME' SETPOINT=420.0` → `CTRL 'ACT'`; pump ramp 30 s | same controls, no heads |
 | Nozzle | reference-nozzle **placeholder**: 61 heads, 25.31 L/min, D32 90 µm, 70 m/s, 45° cone | — |
 | Stations | U15 (TC + HF), D15 (TC + HF), D100, full Annex 7 Fig. 16 trees, 36 ceiling TCs | same |
@@ -59,15 +59,23 @@ but the first real run must confirm `ACT` flips at 420 s in `<CHID>_ctrl.csv`.
 
 ---
 
+### Positions (Annex 7), dx 0.5 m
+
+Mock-up x −5.0…5.0 (U5…D5), z 1.5…4.0; target face x = 10.0 (D10), 5.0 m behind; both y −2.75…−0.25
+(1.0 m off the wall, under Annex 7 5.2.3's 1.5 m). The 2.4 m width snaps to 2.5 m; HRRPUA is
+normalised to the emitted face, so the total HRR is the design's. Target thermocouples sit on the
+target, in the gas against its upstream face. dx 0.6 put the mock-up at ±4.8 and the target face
+at 10.2 (gap 5.4 m, not 5.0), which is why it was dropped. `tests/test_fds_deck.py` pins these.
+
 ## 2. Known structural gaps — read before reading any number
 
 1. **The cover is a flat plate, not a tarpaulin.** `deck.cover_box` puts a zero-thickness
-   inert plate (fuel footprint + 0.25 m overhang) one cell above the fuel top, only when
+   inert plate (fuel footprint + one cell all round) one cell above the fuel top, only when
    `fire.covered`. It stops water falling straight onto the fuel. It has no side skirts and
    never burns through, so FDS may still over-suppress c4 if the real tarp shielded the
    sides or held up as the fire grew. The gap is forced: FDS drops a burner face that borders
    another solid. It is zero-thickness because a one-cell slab does not fit (1.0 m between
-   fuel top and ceiling, heads inside it). A plate 0.6 m over the fuel also confines the
+   fuel top and ceiling, heads inside it). A plate 0.5 m over the fuel also confines the
    plume, so check ceiling temperatures for that before blaming the spray. c4 and c5 differ on
    incubation, activation and velocity as well as cover; run c5 with `covered` true beside it
    to see the plate's effect alone. The free-burn deck carries the plate too, so the
@@ -89,11 +97,11 @@ On the dedicated CFD server (`docs/cloud-compute.md`), never the FareOS cluster.
 | # | Run | Purpose | Command |
 |---|---|---|---|
 | R0 | 8-min smoke test (covers 420 s activation) | deck parses, meshes OK, `ACT` flips at 420 s in `_ctrl.csv` | `uv run solit2 fds-deck decks/c4/mist/design.json --minutes 8 --out runs/c4-smoke/deck.fds`, copy `design.json` beside it, `fds-exec runs/c4-smoke` |
-| R1 | c4 mist, full 2520 s, dx 0.6, E 0.4 | the comparison run | copy `decks/c4/mist` → `runs/c4/mist`, `uv run solit2 fds-fleet enqueue runs/c4/mist` |
+| R1 | c4 mist, full 2520 s, dx 0.5, E 0.4 | the comparison run | copy `decks/c4/mist` → `runs/c4/mist`, `uv run solit2 fds-fleet enqueue runs/c4/mist` |
 | R2 | c4 free-burn, same | free-burn HRR the reader needs (`free_burn_dir`), and the suppression ratio | same, `runs/c4/free-burn` |
-| R3 | E sweep on **c5 only**, E ∈ {0.1, 0.2, 0.4, 0.8} | pick E without looking at c4 | `uv run solit2 fds-calibrate-e --anchor c5 --e 0.1 0.2 0.4 0.8 --dx 0.6 --out runs/ecal-c5 --run`, then `--report` |
+| R3 | E sweep on **c5 only**, E ∈ {0.1, 0.2, 0.4, 0.8} | pick E without looking at c4 | `uv run solit2 fds-calibrate-e --anchor c5 --e 0.1 0.2 0.4 0.8 --dx 0.5 --out runs/ecal-c5 --run`, then `--report` |
 | R4 | c4 mist at the E chosen in R3 (if ≠ 0.4) | out-of-sample c4 prediction | regenerate with `e_coefficient=` |
-| R5 | grid study dx 1.2 / 0.75 / 0.6, 600 s window after activation | GCI on peak HRR, ceiling T, D15 T | `solit2 fds-grid-study` |
+| R5 | grid study dx 1.0 / 0.75 / 0.5, 600 s window after activation | GCI on peak HRR, ceiling T, D15 T | `solit2 fds-grid-study` |
 
 Order: R0 → R1 + R2 in parallel → R3 → R4 → R5. R5 can run beside R3 if cores allow; the
 campaign's own up-front rate estimate is the run-time figure to trust, not a guess here.
