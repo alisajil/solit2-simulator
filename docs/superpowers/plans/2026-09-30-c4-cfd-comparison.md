@@ -20,7 +20,7 @@ measurement? It is **not** evidence about the Mistelix head (see §5).
 | Mesh | 10 × `IJK=100,17,13`, dx 0.6 m, x ∈ [−360, 240] m (≈221 k cells) | same |
 | `T_END` | 2520 s (42 min, `zones.duration_min`) | same |
 | Ambient | 20 °C | same |
-| Fire | `hgv_150mw`, 16 segment ramps from the free-burn curve, incubation 243 s, `E_COEFFICIENT=0.4` | same, no water |
+| Fire | `hgv_150mw` + inert cover plate at z 4.8 m, 16 segment ramps from the free-burn curve, incubation 243 s, `E_COEFFICIENT=0.4` | same, no water |
 | Activation | `DEVC 'MANUAL' QUANTITY='TIME' SETPOINT=420.0` → `CTRL 'ACT'`; pump ramp 30 s | same controls, no heads |
 | Nozzle | reference-nozzle **placeholder**: 61 heads, 25.31 L/min, D32 90 µm, 70 m/s, 45° cone | — |
 | Stations | U15 (TC + HF), D15 (TC + HF), D100, full Annex 7 Fig. 16 trees, 36 ceiling TCs | same |
@@ -61,12 +61,17 @@ but the first real run must confirm `ACT` flips at 420 s in `<CHID>_ctrl.csv`.
 
 ## 2. Known structural gaps — read before reading any number
 
-1. **The cover is not modelled.** The deck has no tarpaulin. In the test it shielded the fuel
-   from direct spray; in FDS the water that reaches the fuel surface drives `E_COEFFICIENT`
-   suppression directly. Expect FDS to over-suppress c4 relative to the test. c4 and c5 differ
-   on cover, incubation, activation time and velocity; with no cover in the deck, the E sweep
-   cannot separate the cover effect from the others. A thin inert roof over the fuel box is the
-   obvious fix — a model decision, not made here.
+1. **The cover is a flat plate, not a tarpaulin.** `deck.cover_box` puts a zero-thickness
+   inert plate (fuel footprint + 0.25 m overhang) one cell above the fuel top, only when
+   `fire.covered`. It stops water falling straight onto the fuel. It has no side skirts and
+   never burns through, so FDS may still over-suppress c4 if the real tarp shielded the
+   sides or held up as the fire grew. The gap is forced: FDS drops a burner face that borders
+   another solid. It is zero-thickness because a one-cell slab does not fit (1.0 m between
+   fuel top and ceiling, heads inside it). A plate 0.6 m over the fuel also confines the
+   plume, so check ceiling temperatures for that before blaming the spray. c4 and c5 differ on
+   incubation, activation and velocity as well as cover; run c5 with `covered` true beside it
+   to see the plate's effect alone. The free-burn deck carries the plate too, so the
+   suppression ratio compares like with like.
 2. **E is a fitted constant.** `fds-campaign` sweeps E on c4 and c5 by default. If E is picked
    on c4, then c4's peak HRR is in-sample and proves nothing. See §4 for the hold-out.
 3. **Placeholder nozzle.** Same circularity as Tier 1 (`CLAUDE.md`, "Reading a result
