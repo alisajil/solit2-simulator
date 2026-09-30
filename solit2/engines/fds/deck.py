@@ -289,15 +289,17 @@ def _snapped_box(x0: float, x1: float, y_centre: float, width_m: float, z0: floa
 def _load_y_bounds(design: Design, geom: SectionGeometry, dx_m: float) -> tuple[float, float]:
     """(y0, y1) of the mock-up and the target, snapped to the mesh.
 
-    The NEAR face is snapped toward its wall (never away), then the width is the
-    nearest whole number of cells. Annex 7 5.2.3 wants the mock-up less than 1.5 m
-    from the side wall, and a plain nearest-node snap can land exactly on the
-    limit: a 2.4 m load snapped to 2.0 m at 0.5 m cells sat 1.5 m off the wall.
+    The near face goes to the nearest node, which keeps the wall clearance as
+    close to the design's as the mesh allows: 1.3 m becomes 1.5 m at 0.5 m cells.
+    Annex 7 5.2.3's text says "less than 1,5 m" and Fig 13 says "max 1.5m"; 1.5 m
+    is the limit itself, so the report should say the load sits AT it. The width
+    is rounded UP to whole cells: 5.2.2 gives 2.4 m as a minimum, and 2.0 m
+    would be below it.
     """
     origin = _y_origin(geom, dx_m)
     yc, width = fire_lateral_m(design, geom), design.fire.footprint.width_m
-    y0 = origin + math.floor((yc - width / 2.0 - origin) / dx_m + 1e-9) * dx_m
-    return y0, y0 + max(round(width / dx_m), 1) * dx_m
+    y0 = origin + math.floor((yc - width / 2.0 - origin) / dx_m + 0.5) * dx_m
+    return y0, y0 + max(math.ceil(width / dx_m - 1e-9), 1) * dx_m
 
 
 def fuel_box(design: Design, geom: SectionGeometry, dx_m: float = DX_M) -> Box:
