@@ -58,8 +58,23 @@ alone, in the active zone:
 | A | 0.435 | 0.0188 | 0.0556 (×2.9) | 424 m → 144 m |
 | B | 0.021 | 0.0326 | 0.2566 (×7.9) | 245 m → 31 m |
 
-Soot adds to this, so the reported minimum visibility in the zone drops further. The current figures
-are optimistic in exactly the region where a mist system operates.
+These are the droplet term alone. They are **not reported figures**, and this section originally
+overstated them as if they were (see the correction below).
+
+**Correction, found while implementing A (#15).** The Annex 7 visibility stations (U45, D45, D100,
+D215; section 6.4.5) all lie outside the 60 m active zone of the example designs, and the droplet term
+applies only inside the zone. So on `examples/compliance/solit2-example.spec.json` the reported
+minimum visibility is **unchanged** by A: test A 4.14 m and test B 5.6 m, before and after. The term
+matters only where the zone is long enough to contain a visibility station (an active length of about
+90 m or more). Two consequences:
+
+1. The engine is optimistic about visibility in the flooded zone, but no reported number shows the
+   flooded zone at all. The gap is one of *reporting*, not only of the extinction coefficient.
+2. The de-stratification warning follows the same rule: it fires only when a reported visibility or dose
+   station lies inside the zone. It does not fire on the example designs.
+
+A follow-up, not part of A: an unjudged visibility reading inside the zone (at the fire, or at the zone
+edge). Annex 7 places no sensor there, so it could be reported but never be a pass/fail criterion.
 
 ## A. Droplet extinction for visibility
 
@@ -125,8 +140,9 @@ deleted; the plan lists each one before touching it.
 - `uv run pytest -q` passes, `tests/test_independence.py` included.
 - `uv run solit2 validate`: the anchor comparison list is identical before and after (no anchor measures
   visibility). Any change there is a bug in this change, not a result.
-- On the example spec, in-zone minimum visibility for tests A and B is reported lower than before and the
-  new value is recorded in the PR description.
+- On the example spec the reported minimum visibility is **unchanged** (see the correction above); the
+  PR description records that, and a test with a zone long enough to contain a station shows the droplet
+  term dimming it.
 
 ## B. Activation-timing comparison
 
