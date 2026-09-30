@@ -22,7 +22,7 @@ from solit2.schema.presets import load_calibration
 from solit2.schema.result import Criterion, Result
 
 ENGINE = "reduced"
-ENGINE_VERSION = "reduced-1.0.0"
+ENGINE_VERSION = "reduced-1.1.0"
 CRITICAL_VELOCITY_WARNING_MARGIN = 0.10
 TIMESERIES_STRIDE_S = 10
 DESIGN_SHA_CHARS = 12
@@ -130,6 +130,31 @@ def _critical_velocity_warnings(trace: RunTrace) -> list[str]:
         f"{CRITICAL_VELOCITY_WARNING_MARGIN:.0%} of the critical velocity "
         f"{worst.u_critical_ms:.2f} m/s at t={worst.t_s:.0f} s"
     ]
+
+
+def _destratification_warnings(trace: RunTrace, half_active_length_m: float) -> list[str]:
+    """Say so when the spray runs over a layer the engine holds stratified AND a
+    reported station reads inside the spray zone.
+
+    The spray mixes the smoke layer down toward breathing height; the engine's
+    stratification factor never sees it. Visibility and dose at a station inside
+    the zone are therefore optimistic. No magnitude is applied: a factor chosen to
+    look right would be a fitted barrier term, and the size of the effect has to
+    come from a CFD case or measured data. A station outside the zone is not
+    reached by the spray, so a design whose zone contains none has nothing to warn
+    about.
+    """
+    in_zone = tuple(name for name, x_m in criteria_mod.STATIONS.items()
+                    if abs(x_m) <= half_active_length_m)
+    for step in trace.steps:
+        if step.mist.kappa_visible_per_m <= 0.0 or step.strat_factor >= 1.0:
+            continue
+        if any(step.stations[name].visibility_m is not None
+               or step.stations[name].fed_tox is not None for name in in_zone):
+            return ["mist de-stratification is not modelled: visibility and dose at "
+                    "breathing height at stations inside the spray zone may be worse than "
+                    "reported"]
+    return []
 
 
 def _peaks(trace: RunTrace, peak_lining_c: float) -> dict[str, float]:
@@ -310,6 +335,7 @@ def run(design: Design, sections: tuple[str, ...] | None = None,
                 + _placeholder_warnings(design)
                 + _head_count_warnings(design)
                 + _critical_velocity_warnings(trace)
+                + _destratification_warnings(trace, design.active_length_m / 2.0)
                 + _constraint_warnings(constraints)
                 + list(scored.penalties))
     final_mist = max(trace.steps, key=lambda s: s.mist.w_fuel_mm_min).mist

@@ -80,8 +80,12 @@ WATER_BOILING_C = 100.0
 LPM_PER_M3S = 60_000.0
 METRES_PER_UM = 1e-6
 GRID_CELL_M = 0.2
-# Geometric-optics extinction: kappa = 1.5 * volume fraction / droplet diameter.
+# Geometric-optics extinction: kappa = prefactor * volume fraction / droplet diameter.
+# Radiant: 1.5. Visible light through drops much larger than its wavelength has
+# extinction efficiency Q_ext = 2 (van de Hulst), i.e. 3.0. Physics, not a fit: no
+# reference case measures visibility, so this is not in calibration.json.
 EXTINCTION_PREFACTOR = 1.5
+VISIBLE_EXTINCTION_PREFACTOR = 3.0
 # A target beside the fire sees the curtain over half the active length.
 CURTAIN_PATH_FRACTION = 0.5
 # Floors that keep the residence time finite for a pencil jet or still air.
@@ -766,29 +770,37 @@ def backlayer_heat_kw(q_conv_kw: float, mist: MistEffect) -> float:
     return max(q_gas, 0.0) * mist.cooling.upstream_end
 
 
-def _curtain_transmissivity(design: Design, geom: SectionGeometry,
-                            geometries: tuple[_ModeGeometry, ...], head_count: int,
-                            flow_fraction: float, u_eff_ms: float) -> float:
-    """Beer-Lambert through the water suspended in the active zone.
+def _droplet_area_concentration(design: Design, geom: SectionGeometry,
+                                geometries: tuple[_ModeGeometry, ...], head_count: int,
+                                flow_fraction: float, u_eff_ms: float) -> float:
+    """Sum over modes of (suspended volume fraction) / (Sauter mean), per metre.
+
+    Geometric-optics extinction is this quantity times a prefactor: 1.5 for the
+    radiant curtain, 3.0 for visible light (see the constants above). Both
+    consumers read the one number, so they cannot drift apart.
 
     Reads the mode's Sauter mean and not its spectrum, and is exactly right to
-    do so. Geometric-optics extinction is proportional to surface area per unit
-    volume, the bin sum `sum(v_i / d_i)` is that quantity, and
-    `droplet.size_distribution` scales the spectrum so it equals `1 / smd_um` --
-    which is the definition of a Sauter mean. Summing over the bins here would
-    compute the same number the long way round.
+    do so. Extinction is proportional to surface area per unit volume, the bin sum
+    `sum(v_i / d_i)` is that quantity, and `droplet.size_distribution` scales the
+    spectrum so it equals `1 / smd_um` -- which is the definition of a Sauter mean.
+    Summing over the bins here would compute the same number the long way round.
     """
     active_volume = design.active_length_m * geom.free_area_m2
-    kappa = 0.0
+    concentration = 0.0
     for g in geometries:
         flow_m3s = (design.nozzles.mode_flow_lpm(g.mode_id) * head_count
                     * flow_fraction / LPM_PER_M3S)
         residence_s = (max(g.footprint_radius_m, MIN_RESIDENCE_RADIUS_M)
                        / max(u_eff_ms, MIN_RESIDENCE_VELOCITY_MS))
         volume_fraction = flow_m3s * residence_s / active_volume
-        kappa += (EXTINCTION_PREFACTOR * volume_fraction
-                  / (design.nozzles.smd_um(g.mode_id) * METRES_PER_UM))
-    return math.exp(-kappa * design.active_length_m * CURTAIN_PATH_FRACTION)
+        concentration += volume_fraction / (design.nozzles.smd_um(g.mode_id) * METRES_PER_UM)
+    return concentration
+
+
+def _curtain_transmissivity(design: Design, concentration: float) -> float:
+    """Beer-Lambert through the water suspended in the active zone, for radiation."""
+    return math.exp(-EXTINCTION_PREFACTOR * concentration
+                    * design.active_length_m * CURTAIN_PATH_FRACTION)
 
 
 def _effective_flux_mm_min(deliveries: tuple[ModeDelivery, ...], envelope: FuelEnvelope,
@@ -876,9 +888,11 @@ def evaluate(design: Design, geom: SectionGeometry, positions: tuple[NozzlePosit
     sprays = _head_sprays(design, geometries, positions, flow_fraction, q_conv_kw,
                           geom.crown_height_m, backlayer_m)
     chi_cool = _cooling_fraction(sprays, envelope.top)
-    tau_mist = _curtain_transmissivity(design, geom, geometries, head_count,
-                                       flow_fraction, u_eff_ms)
+    concentration = _droplet_area_concentration(design, geom, geometries, head_count,
+                                                flow_fraction, u_eff_ms)
+    tau_mist = _curtain_transmissivity(design, concentration)
 
     return MistEffect(eta=eta, w_fuel_mm_min=w_fuel, f_cov=f_cov,
                       chi_cool=chi_cool, tau_mist=tau_mist,
+                      kappa_visible_per_m=VISIBLE_EXTINCTION_PREFACTOR * concentration,
                       cooling=_cooling_profile(sprays, envelope.top, chi_cool))

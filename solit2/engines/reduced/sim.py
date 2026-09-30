@@ -212,7 +212,7 @@ def _sample_stations(scene: _Scene, field: ThermalField, mist: MistEffect,
     the same layer as one at 1.8 m -- asserted in tests/test_annex7_conformance
     rather than taken on trust from this comment.
     """
-    kappa_mist = (1.0 - mist.tau_mist) / max(scene.half_active_length_m, 1.0)
+    kappa_mist = mist.kappa_visible_per_m
     samples: dict[str, StationSample] = {}
     for name, x_m in STATIONS.items():
         kit, tree = INSTRUMENTS[name], scene.trees[name]
@@ -406,7 +406,8 @@ def run_once(design: Design, section: str, velocity_ms: float) -> RunTrace:
             water_lpm=scene.design.flow_lpm * flow_fraction,
             pools_remaining=state.pools_remaining, mist=mist, stations=samples,
             target_exposure_s=exposure_s,
-            structure_exposure_length_m=_structure_exposure_length_m(scene, field)))
+            structure_exposure_length_m=_structure_exposure_length_m(scene, field),
+            strat_factor=field.strat_factor))
 
     _require_detection(design, events)
     return RunTrace(tuple(steps), events, section, velocity_ms)
