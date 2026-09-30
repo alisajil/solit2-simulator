@@ -326,11 +326,15 @@ def _cmd_report_virtual_test(args: argparse.Namespace) -> int:
         return _fail(str(exc), getattr(exc, "field", "spec"),
                      "correct the compliance spec and try again", EXIT_BAD_INPUT)
     try:
+        from solit2.engines.reduced import sim
         results = {cls: envelope.run(d) for cls, d in loaded.tests.items()}
+        traces = {cls: sim.run_once(d, results[cls].worst_case["section"],
+                                    results[cls].worst_case["velocity_ms"])
+                  for cls, d in loaded.tests.items()}
     except (ArithmeticError, RuntimeError, ValueError, KeyError) as exc:
         return _fail(str(exc), "engine",
                      "the spec validated but a design could not be run", EXIT_ENGINE)
-    return _emit_html_report(virtual_test.render(loaded, results), args.out)
+    return _emit_html_report(virtual_test.render(loaded, results, traces=traces), args.out)
 
 
 def _emit_html_report(html_text: str, out: str | None) -> int:

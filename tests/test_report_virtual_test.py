@@ -1,37 +1,52 @@
 # tests/test_report_virtual_test.py
+import functools
 from pathlib import Path
 
 from solit2.compliance.spec import load_spec
-from solit2.engines.reduced import envelope
+from solit2.engines.reduced import envelope, sim
 from solit2.reports import labels
 from solit2.reports import virtual_test
 
 SPEC = "examples/compliance/solit2-example.spec.json"
 
 
+@functools.lru_cache(maxsize=1)
 def _loaded_and_results():
     loaded = load_spec(SPEC)
     results = {cls: envelope.run(d) for cls, d in loaded.tests.items()}
     return loaded, results
 
 
-def test_every_page_carries_the_prediction_band():
+@functools.lru_cache(maxsize=1)
+def _inputs():
     loaded, results = _loaded_and_results()
-    out = virtual_test.render(loaded, results)
+    traces = {cls: sim.run_once(loaded.tests[cls], r.worst_case["section"],
+                                r.worst_case["velocity_ms"])
+              for cls, r in results.items()}
+    return loaded, results, traces
+
+
+def _render(**overrides):
+    """(loaded, results, html). Later tasks add their required keywords here."""
+    loaded, results, traces = _inputs()
+    kwargs = {"traces": traces, **overrides}
+    return loaded, results, virtual_test.render(loaded, results, **kwargs)
+
+
+def test_every_page_carries_the_prediction_band():
+    loaded, results, out = _render()
     # One band per section plus one in the header; at minimum one per rendered section.
     assert out.count(virtual_test.html.BAND_TEXT) >= 2
 
 
 def test_the_document_names_both_test_designs():
-    loaded, results = _loaded_and_results()
-    out = virtual_test.render(loaded, results)
+    loaded, results, out = _render()
     assert loaded.tests["A"].meta.name in out
     assert loaded.tests["B"].meta.name in out
 
 
 def test_the_document_makes_no_network_reference():
-    loaded, results = _loaded_and_results()
-    out = virtual_test.render(loaded, results)
+    loaded, results, out = _render()
     # Not a substring test: once Task 6 embeds Plotly, the bundle's own JS strings
     # contain https:// text that is never fetched. external_references() skips
     # script bodies and catches every tag or CSS rule that would fetch something.
@@ -39,8 +54,7 @@ def test_the_document_makes_no_network_reference():
 
 
 def test_facility_section_states_each_designs_own_geometry():
-    loaded, results = _loaded_and_results()
-    out = virtual_test.render(loaded, results)
+    loaded, results, out = _render()
     from solit2.engines.reduced.geometry import section_geometry
     for design in loaded.tests.values():
         geom = section_geometry(design)
@@ -48,31 +62,27 @@ def test_facility_section_states_each_designs_own_geometry():
 
 
 def test_water_mist_system_states_pressure_and_active_head_count():
-    loaded, results = _loaded_and_results()
-    out = virtual_test.render(loaded, results)
+    loaded, results, out = _render()
     for design in loaded.tests.values():
         assert f"{design.nozzles.pressure_bar:.1f}" in out
         assert str(design.active_heads) in out
 
 
 def test_fire_load_states_the_design_hrr_and_covered_flag():
-    loaded, results = _loaded_and_results()
-    out = virtual_test.render(loaded, results)
+    loaded, results, out = _render()
     for design in loaded.tests.values():
         assert f"{design.fire.design_hrr_mw:.0f}" in out
 
 
 def test_instruments_section_names_every_modelled_station():
     from solit2.engines.reduced.criteria import STATIONS
-    loaded, results = _loaded_and_results()
-    out = virtual_test.render(loaded, results)
+    loaded, results, out = _render()
     for station in STATIONS:
         assert station in out
 
 
 def test_procedure_section_shows_limit_not_set_for_an_unset_criterion():
-    loaded, results = _loaded_and_results()
-    out = virtual_test.render(loaded, results)
+    loaded, results, out = _render()
     # examples/compliance/solit2-example.spec.json's designs carry an empty
     # `ahj` block (see examples/designs/solit2-test-protocol*.json), so every
     # criterion beyond target_ignited is unset.
@@ -80,8 +90,7 @@ def test_procedure_section_shows_limit_not_set_for_an_unset_criterion():
 
 
 def test_the_results_summary_states_each_tests_engine_peaks():
-    loaded, results = _loaded_and_results()
-    out = virtual_test.render(loaded, results)
+    loaded, results, out = _render()
     assert "<h2>8. Results</h2>" in out
     for result in results.values():
         assert labels.with_unit("hrr_mw", result.peaks["hrr_mw"]) in out
@@ -115,8 +124,7 @@ def test_the_hrr_chart_plots_the_engines_own_series_and_four_growth_curves():
 
 
 def test_the_growth_curves_are_cited_as_reference_shapes_not_engine_output():
-    loaded, results = _loaded_and_results()
-    out = virtual_test.render(loaded, results)
+    loaded, results, out = _render()
     assert "NFPA 72" in out and "SFPE" in out
     assert "not engine output" in out
 
@@ -131,7 +139,70 @@ def test_the_ceiling_chart_has_one_engine_line_per_test():
 
 
 def test_the_plotly_bundle_is_embedded_exactly_once_however_many_charts_there_are():
-    loaded, results = _loaded_and_results()
-    out = virtual_test.render(loaded, results)
+    loaded, results, out = _render()
     assert out.count(virtual_test.html.BUNDLE_MARK) == 1
     assert out.count("Plotly.newPlot") >= 2
+
+
+def test_each_test_gets_a_results_page_with_its_timeline_and_all_six_charts():
+    loaded, results, out = _render()
+    for cls in loaded.tests:
+        assert f"Test {cls}:" in out
+    for label in ("Ignition", "Detection", "Activation", "Full pressure",
+                  "Peak heat release", "Backlayering", "End of test"):
+        assert out.count(f"<td>{label}</td>") == len(loaded.tests)
+    for title, _keys in virtual_test.CHART_SPECS:
+        assert out.count(title) >= len(loaded.tests)
+    assert len(virtual_test.CHART_SPECS) == 6
+
+
+def test_the_3d_tunnel_is_drawn_at_the_traces_peak_heat_release():
+    loaded, results, traces = _inputs()
+    fig = virtual_test._tunnel_at_peak(loaded.tests["A"], traces["A"])
+    peak = max(traces["A"].steps, key=lambda s: s.hrr_mw)
+    assert f"t = {peak.t_s:.0f} s" in fig.layout.title.text
+    assert len(fig.data) >= 10   # 4 static + 6 dynamic traces
+
+
+def test_the_trace_is_the_worst_case_the_result_reports():
+    _, results, traces = _inputs()
+    for cls, result in results.items():
+        assert max(s.hrr_mw for s in traces[cls].steps) == result.peaks["hrr_mw"]
+
+
+def test_the_timeline_marks_an_unreached_event_as_not_reached():
+    events = {"t_detect_s": 40.0, "t_activate_s": None, "t_full_pressure_s": None,
+              "t_peak_hrr_s": 120.0,
+              "backlayering": {"occurred": False, "max_length_m": 0.0, "cleared_at_s": None}}
+    rows = dict((r[0], r[1]) for r in virtual_test._timeline_rows(events, 600.0))
+    assert rows["Detection"].startswith("40 s")
+    assert rows["Activation"] == "not reached"
+    assert rows["Backlayering"] == "did not occur"
+    assert rows["End of test"].startswith("600 s")
+
+
+def test_the_checklist_marks_met_not_met_and_limit_not_set():
+    from solit2.schema.result import Criterion
+    criteria = {
+        "max_air_temp_c": Criterion.build(300.0, 250.0, "<=", True),      # not met
+        "max_heat_flux_kwm2": Criterion.build(2.0, 5.0, "<=", True),       # met
+        "min_visibility_m": Criterion.build(10.0, None, ">=", True),       # unset
+        "target_ignited": Criterion.build(False, None, "is_false", True),  # met
+    }
+    out = virtual_test._criteria_checklist(criteria)
+    assert out.count("✓ met") == 2
+    assert out.count("✗ not met") == 1
+    assert out.count("limit not set") == 1
+    # The predicted value is still shown beside a limit that was never set.
+    assert labels.with_unit("min_visibility_m", 10.0) in out
+
+
+def test_a_design_name_with_markup_is_escaped_in_the_results_page():
+    loaded, results, traces = _inputs()
+    design = loaded.tests["A"]
+    hostile = design.model_copy(
+        update={"meta": design.meta.model_copy(update={"name": "<script>x</script>"})})
+    out = virtual_test._test_results("A", hostile, results["A"], traces["A"],
+                                     virtual_test._Figures())
+    assert "<script>x</script>" not in out
+    assert "&lt;script&gt;x&lt;/script&gt;" in out

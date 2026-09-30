@@ -8,11 +8,17 @@ from __future__ import annotations
 
 import plotly.graph_objects as go
 
+# ponytail: the chart and 3D builders live in app/ and are pure Plotly. Importing
+# them keeps the report identical to the live simulator; promote them into solit2/
+# if the CLI is ever shipped without the app package.
+from app.components import charts, tunnel3d, twin_canvas
 from solit2.compliance.spec import LoadedSpec
 from solit2.engines.reduced.criteria import STATIONS
 from solit2.engines.reduced.geometry import section_geometry
+from solit2.engines.reduced.state import RunTrace
 from solit2.reports import html, labels
-from solit2.schema.result import Result
+from solit2.schema.design import Design
+from solit2.schema.result import Criterion, Result
 
 
 def _introduction() -> str:
@@ -35,27 +41,35 @@ def _requested_tests(loaded: LoadedSpec) -> str:
                        "Ventilation", "Duration"], rows)
 
 
-def _facility(loaded: LoadedSpec) -> str:
-    rows = [[cls, design.meta.name, design.tunnel.preset, design.tunnel.section,
-            f"{section_geometry(design).road_width_m:.2f} m",
-            f"{section_geometry(design).crown_height_m:.2f} m",
+FACILITY_HEADERS = ["Test", "Design", "Tunnel preset", "Section",
+                    "Road width", "Crown height", "Ventilation band"]
+WATER_MIST_HEADERS = ["Test", "Nozzle preset", "K-factor", "Pressure", "Flow per head",
+                      "Zone length", "Active heads", "Total K"]
+
+
+def _facility_row(cls: str, design: Design) -> list[str]:
+    geom = section_geometry(design)
+    return [cls, design.meta.name, design.tunnel.preset, design.tunnel.section,
+            f"{geom.road_width_m:.2f} m", f"{geom.crown_height_m:.2f} m",
             f"{design.ventilation.velocity_range_ms[0]:.2f}–"
             f"{design.ventilation.velocity_range_ms[1]:.2f} m/s"]
-            for cls, design in sorted(loaded.tests.items())]
-    return html.table(["Test", "Design", "Tunnel preset", "Section",
-                       "Road width", "Crown height", "Ventilation band"], rows)
+
+
+def _water_mist_row(cls: str, design: Design) -> list[str]:
+    n = design.nozzles
+    return [cls, n.preset, f"{n.k_factor_lpm_bar05:.2f}", f"{n.pressure_bar:.1f} bar",
+            f"{n.flow_per_head_lpm:.1f} L/min", f"{design.zones.section_length_m:.0f} m",
+            str(design.active_heads), f"{n.k_factor_lpm_bar05 * design.active_heads:.1f}"]
+
+
+def _facility(loaded: LoadedSpec) -> str:
+    return html.table(FACILITY_HEADERS,
+                      [_facility_row(cls, d) for cls, d in sorted(loaded.tests.items())])
 
 
 def _water_mist_system(loaded: LoadedSpec) -> str:
-    rows = []
-    for cls, design in sorted(loaded.tests.items()):
-        n = design.nozzles
-        rows.append([cls, n.preset, f"{n.k_factor_lpm_bar05:.2f}", f"{n.pressure_bar:.1f} bar",
-                    f"{n.flow_per_head_lpm:.1f} L/min", f"{design.zones.section_length_m:.0f} m",
-                    str(design.active_heads),
-                    f"{n.k_factor_lpm_bar05 * design.active_heads:.1f}"])
-    return html.table(["Test", "Nozzle preset", "K-factor", "Pressure", "Flow per head",
-                       "Zone length", "Active heads", "Total K"], rows)
+    return html.table(WATER_MIST_HEADERS,
+                      [_water_mist_row(cls, d) for cls, d in sorted(loaded.tests.items())])
 
 
 def _fire_load(loaded: LoadedSpec) -> str:
@@ -190,7 +204,129 @@ def _results_overview(loaded: LoadedSpec, results: dict[str, Result],
     ])
 
 
-def render(loaded: LoadedSpec, results: dict[str, Result]) -> str:
+# The six per-test charts. Every key is a real key of Result.timeseries. The engine
+# samples four gas-temperature stations (U45, U15, D15, D100) plus the ceiling, so
+# "every station" means every station the timeseries carries.
+CHART_SPECS = (
+    ("Heat release rate", ("hrr_mw", "hrr_free_burn_mw")),
+    ("Air velocity", ("velocity_ms",)),
+    ("Heat flux at U15", ("hf_u15_kwm2",)),
+    ("Gas temperature at U15", ("u15_temp_c",)),
+    ("Gas temperature at every sampled station",
+     ("ceiling_temp_c", "u45_temp_c", "u15_temp_c", "d15_temp_c", "d100_temp_c")),
+    ("Water flow", ("water_lpm",)),
+)
+TUNNEL_HEIGHT_PX = 520
+NOT_REACHED = "not reached"
+
+
+def _clock(t_s: float) -> str:
+    return f"{t_s:.0f} s ({twin_canvas.mmss(t_s)})"
+
+
+def _timeline_rows(events: dict, t_end_s: float) -> list[list[str]]:
+    def at(key: str) -> str:
+        t = events.get(key)
+        return NOT_REACHED if t is None else _clock(float(t))
+
+    back = events.get("backlayering") or {}
+    if not back.get("occurred"):
+        backlayering = "did not occur"
+    elif back.get("cleared_at_s") is None:
+        backlayering = f"reached {back['max_length_m']:.0f} m, not cleared"
+    else:
+        backlayering = (f"reached {back['max_length_m']:.0f} m, cleared at "
+                        f"{_clock(float(back['cleared_at_s']))}")
+    return [["Ignition", _clock(0.0)],
+            ["Detection", at("t_detect_s")],
+            ["Activation", at("t_activate_s")],
+            ["Full pressure", at("t_full_pressure_s")],
+            ["Peak heat release", at("t_peak_hrr_s")],
+            ["Backlayering", backlayering],
+            ["End of test", _clock(t_end_s)]]
+
+
+def _criterion_row(key: str, criterion: Criterion) -> list[str]:
+    predicted = labels.with_unit(key, criterion.value)
+    if criterion.status == "unset":
+        return [labels.label(key), predicted, "—", "limit not set"]
+    limit = criterion.limit
+    limit_text = (" – ".join(labels.with_unit(key, v) for v in limit)
+                  if isinstance(limit, tuple) else labels.with_unit(key, limit))
+    mark = "✓ met" if criterion.status == "pass" else "✗ not met"
+    return [labels.label(key), predicted, limit_text if limit is not None else "—", mark]
+
+
+def _criteria_checklist(criteria: dict[str, Criterion]) -> str:
+    return html.table(["Criterion", "Predicted", "Limit (from the design's own AHJ block)",
+                       "Result"],
+                      [_criterion_row(k, c) for k, c in sorted(criteria.items())])
+
+
+def _overview(cls: str, design: Design, result: Result) -> str:
+    met, not_met, unset = _criteria_counts(result)
+    p = result.peaks
+    return (
+        f"Test {cls} ({design.meta.name}): the engine's worst case is "
+        f"{result.worst_case['section']} at {result.worst_case['velocity_ms']:.2f} m/s "
+        f"ventilation. Suppressed heat release peaks at "
+        f"{labels.with_unit('hrr_mw', p['hrr_mw'])} against a free-burn peak of "
+        f"{labels.with_unit('hrr_free_burn_mw', p['hrr_free_burn_mw'])}, and the ceiling "
+        f"reaches {labels.with_unit('ceiling_temp_c', p['ceiling_temp_c'])}. "
+        f"{met} criteria are met, {not_met} are not met and {unset} have no limit set.")
+
+
+def _tunnel_at_peak(design: Design, trace: RunTrace) -> go.Figure:
+    geom = section_geometry(design)
+    window = twin_canvas.core_window_m(design)
+    step = max(trace.steps, key=lambda s: s.hrr_mw)
+    fig = go.Figure()
+    for static in tunnel3d.static_traces(design, geom, window):
+        fig.add_trace(static)
+    for dynamic in tunnel3d.dynamic_traces(design, geom, step, window,
+                                           hrr_peak_mw=step.hrr_mw,
+                                           cmax_c=twin_canvas.temp_max_c(trace)):
+        fig.add_trace(dynamic)
+    fig.update_layout(
+        scene=tunnel3d.scene_layout(geom, window), height=TUNNEL_HEIGHT_PX,
+        margin=CHART_MARGIN,
+        title=f"Predicted state at peak HRR, t = {step.t_s:.0f} s")
+    return fig
+
+
+def _test_results(cls: str, design: Design, result: Result, trace: RunTrace,
+                  figs: _Figures) -> str:
+    parts = [f"<h3>Test {cls}: {html.escape(design.meta.name)}</h3>",
+             f"<p>{html.escape(_overview(cls, design, result))}</p>",
+             "<h4>Configuration</h4>",
+             html.table(FACILITY_HEADERS, [_facility_row(cls, design)]),
+             html.table(WATER_MIST_HEADERS, [_water_mist_row(cls, design)]),
+             "<h4>Timeline</h4>",
+             html.table(["Event", "Test clock"],
+                        _timeline_rows(result.events, result.timeseries["t_s"][-1])),
+             "<h4>Criteria</h4>",
+             _criteria_checklist(result.criteria),
+             "<h4>Results</h4>"]
+    for title, keys in CHART_SPECS:
+        fig = charts.timeseries_chart(result.timeseries, list(keys))
+        fig.update_layout(title=title)
+        fig.update_yaxes(title_text=labels.unit(keys[0]))
+        parts.append(figs.embed(fig))
+    parts += ["<h4>Tunnel at peak heat release</h4>",
+              figs.embed(_tunnel_at_peak(design, trace))]
+    return "\n".join(parts)
+
+
+def _results(loaded: LoadedSpec, results: dict[str, Result],
+             traces: dict[str, RunTrace], figs: _Figures) -> str:
+    return "\n".join(
+        [_results_overview(loaded, results, figs)]
+        + [_test_results(cls, design, results[cls], traces[cls], figs)
+           for cls, design in sorted(loaded.tests.items())])
+
+
+def render(loaded: LoadedSpec, results: dict[str, Result], *,
+           traces: dict[str, RunTrace]) -> str:
     figs = _Figures()
     sections = [
         ("Introduction", _introduction()),
@@ -200,6 +336,6 @@ def render(loaded: LoadedSpec, results: dict[str, Result]) -> str:
         ("Fire load and target", _fire_load(loaded)),
         ("Virtual instruments", _instruments()),
         ("Procedure", _procedure(loaded, results)),
-        ("Results", _results_overview(loaded, results, figs)),
+        ("Results", _results(loaded, results, traces, figs)),
     ]
     return html.document(f"Virtual fire test report — {loaded.spec.name}", sections)

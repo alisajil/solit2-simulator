@@ -22,3 +22,12 @@ def test_cli_engine_failure_exits_with_engine_code(monkeypatch, tmp_path):
                         lambda design, **kw: (_ for _ in ()).throw(RuntimeError("boom")))
     result = cli.main(["report", "virtual-test", SPEC, "--out", str(out)])
     assert result == cli.EXIT_ENGINE
+
+
+def test_the_written_file_has_a_results_page_per_test(tmp_path):
+    out = tmp_path / "v.html"
+    done = subprocess.run(
+        ["uv", "run", "solit2", "report", "virtual-test", SPEC, "--out", str(out)],
+        capture_output=True, text=True)
+    assert done.returncode == 0, done.stderr
+    assert out.read_text().count("Predicted state at peak HRR") == 2
