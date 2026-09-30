@@ -43,6 +43,9 @@ it is the difference between evidence and self-assessment.
 }
 ```
 
+In reports and on screen this block is shown as the **PMC / Authority's Engineer** (`labels.AUTHORITY`);
+the JSON key stays `ahj` so saved designs still load.
+
 Every field left `null` is reported `unset` and listed in `score.criteria_unset`, so a design
 can never pass by nobody having asked anything of it.
 

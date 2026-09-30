@@ -181,7 +181,7 @@ def _results(result: Result) -> list[str]:
         lines += [
             f"**{len(unset)} of {len(result.criteria)} criteria carry no limit and were "
             f"not judged.** An unjudged criterion is not a passed one. Annex 7 §7.1 "
-            f"leaves these values to the authority having jurisdiction, and none has "
+            f"leaves these values to the PMC / Authority's Engineer, and none has "
             f"been set here.", "",
         ]
     if result.constraints:

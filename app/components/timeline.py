@@ -46,4 +46,4 @@ def render(events: dict, criteria: dict[str, Criterion], t_end_s: float) -> None
     # Without this, a run judged against almost nothing looks like a clean sheet.
     if unset:
         chips = "".join(f'<span class="chip unset">{labels.label(n)}</span>' for n in unset)
-        st.markdown(f"Not judged — no AHJ limit set: {chips}", unsafe_allow_html=True)
+        st.markdown(f"Not judged — no PMC / Authority's Engineer limit set: {chips}", unsafe_allow_html=True)

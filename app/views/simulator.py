@@ -40,7 +40,7 @@ _SEEDED_FROM = "_sim_seeded_from"
 CAPTION = (
     "Every reading is the Tier 1 engine's own output for this design: a prediction, not a "
     "measurement. Gauges show the worst of the Annex 7 Table 5 stations that carry each "
-    "instrument; a red band is the authority's limit and appears only where one is set. The "
+    "instrument; a red band is the PMC / Authority's Engineer's limit and appears only where one is set. The "
     "heat-release criterion judges only the peak after full pressure, but its gauge's band "
     "marks the limit at every instant, including the free burn before activation. Across the "
     "tunnel the picture is enlarged for legibility. The smoke plane's height and the spray "

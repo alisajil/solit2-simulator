@@ -261,7 +261,7 @@ def _criterion_row(key: str, criterion: Criterion) -> list[str]:
 
 
 def _criteria_checklist(criteria: dict[str, Criterion]) -> str:
-    return html.table(["Criterion", "Predicted", "Limit (from the design's own AHJ block)",
+    return html.table(["Criterion", "Predicted", "Limit (set by the PMC / Authority's Engineer)",
                        "Result"],
                       [_criterion_row(k, c) for k, c in sorted(criteria.items())])
 
