@@ -35,3 +35,27 @@ def test_the_document_makes_no_network_reference():
     # contain https:// text that is never fetched. external_references() skips
     # script bodies and catches every tag or CSS rule that would fetch something.
     assert virtual_test.html.external_references(out) == []
+
+
+def test_facility_section_states_each_designs_own_geometry():
+    loaded, results = _loaded_and_results()
+    out = virtual_test.render(loaded, results)
+    from solit2.engines.reduced.geometry import section_geometry
+    for design in loaded.tests.values():
+        geom = section_geometry(design)
+        assert f"{geom.road_width_m:.2f}" in out
+
+
+def test_water_mist_system_states_pressure_and_active_head_count():
+    loaded, results = _loaded_and_results()
+    out = virtual_test.render(loaded, results)
+    for design in loaded.tests.values():
+        assert f"{design.nozzles.pressure_bar:.1f}" in out
+        assert str(design.active_heads) in out
+
+
+def test_fire_load_states_the_design_hrr_and_covered_flag():
+    loaded, results = _loaded_and_results()
+    out = virtual_test.render(loaded, results)
+    for design in loaded.tests.values():
+        assert f"{design.fire.design_hrr_mw:.0f}" in out

@@ -10,6 +10,7 @@ from __future__ import annotations
 from solit2.compliance.spec import LoadedSpec
 from solit2.reports import html
 from solit2.schema.result import Result
+from solit2.engines.reduced.geometry import section_geometry
 
 
 def _introduction() -> str:
@@ -32,9 +33,42 @@ def _requested_tests(loaded: LoadedSpec) -> str:
                        "Ventilation", "Duration"], rows)
 
 
+def _facility(loaded: LoadedSpec) -> str:
+    rows = [[cls, design.meta.name, design.tunnel.preset, design.tunnel.section,
+            f"{section_geometry(design).road_width_m:.2f} m",
+            f"{section_geometry(design).crown_height_m:.2f} m",
+            f"{design.ventilation.velocity_range_ms[0]:.2f}–"
+            f"{design.ventilation.velocity_range_ms[1]:.2f} m/s"]
+            for cls, design in sorted(loaded.tests.items())]
+    return html.table(["Test", "Design", "Tunnel preset", "Section",
+                       "Road width", "Crown height", "Ventilation band"], rows)
+
+
+def _water_mist_system(loaded: LoadedSpec) -> str:
+    rows = []
+    for cls, design in sorted(loaded.tests.items()):
+        n = design.nozzles
+        rows.append([cls, n.preset, f"{n.k_factor_lpm_bar05:.2f}", f"{n.pressure_bar:.1f} bar",
+                    f"{n.flow_per_head_lpm:.1f} L/min", f"{design.zones.section_length_m:.0f} m",
+                    str(design.active_heads),
+                    f"{n.k_factor_lpm_bar05 * design.active_heads:.1f}"])
+    return html.table(["Test", "Nozzle preset", "K-factor", "Pressure", "Flow per head",
+                       "Zone length", "Active heads", "Total K"], rows)
+
+
+def _fire_load(loaded: LoadedSpec) -> str:
+    rows = [[cls, design.fire.preset, "covered" if design.fire.covered else "uncovered",
+            f"{design.fire.design_hrr_mw:.0f} MW"]
+            for cls, design in sorted(loaded.tests.items())]
+    return html.table(["Test", "Fire preset", "Cover", "Design HRR"], rows)
+
+
 def render(loaded: LoadedSpec, results: dict[str, Result]) -> str:
     sections = [
         ("Introduction", _introduction()),
         ("Requested tests", _requested_tests(loaded)),
+        ("Test facility", _facility(loaded)),
+        ("Water mist system", _water_mist_system(loaded)),
+        ("Fire load and target", _fire_load(loaded)),
     ]
     return html.document(f"Virtual fire test report — {loaded.spec.name}", sections)
