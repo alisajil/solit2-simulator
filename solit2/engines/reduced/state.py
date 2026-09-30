@@ -76,6 +76,10 @@ class MistEffect:
     chi_cool: float
     tau_mist: float       # radiant transmissivity through the mist curtain, 0..1
     cooling: CoolingProfile = field(default_factory=CoolingProfile)
+    # Extinction of visible light by the suspended droplets, per metre, inside the
+    # active zone: geometric optics with Q_ext = 2, from the same water loading that
+    # sets `tau_mist`. Zero when the system is not discharging.
+    kappa_visible_per_m: float = 0.0
 
     @property
     def chi_downstream(self) -> float:
@@ -156,6 +160,10 @@ class StepRecord:
     # Annex 7 section 7.2.4 asks for the hot AREA, not the hottest point: the
     # length of tunnel whose ceiling exceeds the AHJ reporting threshold.
     structure_exposure_length_m: float = 0.0
+    # Newman stratification factor of the smoke layer this step (1.0 = well mixed).
+    # The spray does not change it; a step from a CFD run resolves the layer itself
+    # and leaves this at 1.0.
+    strat_factor: float = 1.0
 
 
 @dataclass(frozen=True)
