@@ -61,8 +61,8 @@ but the first real run must confirm `ACT` flips at 420 s in `<CHID>_ctrl.csv`.
 
 ### Positions (Annex 7), dx 0.5 m
 
-Mock-up x −5.0…5.0 (U5…D5), z 1.5…4.0; target face x = 10.0 (D10), 5.0 m behind; both y −2.75…−0.25
-(1.0 m off the wall, under Annex 7 5.2.3's 1.5 m). The 2.4 m width snaps to 2.5 m; HRRPUA is
+Mock-up x −5.0…5.0 (U5…D5), z 1.5…4.0; target face x = 10.0 (D10), 5.0 m behind; both y −2.25…0.25
+(1.5 m off the wall, which is Annex 7 5.2.3's limit itself: the text says "less than", Fig 13 says "max"). The 2.4 m width rounds up to 2.5 m (5.2.2 gives 2.4 as a minimum); HRRPUA is
 normalised to the emitted face, so the total HRR is the design's. Target thermocouples sit on the
 target, in the gas against its upstream face. dx 0.6 put the mock-up at ±4.8 and the target face
 at 10.2 (gap 5.4 m, not 5.0), which is why it was dropped. `tests/test_fds_deck.py` pins these.

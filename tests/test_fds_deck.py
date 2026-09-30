@@ -1045,16 +1045,17 @@ def test_the_mock_up_ends_and_target_face_land_on_annex_7s_stations():
     assert (fuel.z0, fuel.z1) == pytest.approx((fp.base_height_m, fp.top_height_m))
 
 
-def test_the_mock_up_is_eccentric_within_annex_7s_wall_clearance():
-    # 5.2.3: less than 1.5 m from the side wall, and not moved far from where
-    # Tier 1 and the drawings put it.
+def test_the_mock_up_is_eccentric_at_annex_7s_wall_clearance_and_no_narrower_than_it_says():
+    # 5.2.3: "less than 1,5 m" from the side wall (Fig 13: "max 1.5m"); 5.2.2:
+    # 2.4 m wide as a minimum. At 0.5 m cells the design's 1.3 m clearance snaps
+    # to 1.5 m, the limit itself, and the width rounds up to 2.5 m.
     from solit2.engines.reduced.geometry import fire_lateral_m, section_geometry
     design = Design.load(TEST_RIG)
     geom = section_geometry(design)
     fuel = deck.fuel_box(design, geom)
-    assert fuel.y0 - (-geom.road_width_m / 2) < 1.5
+    assert fuel.y0 - (-geom.road_width_m / 2) == pytest.approx(1.5)
     assert abs(fuel.y_centre_m - fire_lateral_m(design, geom)) <= deck.DX_M / 2 + 1e-9
-    assert abs((fuel.y1 - fuel.y0) - design.fire.footprint.width_m) <= deck.DX_M
+    assert fuel.y1 - fuel.y0 >= design.fire.footprint.width_m
 
 
 def test_the_target_thermocouples_are_on_the_target_not_beside_it():
