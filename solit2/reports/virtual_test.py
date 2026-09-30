@@ -297,6 +297,16 @@ def _tunnel_at_peak(design: Design, trace: RunTrace) -> go.Figure:
     return fig
 
 
+def _zone_visibility_note(result: Result) -> str:
+    return (
+        "Visibility inside the spray zone (at its downstream edge, opacimeter height): "
+        f"{labels.with_unit('zone_min_visibility_m', result.peaks['zone_min_visibility_m'])} "
+        "at its lowest. This is not an Annex 7 measurement position and is not judged: no "
+        "limit can be set against it. It includes the droplets' extinction but not the "
+        "spray's mixing of the smoke layer (mist de-stratification is not modelled), so it "
+        "is likely optimistic.")
+
+
 def _test_results(cls: str, design: Design, result: Result, trace: RunTrace,
                   figs: _Figures) -> str:
     parts = [f"<h3>Test {cls}: {html.escape(design.meta.name)}</h3>",
@@ -309,6 +319,7 @@ def _test_results(cls: str, design: Design, result: Result, trace: RunTrace,
                         _timeline_rows(result.events, result.timeseries["t_s"][-1])),
              "<h4>Criteria</h4>",
              _criteria_checklist(result.criteria),
+             f"<p>{html.escape(_zone_visibility_note(result))}</p>",
              "<h4>Results</h4>"]
     for title, keys in CHART_SPECS:
         fig = charts.timeseries_chart(result.timeseries, list(keys))

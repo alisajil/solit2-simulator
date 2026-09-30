@@ -23,6 +23,8 @@ LABELS: dict[str, tuple[str, str, int]] = {
     "max_air_temp_c": ("Peak air temperature", "°C", 1),
     "max_heat_flux_kwm2": ("Peak heat flux", "kW/m²", 2),
     "min_visibility_m": ("Minimum visibility", "m", 1),
+    "zone_min_visibility_m": ("Minimum visibility inside the spray zone", "m", 1),
+    "zone_visibility_m": ("Visibility inside the spray zone", "m", 1),
     "max_fed": ("Peak fractional effective dose", "", 3),
     "max_co_ppm": ("Peak carbon monoxide", "ppm", 0),
     "structure_exposure_length_m": ("Structure exposed above limit", "m", 1),
