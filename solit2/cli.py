@@ -340,8 +340,25 @@ def _cmd_report_virtual_test(args: argparse.Namespace) -> int:
     except OSError as exc:
         return _fail(str(exc), "--runs-dir", "point at the directory the CFD step wrote to",
                      EXIT_BAD_INPUT)
-    return _emit_html_report(virtual_test.render(loaded, results, traces=traces, cfd=cfd),
-                             args.out)
+    from solit2.compliance import check as compliance_check
+    try:
+        # ponytail: check.run re-runs the envelope for every test design, so the engine
+        # runs twice per report. Give check.run a results= parameter if runtime matters.
+        compliance = compliance_check.run(args.spec)
+    except (ValidationError, ValueError, FileNotFoundError, KeyError) as exc:
+        return _fail(str(exc), "spec", "correct the compliance spec and try again",
+                     EXIT_BAD_INPUT)
+    except (ArithmeticError, RuntimeError) as exc:
+        return _fail(str(exc), "engine",
+                     "the spec validated but a design or rule could not be evaluated",
+                     EXIT_ENGINE)
+    # ponytail: reuses archive's private commit helper; make it public when a third
+    # caller appears.
+    commit = archive_mod._git_commit()
+    return _emit_html_report(
+        virtual_test.render(loaded, results, traces=traces, cfd=cfd,
+                            compliance=compliance, commit=commit),
+        args.out)
 
 
 def _emit_html_report(html_text: str, out: str | None) -> int:

@@ -1,6 +1,8 @@
 # tests/test_report_virtual_test.py
 import functools
+import html as stdlib_html
 
+from solit2.compliance import check as compliance_check
 from solit2.compliance.spec import load_spec
 from solit2.engines.reduced import envelope, sim
 from solit2.reports import cfd_runs, labels
@@ -25,11 +27,19 @@ def _inputs():
     return loaded, results, traces
 
 
+@functools.lru_cache(maxsize=1)
+def _compliance():
+    return compliance_check.run(SPEC)
+
+
+COMMIT = "0123abc (working tree modified)"
+
+
 def _render(**overrides):
     """(loaded, results, html). Later tasks add their required keywords here."""
     loaded, results, traces = _inputs()
     kwargs = {"traces": traces, "cfd": {cls: cfd_runs.NOT_RUN for cls in loaded.tests},
-              **overrides}
+              "compliance": _compliance(), "commit": COMMIT, **overrides}
     return loaded, results, virtual_test.render(loaded, results, **kwargs)
 
 
@@ -255,3 +265,69 @@ def test_the_cfd_peaks_table_reports_the_difference_without_judging_it():
     tier1 = results["A"].peaks["hrr_mw"]
     assert f"{tier1 * 0.8 - tier1:+.1f} MW" in table
     assert "pass" not in table.lower() and "fail" not in table.lower()
+
+
+def _finding(verdict, clause="§7.2.1", requirement="No fire spread to the target"):
+    from solit2.compliance.verdict import Finding
+    return Finding(rule_id="r1", group="g", clause=clause, requirement=requirement,
+                   kind="predicted", verdict=verdict, found="target ignited",
+                   required="not ignited", basis="Tier 1", basis_kind="predicted")
+
+
+def _report(findings):
+    from pathlib import Path
+    from solit2.compliance.check import ComplianceReport
+    from solit2.compliance.verdict import headline
+    return ComplianceReport("Spec <x>", Path("s.json"), tuple(findings),
+                            headline(findings), {"calibration": "abc"})
+
+
+def test_the_compliance_summary_lists_blocking_clauses_and_escapes_the_spec_name():
+    from solit2.compliance.verdict import Verdict
+    report = _report([_finding(Verdict.FAILS), _finding(Verdict.COMPLIES, clause="§9.9")])
+    out = virtual_test._compliance_summary(report)
+    assert "§7.2.1" in out and "§9.9" not in out   # only the blocker is tabled
+    assert "Spec &lt;x&gt;" in out and "Spec <x>" not in out
+
+
+def test_the_compliance_summary_says_so_when_nothing_blocks():
+    from solit2.compliance.verdict import Verdict
+    out = virtual_test._compliance_summary(_report([_finding(Verdict.COMPLIES)]))
+    assert "No clause fails or lacks evidence" in out
+
+
+def test_the_full_document_carries_the_checkers_headline():
+    _, _, out = _render()
+    report = _compliance()
+    assert "<h2>10. Compliance summary</h2>" in out
+    assert f"{report.headline.applicable} clauses apply" in out
+
+
+def test_the_conclusion_names_every_criterion_no_authority_has_set():
+    loaded, results, out = _render()
+    unset = virtual_test._unset_criteria(results)
+    assert unset, "the example spec's designs carry an empty ahj block"
+    conclusion = out.split("<h2>11. Conclusion</h2>")[1].split("<h2>12.")[0]
+    for label in unset:
+        assert label in conclusion
+    assert "no authority has set a limit for" in conclusion
+
+
+def test_the_conclusion_never_reads_as_an_approval():
+    _, _, out = _render()
+    conclusion = out.split("<h2>11. Conclusion</h2>")[1].split("<h2>12.")[0].lower()
+    for word in ("approved", "certified", "accepted", "passes the test"):
+        assert word not in conclusion
+
+
+def test_limitations_carry_the_calibration_note_and_full_provenance():
+    loaded, results, out = _render()
+    tail = out.split("<h2>12. Limitations and provenance</h2>")[1]
+    report = _compliance()
+    for result in results.values():
+        assert result.meta["design_sha"] in tail
+        assert result.meta["engine_version"] in tail
+        # The note is HTML-escaped in the page, so compare against the unescaped section.
+        assert result.meta["calibration_note"][:60] in stdlib_html.unescape(tail)
+    assert report.provenance["calibration"] in tail
+    assert COMMIT in tail

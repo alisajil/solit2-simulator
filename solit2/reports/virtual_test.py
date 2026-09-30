@@ -12,8 +12,10 @@ import plotly.graph_objects as go
 # them keeps the report identical to the live simulator; promote them into solit2/
 # if the CLI is ever shipped without the app package.
 from app.components import charts, tunnel3d, twin_canvas
+from solit2.compliance.check import ComplianceReport
 from solit2.compliance.spec import LoadedSpec
 from solit2.engines.reduced.criteria import STATIONS
+from solit2.engines.reduced.envelope import ENGINE_VERSION
 from solit2.engines.reduced.geometry import section_geometry
 from solit2.engines.reduced.state import RunTrace
 from solit2.reports import html, labels
@@ -384,8 +386,77 @@ def _cfd_comparison(loaded: LoadedSpec, results: dict[str, Result],
     return "\n".join(parts)
 
 
+def _compliance_summary(report: ComplianceReport) -> str:
+    h = report.headline
+    parts = [
+        f"<p>Spec: {html.escape(report.spec_name)}. {h.applicable} clauses apply: "
+        f"{h.complying} comply ({h.by_deviation} through an accepted deviation), "
+        f"{h.fails} fail and {h.needs_evidence} need evidence. Of those that comply, "
+        f"{h.evidenced} rest on a full-scale measurement, {h.planned} on a planned "
+        f"design value and {h.predicted} on a Tier 1 prediction.</p>"]
+    blockers = report.blockers
+    if not blockers:
+        parts.append("<p>No clause fails or lacks evidence.</p>")
+        return "\n".join(parts)
+    parts.append(html.table(
+        ["Clause", "Requirement", "Verdict", "Found", "Required"],
+        [[f.clause, f.requirement, f.verdict.value.replace("_", " "), f.found, f.required]
+         for f in blockers]))
+    return "\n".join(parts)
+
+
+def _unset_criteria(results: dict[str, Result]) -> list[str]:
+    """Labels of every criterion no test design's AHJ block set, across all tests."""
+    return sorted({labels.label(key) for result in results.values()
+                   for key, c in result.criteria.items() if c.status == "unset"})
+
+
+def _conclusion(loaded: LoadedSpec, results: dict[str, Result],
+                report: ComplianceReport) -> str:
+    lines = []
+    for cls, design in sorted(loaded.tests.items()):
+        met, not_met, unset = _criteria_counts(results[cls])
+        failed = sorted(labels.label(k) for k, c in results[cls].criteria.items()
+                        if c.status == "fail")
+        tail = f" Not met: {', '.join(failed)}." if failed else ""
+        lines.append(f"<li>Test {cls} ({html.escape(design.meta.name)}): {met} criteria met, "
+                     f"{not_met} not met, {unset} with no limit set.{html.escape(tail)}</li>")
+    unset_names = _unset_criteria(results)
+    unset_text = (f"<p>In at least one test design no authority has set a limit for: "
+                  f"{html.escape(', '.join(unset_names))}. They are predicted and shown, and "
+                  "not judged.</p>" if unset_names
+                  else "<p>Every criterion in every test design has a limit set by its "
+                       "authority.</p>")
+    h = report.headline
+    return "\n".join([
+        "<p>This is a prediction from the engine, not a test result.</p>",
+        f"<ul>{''.join(lines)}</ul>", unset_text,
+        f"<p>The compliance checker finds {h.fails} failing and {h.needs_evidence} "
+        f"unevidenced clause(s) of {h.applicable} that apply.</p>"])
+
+
+def _limitations(results: dict[str, Result], report: ComplianceReport, commit: str) -> str:
+    any_result = next(iter(results.values()))
+    provenance = [[key.replace("design_sha.", "design SHA, "), value]
+                  for key, value in sorted(report.provenance.items())
+                  if key != "calibration"]
+    provenance += [["calibration hash", report.provenance["calibration"]],
+                   ["engine version", ENGINE_VERSION],
+                   ["tool commit", commit]]
+    warnings = sorted({w for r in results.values() for w in r.warnings})
+    return "\n".join([
+        f"<p>{html.escape(str(any_result.meta.get('calibration_note', '')))}</p>",
+        "<p>Every number in this report is an extrapolation until a full-scale test of the "
+        "assessed system exists.</p>",
+        "<h3>Provenance</h3>", html.table(["Item", "Value"], provenance),
+        "<h3>Warnings the engine raised</h3>",
+        ("<ul>" + "".join(f"<li>{html.escape(w)}</li>" for w in warnings) + "</ul>"
+         if warnings else "<p>The engine raised no warnings.</p>")])
+
+
 def render(loaded: LoadedSpec, results: dict[str, Result], *,
-           traces: dict[str, RunTrace], cfd: dict[str, CfdRun]) -> str:
+           traces: dict[str, RunTrace], cfd: dict[str, CfdRun],
+           compliance: ComplianceReport, commit: str) -> str:
     figs = _Figures()
     sections = [
         ("Introduction", _introduction()),
@@ -397,5 +468,8 @@ def render(loaded: LoadedSpec, results: dict[str, Result], *,
         ("Procedure", _procedure(loaded, results)),
         ("Results", _results(loaded, results, traces, figs)),
         ("CFD comparison", _cfd_comparison(loaded, results, cfd, figs)),
+        ("Compliance summary", _compliance_summary(compliance)),
+        ("Conclusion", _conclusion(loaded, results, compliance)),
+        ("Limitations and provenance", _limitations(results, compliance, commit)),
     ]
     return html.document(f"Virtual fire test report — {loaded.spec.name}", sections)
