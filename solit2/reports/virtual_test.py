@@ -8,7 +8,8 @@ objects; solit2/cli.py does the loading and running.
 from __future__ import annotations
 
 from solit2.compliance.spec import LoadedSpec
-from solit2.reports import html
+from solit2.reports import html, labels
+from solit2.engines.reduced.criteria import STATIONS
 from solit2.schema.result import Result
 from solit2.engines.reduced.geometry import section_geometry
 
@@ -63,6 +64,36 @@ def _fire_load(loaded: LoadedSpec) -> str:
     return html.table(["Test", "Fire preset", "Cover", "Design HRR"], rows)
 
 
+def _instruments() -> str:
+    rows = [[station, "temperature, heat flux, visibility, FED, CO, air velocity "
+            "(where Annex 7 Table 5 places a sensor at this station)"]
+            for station in STATIONS]
+    return (
+        "<p>Every station below is a modelled point, not a physical sensor: this is a "
+        "prediction, and no instrument has been installed yet.</p>"
+        + html.table(["Station", "What is modelled there"], rows))
+
+
+def _procedure(loaded: LoadedSpec, results: dict[str, Result]) -> str:
+    parts = [
+        "<p>Ignition follows each design's own fire preset; detection is "
+        "<code>linear_heat</code> at the threshold and spacing each design declares; "
+        "activation follows detection by the design's own delay, or fires at a fixed "
+        "time where the design pins it manually; the system then runs for the "
+        "design's own declared duration. The performance criteria below are judged "
+        "against each design's own <code>ahj</code> block.</p>"]
+    for cls, design in sorted(loaded.tests.items()):
+        result = results[cls]
+        rows = []
+        for key, criterion in sorted(result.criteria.items()):
+            limit_text = ("limit not set" if criterion.status == "unset"
+                         else labels.with_unit(key, criterion.limit))
+            rows.append([labels.label(key), limit_text])
+        parts.append(f"<h3>Test {cls}: {html.escape(design.meta.name)}</h3>")
+        parts.append(html.table(["Criterion", "Limit"], rows))
+    return "\n".join(parts)
+
+
 def render(loaded: LoadedSpec, results: dict[str, Result]) -> str:
     sections = [
         ("Introduction", _introduction()),
@@ -70,5 +101,7 @@ def render(loaded: LoadedSpec, results: dict[str, Result]) -> str:
         ("Test facility", _facility(loaded)),
         ("Water mist system", _water_mist_system(loaded)),
         ("Fire load and target", _fire_load(loaded)),
+        ("Virtual instruments", _instruments()),
+        ("Procedure", _procedure(loaded, results)),
     ]
     return html.document(f"Virtual fire test report — {loaded.spec.name}", sections)

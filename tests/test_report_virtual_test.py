@@ -59,3 +59,20 @@ def test_fire_load_states_the_design_hrr_and_covered_flag():
     out = virtual_test.render(loaded, results)
     for design in loaded.tests.values():
         assert f"{design.fire.design_hrr_mw:.0f}" in out
+
+
+def test_instruments_section_names_every_modelled_station():
+    from solit2.engines.reduced.criteria import STATIONS
+    loaded, results = _loaded_and_results()
+    out = virtual_test.render(loaded, results)
+    for station in STATIONS:
+        assert station in out
+
+
+def test_procedure_section_shows_limit_not_set_for_an_unset_criterion():
+    loaded, results = _loaded_and_results()
+    out = virtual_test.render(loaded, results)
+    # examples/compliance/solit2-example.spec.json's designs carry an empty
+    # `ahj` block (see examples/designs/solit2-test-protocol*.json), so every
+    # criterion beyond target_ignited is unset.
+    assert "limit not set" in out
