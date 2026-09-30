@@ -10,11 +10,11 @@ centroid, attenuated by the mist and by the smoke.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field as dataclass_field
 
 from solit2.engines.reduced.fire import FireModel, convective_kw, radiative_fraction
 from solit2.engines.reduced.geometry import SectionGeometry
-from solit2.engines.reduced.state import FireState, MistEffect
+from solit2.engines.reduced.state import CoolingProfile, FireState, MistEffect
 from solit2.engines.reduced.ventilation import VentilationState
 from solit2.schema.presets import load_calibration
 
@@ -157,10 +157,16 @@ class ThermalField:
     flame_tip_x_m: float
     # How far hot gas reaches UPSTREAM. Beyond it the upstream side is ambient.
     backlayer_m: float = 0.0
+    # What the spray takes from the gas after it leaves the fire. The ceiling
+    # excess above is the plume's, already cooled by the water falling through it.
+    cooling: CoolingProfile = dataclass_field(default_factory=CoolingProfile)
+
+    def _excess_k(self, x_m: float) -> float:
+        return (self.ceiling_excess_k * self.cooling.remaining(x_m)
+                * longitudinal_decay(x_m, self.height_m, self.backlayer_m))
 
     def ceiling_temp_c(self, x_m: float) -> float:
-        return self.ambient_c + self.ceiling_excess_k * longitudinal_decay(
-            x_m, self.height_m, self.backlayer_m)
+        return self.ambient_c + self._excess_k(x_m)
 
     def gas_temp_profile_c(self, x_m: float,
                            heights_m: tuple[float, ...]) -> tuple[float, ...]:
@@ -170,7 +176,7 @@ class ThermalField:
         cross-section of 5 or 7 thermocouples costs one decay evaluation and n
         blends rather than n of each.
         """
-        excess = self.ceiling_excess_k * longitudinal_decay(x_m, self.height_m, self.backlayer_m)
+        excess = self._excess_k(x_m)
         # strat_factor is defined AT breathing height (Newman), so anchor the blend there
         # rather than at the floor: exactly strat_factor at BREATHING_HEIGHT_M, rising
         # linearly to 1.0 at the crown, flat at strat_factor below breathing height. A
@@ -209,9 +215,10 @@ def exposure_length_m(thermal_field: ThermalField, threshold_c: float,
     """
     if step_m <= 0:
         raise ValueError(f"the ceiling scan step must be positive, got {step_m}")
-    # The longitudinal decay falls monotonically with distance from the fire, so
-    # if the fire's own station is below the threshold nothing downstream of it
-    # can be above it. This short-circuit skips the scan for every cool step.
+    # The longitudinal decay falls monotonically with distance from the fire, and
+    # the spray only ever takes heat from gas as it passes, so if the fire's own
+    # station is below the threshold nothing either side of it can be above it.
+    # This short-circuit skips the scan for every cool step.
     if thermal_field.ceiling_temp_c(0.0) <= threshold_c:
         return 0.0
     samples = int((x_max_m - x_min_m) / step_m) + 1
@@ -233,7 +240,8 @@ def field(geom: SectionGeometry, fire_model: FireModel, fire_state: FireState,
     # fire_top_m, because it means something else (see flame_clearance_m).
     h_ef = geom.crown_height_m - fire_base_m
     excess = max_ceiling_excess_k(hrr_kw, q_conv, vent_state.u_eff_ms, b_fo, h_ef)
-    # evaporating mist removes part of the convective heat before it reaches the ceiling
+    # water falling through the plume removes part of the convective heat before it
+    # reaches the ceiling; the rest of the spray acts further along (`cooling`)
     excess *= 1.0 - mist.chi_cool
     strat = stratification_factor(vent_state.u_eff_ms, geom.crown_height_m, excess)
     diameter = 2.0 * b_fo
@@ -252,6 +260,6 @@ def field(geom: SectionGeometry, fire_model: FireModel, fire_state: FireState,
     tip = c_f * max(flame - flame_clearance_m, 0.0)  # flame that cannot rise is deflected downstream
     return ThermalField(ceiling_excess_k=excess, strat_factor=strat, ambient_c=ambient_c,
                         height_m=geom.crown_height_m, hrr_kw=hrr_kw,
-                        backlayer_m=vent_state.backlayer_m,
+                        backlayer_m=vent_state.backlayer_m, cooling=mist.cooling,
                         radiative_fraction=radiative_fraction(fire_model),
                         flame_centroid_z_m=centroid, flame_tip_x_m=tip)

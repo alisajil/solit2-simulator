@@ -206,8 +206,8 @@ Each is a real disagreement with a measured test, not a tolerance to widen.
       it from a CFD (Tier 2) case or a test that measures temperature along the
       spray.
 
-      **Tried 2026-09-27 on branch `fix/cooling-location` (draft PR #9, not
-      merged).** Cooling there acts where each head's water meets the gas.
+      **Tried 2026-09-27 on branch `fix/cooling-location` (PR #9, merged
+      as is, before the spray-on-backlayer model exists).** Cooling acts where each head's water meets the gas.
       The water falling through the plume, over the fuel, sets `chi_cool`.
       Heads downstream cool the gas after it passes them, and heads upstream
       cool the backlayer (`state.CoolingProfile`). No new constant was added.

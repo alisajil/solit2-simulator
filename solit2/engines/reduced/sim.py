@@ -51,8 +51,8 @@ STRUCTURE_SCAN_MAX_M = 100.0
 AMBIENT_SPECIES = tenability.Species(0.0, 0.0, 0.0, tenability.AMBIENT_O2_PCT)
 # Heat taken from the gas by one kg of spray water that evaporates completely:
 # raising it from the inlet temperature to boiling, then the latent heat. This
-# is exactly the denominator `mist._cooling_fraction` divides by, so dividing
-# `chi_cool * q_conv` by it recovers the evaporated mass flow the mist module
+# is exactly the denominator `mist._head_sprays` divides by, so dividing the
+# heat the spray took by it recovers the evaporated mass flow the mist module
 # used, rather than modelling evaporation a second time.
 MIST_EVAPORATION_ENTHALPY_KJKG = (
     mist_mod.WATER_CP_KJKGK * (mist_mod.WATER_BOILING_C - mist_mod.WATER_INLET_TEMP_C)
@@ -176,16 +176,17 @@ def _flow_fraction(zones: Zones, events: dict, t_s: float) -> float:
 def _mist_water_ratio(mist: MistEffect, q_conv_kw: float, air_kgs: float) -> float:
     """kg of evaporated spray water per kg of air, from what the mist cooled.
 
-    Recovered from `MistEffect.chi_cool` rather than modelled again, so the
-    water reported as humidity is exactly the water charged for as cooling.
-    `chi_cool` is self-limiting rather than clipped -- it approaches 1 as the
-    spray overwhelms the fire and never exceeds it -- so this tracks the
-    cooling it is derived from instead of flattening wherever a cap used to
-    bind.
+    Recovered from the cooling rather than modelled again, so the water
+    reported as humidity is exactly the water charged for as cooling: in the
+    plume and in the gas downstream of it, which is the air the stations
+    sample (`MistEffect.chi_downstream`). It is self-limiting rather than
+    clipped -- it approaches 1 as the spray overwhelms the fire and never
+    exceeds it -- so this tracks the cooling it is derived from instead of
+    flattening wherever a cap used to bind.
     """
     if q_conv_kw <= 0 or air_kgs <= 0:
         return 0.0
-    return mist.chi_cool * q_conv_kw / MIST_EVAPORATION_ENTHALPY_KJKG / air_kgs
+    return mist.chi_downstream * q_conv_kw / MIST_EVAPORATION_ENTHALPY_KJKG / air_kgs
 
 
 def _sample_stations(scene: _Scene, field: ThermalField, mist: MistEffect,
@@ -361,12 +362,13 @@ def run_once(design: Design, section: str, velocity_ms: float) -> RunTrace:
         # out as if the system were off. On reference case c4 that predicted
         # 30 m of backlayering at 2.25 m/s where the test reported none.
         # `mist` here is the previous step's, the same one-step lag
-        # `fire_mod.step` above already runs on.
+        # `fire_mod.step` above already runs on. Only the water falling through
+        # the plume cools the plume; the rest meets gas that has already left.
         q_conv_gas = q_conv * (1.0 - mist.chi_cool)
-        # The smoke that turns upstream is cooled a second time by the spray it
-        # has to pass under; see `mist.backlayer_heat_kw`.
+        # The smoke that turns upstream is cooled a second time by the heads it
+        # passes under; see `mist.backlayer_heat_kw`.
         vent = ventilation.evaluate(scene.geom, velocity_ms, q_conv_gas,
-                                    mist_mod.backlayer_heat_kw(q_conv, mist.chi_cool))
+                                    mist_mod.backlayer_heat_kw(q_conv, mist))
         _detect(scene, events, state.hrr_mw, state.t_s)
         flow_fraction = _flow_fraction(scene.design.zones, events, state.t_s)
 

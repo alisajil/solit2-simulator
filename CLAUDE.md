@@ -169,13 +169,12 @@ Two habits that keep the loop honest:
   cool, as a reason to check the engine rather than as a win.
 
 Since 2026-09-27 the gas temperatures are the published Li & Ingason correlation, unscaled; the
-0.314 multiplier that made them 3× cool is gone, and spray only cools gas it actually falls
-through (`mist.heads_in_hot_gas`). The fit cannot hold fire size, ceiling temperature and
-backlayering at once, because a single cooling fraction is applied at the fire. It trades the
-ceiling temperatures away. That is a structural limit to fix, not to tune around
-(`docs/accuracy-roadmap.md`). Do not read the backlayering passes as evidence. They exist only
-because water falling downstream of the fire is credited to its plume. Once cooling acts where
-the water actually is (draft PR #9), the engine has no way for the spray to hold the smoke back.
+0.314 multiplier that made them 3× cool is gone. Spray cools gas only where its water meets
+it: the water over the fuel cools the plume (`chi_cool`), and heads downstream or upstream cool
+the gas after it has left the fire (`state.CoolingProfile`). That exposed what the old single
+fraction had hidden. No mechanism in the engine lets the spray hold back the backlayer, so the
+fit starves the fire to keep the smoke from reaching U15. The spray's effect on the backlayer is
+a structural limit to fix, not to tune around (`docs/accuracy-roadmap.md`).
 Every nozzle — the project's and the reference — is tester input:
 K-factor, pressure, D32,
 Dv50/Dv90, cone, discharge velocity and mounting, none assumed. The Fire test step runs the

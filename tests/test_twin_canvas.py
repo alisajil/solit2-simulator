@@ -34,7 +34,7 @@ def _wet_step(trace):
 
 
 def _steaming_step(trace):
-    return next(s for s in trace.steps if s.mist.chi_cool > tc.STEAM_MIN_CHI_COOL)
+    return next(s for s in trace.steps if s.mist.chi_downstream > tc.STEAM_MIN_CHI_COOL)
 
 
 def _spraying_but_not_steaming(trace):
@@ -46,9 +46,11 @@ def _spraying_but_not_steaming(trace):
     rule still has to be right for the one that would.
     """
     import dataclasses
+    from solit2.engines.reduced.state import CoolingProfile
     wet = _wet_step(trace)
     return dataclasses.replace(
-        wet, mist=dataclasses.replace(wet.mist, chi_cool=tc.STEAM_MIN_CHI_COOL / 2))
+        wet, mist=dataclasses.replace(wet.mist, chi_cool=tc.STEAM_MIN_CHI_COOL / 2,
+                                      cooling=CoolingProfile()))
 
 
 def _exposed_target_step(trace):

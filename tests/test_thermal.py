@@ -499,3 +499,18 @@ def test_ceiling_excess_is_the_published_li_ingason_correlation_unscaled():
     hrr_kw, q_conv_kw, u_ms, b_m, h_m = 14_500.0, 9_425.0, 5.08, 2.764, 6.125
     expected = hrr_kw / (u_ms * b_m ** (1 / 3) * h_m ** (5 / 3))
     assert thermal.max_ceiling_excess_k(hrr_kw, q_conv_kw, u_ms, b_m, h_m) == pytest.approx(expected)
+
+
+def test_gas_downstream_of_a_spray_is_cooler_than_the_same_gas_without_it():
+    """The field carries where the spray took its heat: the ceiling above the
+    fire is the plume's, and only gas that has passed the heads is cooler for
+    them."""
+    import dataclasses
+    from tests.test_mist import _heads, _setup
+
+    _, _, _, _, effect = _setup(gas_excess_k=700.0, positions=_heads(dx_m=200.0))
+    dry = dataclasses.replace(_ZERO_FIELD, ceiling_excess_k=500.0)
+    wet = dataclasses.replace(dry, cooling=effect.cooling)
+    assert wet.ceiling_temp_c(0.0) == dry.ceiling_temp_c(0.0)
+    assert wet.ceiling_temp_c(400.0) < dry.ceiling_temp_c(400.0)
+    assert wet.gas_temp_c(400.0, 1.8) < dry.gas_temp_c(400.0, 1.8)
