@@ -182,13 +182,14 @@ def test_a_cell_size_that_does_not_tile_the_window_is_rejected():
 
 
 def test_the_cell_count_stays_inside_the_planned_budget():
-    # 0.6 m uniform over 600 m is about 221k cells; the earlier 180k figure
-    # belonged to the nested design that could not run. A silent jump past this
-    # turns an overnight run into a week. The goldens pin the exact mesh set.
+    # 0.5 m (chosen so the mock-up ends and the target face land on Annex 7's
+    # stations, see deck.DX_M) is about 287k cells with the coarse far field, up
+    # from about 221k at 0.6 m. A silent jump past this turns an overnight run
+    # into a week. The goldens pin the exact mesh set.
     for design_path in (BASELINE, TEST_RIG):
         total = sum(i * j * k for i, j, k in
                     _mesh_ijk(deck.generate(Design.load(design_path))))
-        assert total < 250_000, (design_path, total)
+        assert total < 300_000, (design_path, total)
 
 
 def test_the_portals_supply_upstream_and_open_downstream():
@@ -539,7 +540,10 @@ def test_ceiling_thermocouples_and_heat_detectors_sit_in_gas_not_inside_the_crow
         _, y, z = _device_xyz(text, device)
         open_top = _open_ceiling_m(geom, y)
         assert z < open_top, f"{device} at z={z} is inside the solid layer above {open_top}"
-        assert z > open_top - deck.DX_M, f"{device} is not just under the ceiling that exists at y={y}"
+        # under the ceiling that exists there: the slab top, or the real crown where
+        # the topmost slab runs past it (a whole-cell mesh overshoots the crown)
+        assert z == pytest.approx(min(open_top, geom.crown_height_m) - deck.CEILING_OFFSET_M, abs=0.006), \
+            f"{device} is not just under the ceiling that exists at y={y}"
     # Never above the real crown: the topmost slab runs past it, because the
     # mesh is whole cells and the crown is not.
     for y in (0.0, -2.7, 2.7):
@@ -1009,3 +1013,74 @@ def test_a_roof_that_cannot_fit_under_the_ceiling_is_refused_not_dropped():
     low = dataclasses.replace(geom, crown_height_m=4.4)
     with pytest.raises(ValueError, match="cover"):
         deck.cover_box(design, low)
+
+
+# ---- Annex 7 positions: what the deck emits against what the standard says ----
+
+CLASS_B = "examples/designs/solit2-test-protocol-class-b.json"
+
+
+def _dev_xyz(text: str, prefix: str) -> list[tuple[float, float, float]]:
+    out = []
+    for line in text.splitlines():
+        if line.startswith(f"&DEVC ID='{prefix}"):
+            x, y, z = (float(v) for v in line.split("XYZ=")[1].split(",")[:3])
+            out.append((x, y, z))
+    return out
+
+
+def test_the_mock_up_ends_and_target_face_land_on_annex_7s_stations():
+    # 5.2.2/6.1: the mock-up ends are U5 and D5; 5.2.6: the target is 5 m
+    # downstream behind it, "located at D10". A snapped mesh that moves either
+    # by a fifth of a metre changes the gap the flame has to bridge, and the
+    # target flux with it.
+    from solit2.engines.reduced.geometry import section_geometry
+    design = Design.load(TEST_RIG)
+    geom = section_geometry(design)
+    fuel, target = deck.fuel_box(design, geom), deck.target_box(design, geom)
+    fp = design.fire.footprint
+    assert fuel.x0 == pytest.approx(-fp.length_m / 2) and fuel.x1 == pytest.approx(fp.length_m / 2)
+    assert target.x0 == pytest.approx(design.fire.target_x_m)
+    assert target.x0 - fuel.x1 == pytest.approx(design.fire.target_distance_m)
+    assert (fuel.z0, fuel.z1) == pytest.approx((fp.base_height_m, fp.top_height_m))
+
+
+def test_the_mock_up_is_eccentric_within_annex_7s_wall_clearance():
+    # 5.2.3: less than 1.5 m from the side wall, and not moved far from where
+    # Tier 1 and the drawings put it.
+    from solit2.engines.reduced.geometry import fire_lateral_m, section_geometry
+    design = Design.load(TEST_RIG)
+    geom = section_geometry(design)
+    fuel = deck.fuel_box(design, geom)
+    assert fuel.y0 - (-geom.road_width_m / 2) < 1.5
+    assert abs(fuel.y_centre_m - fire_lateral_m(design, geom)) <= deck.DX_M / 2 + 1e-9
+    assert abs((fuel.y1 - fuel.y0) - design.fire.footprint.width_m) <= deck.DX_M
+
+
+def test_the_target_thermocouples_are_on_the_target_not_beside_it():
+    # Table 5 puts 3 thermocouples at the target. They were at y=0, outside a
+    # target that spans y -2.7...-0.3, so they read gas next to it.
+    from solit2.engines.reduced.geometry import section_geometry
+    design = Design.load(TEST_RIG)
+    geom = section_geometry(design)
+    target = deck.target_box(design, geom)
+    tcs = _dev_xyz(deck.generate(design), "Target_TC")
+    assert len(tcs) == 3
+    for x, y, z in tcs:
+        assert target.y0 < y < target.y1
+        assert target.z0 < z < target.z1
+        assert abs(x - target.x0) <= deck.DX_M
+
+
+def test_a_class_b_deck_has_no_fire_target_and_a_pool_no_higher_than_annex_7_allows():
+    # 5.2.6 sites the target for Class A only; 5.3.2 puts the pool's maximum
+    # height at 0.5 m above the road.
+    from solit2.engines.reduced.geometry import section_geometry
+    design = Design.load(CLASS_B)
+    geom = section_geometry(design)
+    text = deck.generate(design)
+    assert deck.TARGET_GAUGE_ID not in text
+    # the Table 5 "Target" station stays as ordinary gas thermocouples at D10:
+    # the criteria read that station, and there is nothing to put them on
+    assert len(_dev_xyz(text, "Target_TC")) == 3
+    assert deck.fuel_box(design, geom).z1 <= 0.5 + 1e-9
