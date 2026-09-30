@@ -199,7 +199,9 @@ def _step_records(devc_ids: list[str], devc_rows: list[list[float]],
         dt_s = t_s - devc_rows[i - 1][0] if i else 0.0
         hrr_mw = hrr_mw_series[i] if i < len(hrr_mw_series) else hrr_mw_series[-1]
         ceiling_temps = [_at(devc_ids, row, c) for c in ceiling]
-        target_flux = _at(devc_ids, row, deck_mod.TARGET_GAUGE_ID)
+        # Annex 7 5.2.6: no target in a Class B run, so no gauge and no flux to read.
+        target_flux = (_at(devc_ids, row, deck_mod.TARGET_GAUGE_ID)
+                       if deck_mod.has_target(design) else 0.0)
         exposure_s = target_exposure_s(exposure_s, target_flux, dt_s)
         hot = sum(1 for t in ceiling_temps if t > threshold_c)
         steps.append(StepRecord(
@@ -347,7 +349,7 @@ def _warnings(design: Design, geom: SectionGeometry, velocity_ms: float, engine_
     stepped_m2 = deck_mod.stepped_free_area_m2(geom)
     gap_pct = (stepped_m2 - geom.free_area_m2) / geom.free_area_m2 * 100.0
     fp = design.fire.footprint
-    fuel, target = deck_mod.fuel_box(design, geom), deck_mod.target_box(design, geom)
+    fuel = deck_mod.fuel_box(design, geom)
     ceiling_y = fuel.y_centre_m
     warnings = [
         (f"hrr_free_mw is the separate free-burn FDS run "
@@ -368,8 +370,12 @@ def _warnings(design: Design, geom: SectionGeometry, velocity_ms: float, engine_
         f"against the design's {fp.length_m:g} x {fp.width_m:g} m footprint at "
         f"{fp.base_height_m:g}-{fp.top_height_m:g} m; HRRPUA is normalised to the snapped top "
         f"face so the total HRR is the design's exactly",
-        f"the target flux gauge sits on the solid target's face at x = {target.x0:.1f} m; "
-        f"Tier 1 evaluates its flux at x = {design.fire.target_x_m:.1f} m",
+        (f"the target flux gauge sits on the solid target's face at "
+         f"x = {deck_mod.target_box(design, geom).x0:.1f} m; Tier 1 evaluates its flux at "
+         f"x = {design.fire.target_x_m:.1f} m"
+         if deck_mod.has_target(design) else
+         "no fire target in this run (Annex 7 5.2.6 sites one for Class A only); "
+         "target_flux_kwm2 is 0 throughout, not a measurement"),
         f"suppression of the prescribed burner is FDS's E_COEFFICIENT = "
         f"{e_coefficient}, an empirical extinguishing coefficient not fitted to "
         f"this nozzle or this fuel; the suppressed HRR scales directly with it",

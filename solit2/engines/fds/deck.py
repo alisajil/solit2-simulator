@@ -69,13 +69,22 @@ CORE_M = (-60.0, 120.0)
 # vertically, and an integer ratio in every direction keeps the coarse
 # lattice a subset of the fine one, which is what a conforming interface
 # needs. The factor is 2 because the User Guide names a change of more than a
-# factor of 2 at an interface as a cause of instability. 0.6 m keeps
-# D*/dx = 11.8 at 150 MW in the fine region, inside the 10-16 band.
-DX_M = 0.6
+# factor of 2 at an interface as a cause of instability. 0.5 m keeps
+# D*/dx = 14.2 at 150 MW in the fine region, inside the 10-16 band.
+#
+# Why 0.5 and not 0.6: the Annex 7 positions are metres on a 0.5 grid. At 0.6 m
+# the mock-up snapped to 9.6 m long (ends at +-4.8, not U5/D5) and the target
+# face to 10.2 m, a 5.4 m gap against the standard's 5.0. At 0.5 m the mock-up
+# ends, the target face and the mock-up's height all land exactly; the one
+# thing that does not is the 2.4 m width, which snaps to 2.0 m (HRRPUA is
+# normalised to the snapped face, so the total HRR is unchanged). 0.25 m would
+# fit the width too, at about 14x the cells of 0.6 m.
+DX_M = 0.5
 FINE_HALF_LENGTH_M = 108.0   # every station within +-100 m stays in fine cells
 COARSE_FACTOR = 2
 # Meshes per region -- upstream coarse, fine, downstream coarse -- one MPI
 # rank each. (3, 5, 2) puts 17,290 / 17,784 / 13,585 cells on a rank at 0.6 m
+# (about 1.7x that at 0.5 m)
 # and keeps the fire mid-mesh: the old uniform split had an interface at x=0,
 # through the fuel bed.
 # Meshes within a region differ by at most one cell along x when the region's
@@ -277,18 +286,29 @@ def _snapped_box(x0: float, x1: float, y_centre: float, width_m: float, z0: floa
     return Box(bx0, max(bx1, bx0 + dx_m), by0, max(by1, by0 + dx_m), bz0, max(bz1, bz0 + dx_m))
 
 
+def _load_y_bounds(design: Design, geom: SectionGeometry, dx_m: float) -> tuple[float, float]:
+    """(y0, y1) of the mock-up and the target, snapped to the mesh.
+
+    The NEAR face is snapped toward its wall (never away), then the width is the
+    nearest whole number of cells. Annex 7 5.2.3 wants the mock-up less than 1.5 m
+    from the side wall, and a plain nearest-node snap can land exactly on the
+    limit: a 2.4 m load snapped to 2.0 m at 0.5 m cells sat 1.5 m off the wall.
+    """
+    origin = _y_origin(geom, dx_m)
+    yc, width = fire_lateral_m(design, geom), design.fire.footprint.width_m
+    y0 = origin + math.floor((yc - width / 2.0 - origin) / dx_m + 1e-9) * dx_m
+    return y0, y0 + max(round(width / dx_m), 1) * dx_m
+
+
 def fuel_box(design: Design, geom: SectionGeometry, dx_m: float = DX_M) -> Box:
-    """The mock-up as the deck emits it: the design footprint at Tier 1's own
+    """The mock-up as the deck emits it: the design footprint near Tier 1's own
     lateral position (`fire_lateral_m`), snapped to the mesh."""
     fp = design.fire.footprint
-    return _snapped_box(FIRE_X_M - fp.length_m / 2.0, FIRE_X_M + fp.length_m / 2.0,
+    base = _snapped_box(FIRE_X_M - fp.length_m / 2.0, FIRE_X_M + fp.length_m / 2.0,
                         fire_lateral_m(design, geom), fp.width_m,
                         fp.base_height_m, fp.top_height_m, geom, dx_m)
-
-
-# The tarpaulin is 10.5 x 7.5 m over a 10.0 x 2.4 m mock-up (scope analysis,
-# Annex 2 §2), so it overhangs the fuel; the roof takes the same margin all round.
-COVER_OVERHANG_M = 0.25
+    y0, y1 = _load_y_bounds(design, geom, dx_m)
+    return Box(base.x0, base.x1, y0, y1, base.z0, base.z1)
 
 
 def cover_box(design: Design, geom: SectionGeometry, dx_m: float = DX_M) -> Box | None:
@@ -315,11 +335,15 @@ def cover_box(design: Design, geom: SectionGeometry, dx_m: float = DX_M) -> Box 
         raise ValueError(
             f"the tarpaulin cover does not fit: it would sit at {z:.2f} m but the "
             f"ceiling over the mock-up is at {ceiling:.2f} m")
-    fp = design.fire.footprint
-    plate = _snapped_box(FIRE_X_M - fp.length_m / 2.0 - COVER_OVERHANG_M,
-                         FIRE_X_M + fp.length_m / 2.0 + COVER_OVERHANG_M,
-                         fuel.y_centre_m, fp.width_m + 2.0 * COVER_OVERHANG_M, z, z, geom, dx_m)
-    return Box(plate.x0, plate.x1, plate.y0, plate.y1, z, z)
+    # One cell of margin all round: the real tarpaulin (10.5 x 7.5 m over a
+    # 10.0 x 2.4 m load) overhangs and drapes the sides, and a quarter-metre
+    # overhang is below the mesh, where it would snap unpredictably.
+    return Box(fuel.x0 - dx_m, fuel.x1 + dx_m, fuel.y0 - dx_m, fuel.y1 + dx_m, z, z)
+
+
+def has_target(design: Design) -> bool:
+    """Annex 7 5.2.6 sites a fire target for Class A fires only."""
+    return design.fire.fire_class == "A"
 
 
 def target_box(design: Design, geom: SectionGeometry, dx_m: float = DX_M) -> Box:
@@ -332,8 +356,10 @@ def target_box(design: Design, geom: SectionGeometry, dx_m: float = DX_M) -> Box
     """
     fp = design.fire.footprint
     x0 = design.fire.target_x_m
-    return _snapped_box(x0, x0 + fp.width_m, fire_lateral_m(design, geom), fp.width_m,
+    base = _snapped_box(x0, x0 + fp.width_m, fire_lateral_m(design, geom), fp.width_m,
                         fp.base_height_m, fp.top_height_m, geom, dx_m)
+    y0, y1 = _load_y_bounds(design, geom, dx_m)
+    return Box(base.x0, base.x1, y0, y1, base.z0, base.z1)
 
 
 def _x_regions(dx_m: float) -> list[tuple[float, float, float, int]]:
@@ -679,6 +705,8 @@ def _target(design: Design, geom: SectionGeometry, dx_m: float) -> list[str]:
     FDS's boundary 'GAUGE HEAT FLUX' needs exactly such a solid to sit on
     (ERROR 427 without one), and IOR points from the face into the gas.
     """
+    if not has_target(design):
+        return []
     box = target_box(design, geom, dx_m)
     z = design.fire.footprint.top_height_m / 2.0
     z = min(max(z, box.z0 + dx_m / 2.0), box.z1 - dx_m / 2.0)
@@ -967,6 +995,18 @@ def _table_5_profiles(name: str, kit, x_m: float, geom: SectionGeometry,
     return lines
 
 
+def _target_thermocouples(name: str, count: int, target: Box, dx_m: float) -> list[str]:
+    """Table 5's thermocouples AT the target: in the gas cell against its upstream
+    face, on its centreline, spread over its height. They used to sit on the
+    tunnel centreline like every other station, which is beside a target that
+    stands off to one side and reads the gas next to it, not the target."""
+    x = target.x0 - dx_m / 2.0
+    height = target.z1 - target.z0
+    return [f"&DEVC ID='{name}_TC{i}', XYZ={x:.2f},{target.y_centre_m:.2f},"
+            f"{target.z0 + (i + 0.5) / count * height:.2f}, QUANTITY='THERMOCOUPLE' /"
+            for i in range(count)]
+
+
 def _stations(design: Design, geom: SectionGeometry, dx_m: float) -> list[str]:
     """Annex 7 Table 5, device by device, plus the ceiling line a simulation needs."""
     from solit2.engines.reduced.criteria import (BREATHING_HEIGHT_M, HEAT_FLUX_HEIGHT_M,
@@ -976,12 +1016,16 @@ def _stations(design: Design, geom: SectionGeometry, dx_m: float) -> list[str]:
     lines = []
     fuel, target = fuel_box(design, geom, dx_m), target_box(design, geom, dx_m)
     roof = cover_box(design, geom, dx_m)
-    solids = (fuel, target) + (() if roof is None else (roof,))
+    solids = ((fuel, target) if has_target(design) else (fuel,)) \
+        + (() if roof is None else (roof,))
     load_y_m = fuel.y_centre_m
     for name, x_m in sorted(STATIONS.items(), key=lambda kv: kv[1]):
         if not (WINDOW_M[0] <= x_m <= WINDOW_M[1]):
             continue
         kit = INSTRUMENTS[name]
+        if name == "Target" and has_target(design):
+            lines += _target_thermocouples(name, kit.thermocouples, target, dx_m)
+            continue
         heights = thermocouple_heights_m(kit.thermocouples, geom.crown_height_m)
         for rung, z in enumerate(heights):
             placed = clear_of_solids_z_m(gas_z_m(geom, 0.0, z, dx_m), x_m, 0.0, solids,
