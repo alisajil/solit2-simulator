@@ -109,9 +109,12 @@ uv run solit2 run designs/<candidate>.json --engine fds --out runs/<candidate>-f
 uv run solit2 report correlation --test runs/<candidate>-fds.json --site runs/<candidate>.json
 ```
 
-**This needs an FDS binary and none is installed.** `run --engine fds` will refuse with a
+**This needs an FDS binary on the PATH.** On this machine one is installed at
+`~/FDS/native/bin/fds`; `.claude/launch.json` puts it on the app's PATH, and a shell needs
+`export PATH="$HOME/FDS/native/bin:$PATH"`. Without it, `run --engine fds` refuses with a
 pre-flight failure naming what is missing, which is the honest answer rather than a fake run.
-`fds-deck` works today and produces a deck you can run elsewhere.
+`fds-deck` works either way and produces a deck you can run elsewhere. Long runs belong on the
+dedicated CFD server, not a laptop.
 
 When Tier 1 and Tier 2 disagree by more than the tolerances in the design spec's §9, the
 disagreement is the finding — do not quietly prefer the tier you like. It means a new anchor,

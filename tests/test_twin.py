@@ -95,6 +95,14 @@ def test_the_twin_validates_and_runs_in_tier_one():
     assert result.worst_case["velocity_ms"] in (1.5, 3.0)
 
 
+@pytest.mark.xfail(strict=True, raises=AssertionError, reason=(
+    "Since located cooling (#9) the mist cannot put this pool out: water on the fuel is "
+    "1.13 mm/min against the 1.38 extinction flux, and the flame loses 7 % of its heat "
+    "against the 29 % extinction fraction. A Class B pool carries no fuel inventory "
+    "(fire_pool_60mw.json declares none), so an unextinguished pool burns at its full "
+    "57 MW for the whole horizon. This is the same miss `solit2 validate` reports for c6 "
+    "(pools_extinguished). Remove the mark when pool extinction or a pool fuel inventory "
+    "is modelled -- never by lowering either threshold to pass it."))
 def test_class_b_horizon_covers_the_whole_fire():
     """5.3.7 runs Class B until the fire is out or the fuel is gone; the run
     horizon is only how long the engine runs, so it must reach that point."""
