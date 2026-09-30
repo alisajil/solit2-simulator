@@ -115,7 +115,7 @@ def tiles(result: Result) -> tuple[Tile, ...]:
     peaks, events, score = result.peaks, result.events, result.score
     n_set, total = criteria_set(result)
     full = events.get("t_full_pressure_s")
-    ignited = bool(result.criteria["target_ignited"].value)
+    target = result.criteria.get("target_ignited")     # absent in a Class B run: no target
     failed = list(score.get("gates_failed") or [])
     # The count is never dropped in favour of the gate failure: a design can fail
     # a gate for reasons that have nothing to do with how many criteria are set
@@ -128,7 +128,8 @@ def tiles(result: Result) -> tuple[Tile, ...]:
         Tile("Peak heat release", f"{peaks['hrr_mw']:.1f} MW",
              f"free burn {peaks['hrr_free_burn_mw']:.1f} MW"),
         Tile("Peak ceiling gas", f"{peaks['ceiling_temp_c']:.0f} °C", "under the ceiling"),
-        Tile("Target", "ignited" if ignited else "not ignited", "Annex 7 §7.2.1"),
+        (Tile("Target", "none", "Annex 7 §5.2.6: Class A only") if target is None else
+         Tile("Target", "ignited" if target.value else "not ignited", "Annex 7 §7.2.1")),
         Tile("Full pressure", f"{full:.0f} s" if full is not None else "never reached",
              "after ignition"),
         Tile("Score", f"{score['total']:.1f}", note),

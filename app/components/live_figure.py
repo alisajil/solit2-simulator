@@ -71,7 +71,7 @@ def _gauge(gauge: readings.Gauge, value: float, top: float,
                         title={"text": gauge.label.upper(), "font": {"size": 12}})
 
 
-def _series(trace: RunTrace) -> list[tuple[int, go.Scatter]]:
+def _series(trace: RunTrace, design: Design) -> list[tuple[int, go.Scatter]]:
     """(chart column, line) for every static chart line."""
     t = [s.t_s for s in trace.steps]
     lines = [
@@ -87,9 +87,10 @@ def _series(trace: RunTrace) -> list[tuple[int, go.Scatter]]:
     lines.append((5, go.Scatter(x=t, y=[readings.reading(s, "heat_flux_kwm2")
                                         for s in trace.steps],
                                 name="worst station flux", mode="lines")))
-    lines.append((5, go.Scatter(x=t, y=[s.target_flux_kwm2 for s in trace.steps],
-                                name="flux at the target", mode="lines",
-                                line={"dash": "dot"})))
+    if design.fire.has_target:      # Annex 7 5.2.6: Class A only
+        lines.append((5, go.Scatter(x=t, y=[s.target_flux_kwm2 for s in trace.steps],
+                                    name="flux at the target", mode="lines",
+                                    line={"dash": "dot"})))
     return lines
 
 
@@ -139,7 +140,7 @@ def figure(design: Design, result: Result, trace: RunTrace, *,
     # Static traces first: the geometry and the chart lines never change.
     for static in tunnel3d.static_traces(design, geom, window_m):
         fig.add_trace(static, row=2, col=1)
-    series = _series(trace)
+    series = _series(trace, design)
     for col, line in series:
         fig.add_trace(line, row=3, col=col)
     chart_top = {col: (max(max(line.y) for c, line in series if c == col) * CHART_HEADROOM

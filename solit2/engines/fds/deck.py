@@ -345,7 +345,7 @@ def cover_box(design: Design, geom: SectionGeometry, dx_m: float = DX_M) -> Box 
 
 def has_target(design: Design) -> bool:
     """Annex 7 5.2.6 sites a fire target for Class A fires only."""
-    return design.fire.fire_class == "A"
+    return design.fire.has_target
 
 
 def target_box(design: Design, geom: SectionGeometry, dx_m: float = DX_M) -> Box:

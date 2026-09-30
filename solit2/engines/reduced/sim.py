@@ -269,6 +269,8 @@ def _target_flux_kwm2(scene: _Scene, field: ThermalField, mist: MistEffect) -> f
     END of the mock-up and is half a mock-up short of a position in this frame;
     using it as one put the target at D5 and declared flame contact 5 m early.
     """
+    if not scene.design.fire.has_target:
+        return 0.0
     target_x_m = scene.design.fire.target_x_m
     flux = field.radiant_flux_kwm2(target_x_m, scene.fire_top_m / 2.0, mist.tau_mist)
     if field.flame_tip_x_m >= target_x_m:

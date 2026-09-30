@@ -101,6 +101,11 @@ class Fire(Frozen):
         return self.alpha_kw_s2 if self.alpha_kw_s2 is not None else GROWTH_ALPHA_KW_S2[self.growth]
 
     @property
+    def has_target(self) -> bool:
+        """Annex 7 5.2.6 sites a fire target for Class A fires only."""
+        return self.fire_class == "A"
+
+    @property
     def target_x_m(self) -> float:
         """The fire target's position in the measurement x-frame, in metres.
 

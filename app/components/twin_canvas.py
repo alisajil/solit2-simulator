@@ -78,7 +78,8 @@ def core_window_m(design: Design) -> tuple[float, float]:
     position instead, so it always contains what it is meant to zoom to.
     """
     half_active = design.active_length_m / 2.0
-    target_far_edge = design.fire.target_x_m + design.fire.footprint.width_m
+    target_far_edge = (design.fire.target_x_m + design.fire.footprint.width_m
+                       if design.fire.has_target else design.fire.footprint.length_m / 2.0)
     right = max(half_active, target_far_edge) + CORE_WINDOW_MARGIN_M
     return -half_active - CORE_WINDOW_MARGIN_M, right
 
@@ -128,16 +129,22 @@ def tunnel_layer(design: Design, geom: SectionGeometry, window_m: tuple[float, f
     shapes = [
         _rect(-fp.length_m / 2, fp.length_m / 2, fp.base_height_m, fp.top_height_m,
               line=structure, fillcolor=palette.rgba(STRUCTURE_COLOUR, 0.35)),
-        _rect(design.fire.target_x_m, design.fire.target_x_m + target_length_m,
-              fp.base_height_m, fp.top_height_m,
-              line={"color": FAIL_COLOUR if target_ignited else STRUCTURE_COLOUR, "dash": "dot"},
-              fillcolor=target_fill),
+        *([_rect(design.fire.target_x_m, design.fire.target_x_m + target_length_m,
+                 fp.base_height_m, fp.top_height_m,
+                 line={"color": FAIL_COLOUR if target_ignited else STRUCTURE_COLOUR,
+                       "dash": "dot"},
+                 fillcolor=target_fill)] if design.fire.has_target else []),
         _line(x0, x1, 0.0, 0.0, line={**structure, "width": 2}),
         _line(x0, x1, crown, crown, line={**structure, "width": 2}),
         _line(-half_active, half_active, crown - 0.15, crown - 0.15,
               line={**structure, "width": 1, "dash": "dash"}),
     ]
     heads = nozzle_positions(design, geom, fire_x_m=0.0)
+    has_target = design.fire.has_target        # Annex 7 5.2.6: Class A only
+    target_label_x = [design.fire.target_x_m + target_length_m / 2] if has_target else []
+    target_label_y = [fp.top_height_m + 0.4] if has_target else []
+    target_label_text = ([f"target — {design.fire.target_distance_m:.0f} m"]
+                         if has_target else [])
     head_colour = MIST_COLOUR if step.water_lpm > 0 else IDLE_HEAD_COLOUR
     vent_ok = step.u_eff_ms >= step.u_critical_ms
     traces = [
@@ -145,9 +152,9 @@ def tunnel_layer(design: Design, geom: SectionGeometry, window_m: tuple[float, f
                    name="nozzle heads", marker={"symbol": "triangle-down", "size": 7,
                                                 "color": head_colour},
                    hovertemplate="head · x %{x:.1f} m · z %{y:.2f} m<extra></extra>"),
-        go.Scatter(x=[design.fire.target_x_m + target_length_m / 2, -half_active, x1 - 0.05 * (x1 - x0)],
-                   y=[fp.top_height_m + 0.4, crown - 0.5, crown + 0.35], mode="text",
-                   text=[f"target — {design.fire.target_distance_m:.0f} m",
+        go.Scatter(x=[*target_label_x, -half_active, x1 - 0.05 * (x1 - x0)],
+                   y=[*target_label_y, crown - 0.5, crown + 0.35], mode="text",
+                   text=[*target_label_text,
                          f"{design.detection.type} {design.detection.threshold_c:.0f} °C",
                          f"gradient {design.tunnel.gradient_pct:+.1f} %"],
                    textfont={"size": 10, "color": STRUCTURE_COLOUR}, showlegend=False,

@@ -53,13 +53,14 @@ def fire_and_target(design: Design, geom: SectionGeometry) -> list[dict]:
     fp = design.fire.footprint
     y = fire_lateral_m(design, geom)
     target_length_m = fp.width_m
-    return [
-        _rect(-fp.length_m / 2, fp.length_m / 2, y - fp.width_m / 2, y + fp.width_m / 2,
-              line={"color": palette.GREY}, fillcolor=palette.rgba(palette.GREY, 0.35)),
-        _rect(design.fire.target_x_m, design.fire.target_x_m + target_length_m,
-              y - fp.width_m / 2, y + fp.width_m / 2,
-              line={"color": palette.FAIL, "dash": "dot"}, fillcolor=palette.TRANSPARENT),
-    ]
+    shapes = [_rect(-fp.length_m / 2, fp.length_m / 2, y - fp.width_m / 2, y + fp.width_m / 2,
+                    line={"color": palette.GREY}, fillcolor=palette.rgba(palette.GREY, 0.35))]
+    if design.fire.has_target:     # Annex 7 5.2.6: Class A only
+        shapes.append(_rect(design.fire.target_x_m, design.fire.target_x_m + target_length_m,
+                            y - fp.width_m / 2, y + fp.width_m / 2,
+                            line={"color": palette.FAIL, "dash": "dot"},
+                            fillcolor=palette.TRANSPARENT))
+    return shapes
 
 
 def nozzle_line(design: Design, geom: SectionGeometry) -> list[go.Scatter]:

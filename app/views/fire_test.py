@@ -172,7 +172,8 @@ def render() -> None:
     zoom = st.toggle("Zoom to the fire zone", key="twin_zoom")
     window = twin_canvas.core_window_m(test) if zoom else twin_canvas.WINDOW_M
     fig = twin_canvas.figure(test, trace, initial_frame=k, window_m=window,
-                             target_ignited=bool(result.criteria["target_ignited"].value))
+                             target_ignited=bool(result.criteria["target_ignited"].value
+                                                 if "target_ignited" in result.criteria else False))
     fig.update_layout(template=plot_theme.current())
     st.plotly_chart(fig, key="twin_canvas", theme=None)
     st.caption("▶ Play runs the twin on its own clock inside the picture; the Test clock "
