@@ -470,3 +470,54 @@ def test_a_fire_that_really_turns_over_still_passes_after_smoothing():
 def test_peak_smoothing_refuses_a_window_below_one_sample():
     with pytest.raises(ValueError, match="smoothing_samples"):
         reader.hrr_peak_passed([0.0, 1.0, 0.5], smoothing_samples=0)
+
+
+CLASS_B = "examples/designs/solit2-test-protocol-class-b.json"
+
+
+def _set_columns(devc: Path, values: dict[str, float]) -> None:
+    """Set a device column to a constant, or add it if the fixture has none."""
+    lines = devc.read_text().splitlines()
+    units, names, rows = lines[0].split(","), lines[1].split(","), [ln.split(",") for ln in lines[2:]]
+    for name, value in values.items():
+        if name not in names:
+            units.append("m/s")
+            names.append(name)
+            for r in rows:
+                r.append("0")
+        col = names.index(name)
+        for r in rows:
+            r[col] = str(value)
+    devc.write_text("\n".join([",".join(units), ",".join(names)] + [",".join(r) for r in rows]))
+
+
+def _u_eff(monkeypatch, run_dir, design) -> set[float]:
+    seen = {}
+    real = reader._trace
+
+    def spy(d, steps, ctrl):
+        seen["steps"] = steps
+        return real(d, steps, ctrl)
+    monkeypatch.setattr(reader, "_trace", spy)
+    reader.read(run_dir, design)
+    return {s.u_eff_ms for s in seen["steps"]}
+
+
+def test_the_airflow_is_read_from_the_annex_7_reference_station_not_d45(monkeypatch, run_dir):
+    # 5.2.7: the ventilation velocity is measured 45 m UPSTREAM (U45). The reader
+    # used D45, the far side of the fire, where the hot gas has expanded.
+    from solit2.engines.reduced.envelope import design_sha
+    devc = run_dir / f"{design_sha(Design.load(BASELINE))}_devc.csv"
+    _set_columns(devc, {"U45_U": 3.3, "D45_U": 9.9})
+    assert _u_eff(monkeypatch, run_dir, Design.load(BASELINE)) == {3.3}
+
+
+def test_a_class_b_airflow_is_read_from_u20(monkeypatch, tmp_path):
+    # 5.3.6: Class B measures 20 m upstream.
+    from solit2.engines.reduced.envelope import design_sha
+    design = Design.load(CLASS_B)
+    chid = design_sha(design)
+    for kind in ("devc", "hrr", "ctrl"):
+        shutil.copy(FIXTURES / f"sample_{kind}.csv", tmp_path / f"{chid}_{kind}.csv")
+    _set_columns(tmp_path / f"{chid}_devc.csv", {"U20_U": 2.2, "U45_U": 3.3, "D45_U": 9.9})
+    assert _u_eff(monkeypatch, tmp_path, design) == {2.2}

@@ -1016,6 +1016,14 @@ def _target_thermocouples(name: str, count: int, target: Box, dx_m: float) -> li
 CLASS_B_VELOCITY_X_M = -20.0
 
 
+def velocity_station(design: Design) -> str:
+    """The station whose mean velocity probe is the run's ventilation velocity:
+    Annex 7 5.2.7 measures it 45 m upstream (Class A, Table 5's U45), 5.3.6 measures
+    it 20 m upstream (Class B, U20). Upstream, so the approach velocity the fire
+    sees rather than the gas that has already passed through it."""
+    return "U20" if design.fire.fire_class == "B" else "U45"
+
+
 def _stations(design: Design, geom: SectionGeometry, dx_m: float) -> list[str]:
     """Annex 7 Table 5, device by device, plus the ceiling line a simulation needs."""
     from solit2.engines.reduced.criteria import (BREATHING_HEIGHT_M, HEAT_FLUX_HEIGHT_M,
