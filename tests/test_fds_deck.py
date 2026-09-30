@@ -966,3 +966,46 @@ def test_only_a_restart_deck_carries_the_restart_flag():
     a = deck.generate(design).splitlines()
     b = deck.generate(design, restart=True).splitlines()
     assert [x for x in a if not x.startswith("&MISC")] == [x for x in b if not x.startswith("&MISC")]
+
+
+def _covered(path: str, covered: bool) -> Design:
+    d = Design.load(path)
+    return d.model_copy(update={"fire": d.fire.model_copy(update={"covered": covered})})
+
+
+def test_a_covered_mock_up_gets_a_roof_one_cell_above_the_fuel_and_an_uncovered_one_does_not():
+    # Annex 7 5.2.2: the cover is what keeps water from reaching the seat of
+    # the fire. The gap matters: FDS drops a burner face that borders another
+    # solid, so a roof laid ON the fuel top would put the fire out.
+    from solit2.engines.reduced.geometry import section_geometry
+    covered, bare = _covered(TEST_RIG, True), _covered(TEST_RIG, False)
+    geom = section_geometry(covered)
+    roof, fuel = deck.cover_box(covered, geom), deck.fuel_box(covered, geom)
+    assert roof is not None and deck.cover_box(bare, geom) is None
+    assert roof.z0 == roof.z1 == pytest.approx(fuel.z1 + deck.DX_M)
+    assert roof.x0 <= fuel.x0 and roof.x1 >= fuel.x1
+    assert roof.y0 <= fuel.y0 and roof.y1 >= fuel.y1
+    assert f"&OBST XB={roof.xb()}, SURF_ID='INERT'" in deck.generate(covered)
+    assert roof.xb() not in deck.generate(bare)
+
+
+def test_the_roof_is_a_solid_the_station_devices_must_stay_clear_of():
+    from solit2.engines.reduced.geometry import section_geometry
+    design = _covered(TEST_RIG, True)
+    geom = section_geometry(design)
+    roof = deck.cover_box(design, geom)
+    for line in deck.generate(design).splitlines():
+        if line.startswith("&DEVC") and "XYZ=" in line:
+            x, y, z = (float(v) for v in line.split("XYZ=")[1].split(",")[:3])
+            assert not (roof.x0 < x < roof.x1 and roof.y0 < y < roof.y1
+                        and roof.z0 < z < roof.z1), line
+
+
+def test_a_roof_that_cannot_fit_under_the_ceiling_is_refused_not_dropped():
+    from solit2.engines.reduced.geometry import section_geometry
+    design = _covered(TEST_RIG, True)
+    geom = section_geometry(design)
+    import dataclasses
+    low = dataclasses.replace(geom, crown_height_m=4.4)
+    with pytest.raises(ValueError, match="cover"):
+        deck.cover_box(design, low)
