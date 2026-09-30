@@ -93,7 +93,7 @@ def _comparison(results: dict[str, Result]) -> list[str]:
 
 def _criteria(results: dict[str, Result]) -> list[str]:
     a, b = results[AS_DESIGNED].criteria, results[LATE].criteria
-    lines = ["| criterion | limit (from the design's own AHJ block) | as designed | result "
+    lines = ["| criterion | limit (set by the PMC / Authority's Engineer) | as designed | result "
              "| late | result |", "|---|---|---|---|---|---|"]
     for key in sorted(a):
         ca, cb = a[key], b[key]

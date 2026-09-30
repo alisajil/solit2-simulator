@@ -763,7 +763,7 @@ def build_parser() -> argparse.ArgumentParser:
     rat.add_argument("design")
     rat.add_argument("--late-s", type=float, required=True,
                      help="clock time, seconds from ignition, of the late activation. Set by "
-                          "the fire strategy or the authority having jurisdiction (for example "
+                          "the fire strategy or the PMC / Authority's Engineer (for example "
                           "when a response crew can be on site); the tool does not choose it")
     rat.add_argument("--out")
     rat.set_defaults(func=_cmd_report_activation_timing)
