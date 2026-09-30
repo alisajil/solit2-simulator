@@ -231,7 +231,11 @@ def _step_records(devc_ids: list[str], devc_rows: list[list[float]],
             # reads ambient; 0.0 would be a colder-than-air measurement.
             pipe_temp_c=design.tunnel.ambient_temp_c,
             target_flux_kwm2=target_flux,
-            u_eff_ms=_at(devc_ids, row, "D45_U"),
+            # The Annex 7 reference station, upstream of the fire: U45 (Class A,
+            # 5.2.7) or U20 (Class B, 5.3.6). This was D45, on the far side of the
+            # fire, where the expanded hot gas reads faster than the air the fire
+            # is fed by.
+            u_eff_ms=_at(devc_ids, row, f"{deck_mod.velocity_station(design)}_U"),
             # Tier 1 correlation outputs with no FDS equivalent. No criterion
             # reads either, and FDS resolves backlayering in the slice files.
             u_critical_ms=0.0,
