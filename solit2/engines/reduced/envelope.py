@@ -161,6 +161,9 @@ def _peaks(trace: RunTrace, peak_lining_c: float) -> dict[str, float]:
     return {"hrr_mw": max(s.hrr_mw for s in trace.steps),
             "hrr_free_burn_mw": max(s.hrr_free_mw for s in trace.steps),
             "ceiling_temp_c": max(s.ceiling_temp_c for s in trace.steps),
+            # Unjudged: Annex 7 has no opacimeter inside the spray zone, so this is a
+            # reading and not a criterion. It is a minimum, not a peak, in this dict.
+            "zone_min_visibility_m": min(s.zone_visibility_m for s in trace.steps),
             "lining_temp_c": peak_lining_c,
             "pipe_surface_temp_c": max(s.pipe_temp_c for s in trace.steps),
             "smoke_layer_temp_d15_c": max(s.stations["D15"].temp_c for s in trace.steps),
@@ -179,6 +182,7 @@ def _timeseries(sampled: tuple[StepRecord, ...]) -> dict[str, list[float]]:
         "t_s": [s.t_s for s in sampled],
         "hrr_mw": [s.hrr_mw for s in sampled],
         "hrr_free_burn_mw": [s.hrr_free_mw for s in sampled],
+        "zone_visibility_m": [s.zone_visibility_m for s in sampled],
         "ceiling_temp_c": [s.ceiling_temp_c for s in sampled],
         # U45 and D45 replace the retired U35/D35: Annex 7 Table 5 has no station
         # at 35 m, and puts the O2/CO2/CO, humidity and visibility instruments
