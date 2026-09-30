@@ -224,6 +224,9 @@ class CriterionSpec:
     op: str
     hard: bool
     extract: Callable[[RunTrace, HydraulicsResult, CostResult, Design], float | bool]
+    # False for a design the criterion does not exist for (no target in Class B):
+    # it is left out of the result, not reported as a pass nobody earned.
+    applies: Callable[[Design], bool] = lambda d: True
 
 
 def _peak_after_activation(trace: RunTrace, attribute: str) -> float:
@@ -305,7 +308,8 @@ DEFAULT_CRITERIA: tuple[CriterionSpec, ...] = (
     # failed if fire spread has spread to the target 5 m downstream behind the
     # mock-up." Mandated outright, so it carries no limit and no AHJ dependency.
     CriterionSpec("target_ignited", lambda d: None, "is_false", True,
-                  lambda t, h, c, d: _target_ignited(t)),
+                  lambda t, h, c, d: _target_ignited(t),
+                  applies=lambda d: d.fire.has_target),
     # 7.3.1 Class B -- "if the ventilation system is designed for certain
     # unsuppressed fire size, FFFS shall be able to suppress increased design
     # fire under this size". The suppression target is the tunnel's own
@@ -354,6 +358,8 @@ def evaluate(trace: RunTrace, hyd: HydraulicsResult, cost: CostResult,
     """Apply every criterion, letting `design.criteria` override limits and hardness."""
     out: dict[str, Criterion] = {}
     for spec in DEFAULT_CRITERIA:
+        if not spec.applies(design):
+            continue
         override = design.criteria.get(spec.id, {})
         # `in` rather than `.get`, so a design can deliberately override a limit
         # back to None ("the authority has not ruled on this after all").

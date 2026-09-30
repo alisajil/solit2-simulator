@@ -156,7 +156,9 @@ def _protocol(ctx: Context) -> Outcome:
 
 
 def _target(ctx: Context) -> Outcome:
-    ignited = {cls: target_ignited(res) for cls, res in sorted(ctx.test_results.items())}
+    # Annex 7 5.2.6: Class A tests only -- a Class B run has no target.
+    ignited = {cls: target_ignited(res) for cls, res in sorted(ctx.test_results.items())
+               if cls != "B"}
     found = "; ".join(f"{cls}: {'ignited' if v else 'not ignited'}" for cls, v in ignited.items())
     return judge(not any(ignited.values()), found, "target not ignited",
                  "Tier 1 prediction (replaced by the measurement after the test)", "predicted")

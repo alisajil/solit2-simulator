@@ -83,7 +83,7 @@ def thermocouple_rake(design: Design, geom: SectionGeometry, name: str,
     """
     sample = step.stations[name]
     fuel = fds_deck.fuel_box(design, geom)
-    solids = (fuel, fds_deck.target_box(design, geom))
+    solids = (fuel, fds_deck.target_box(design, geom)) if fds_deck.has_target(design) else (fuel,)
     placed = fds_deck.figure_16_positions(INSTRUMENTS[name], STATIONS[name], geom,
                                           fds_deck.DX_M, fuel, solids)
     if placed:
@@ -149,7 +149,7 @@ def fuel_section(design: Design, geom: SectionGeometry, station: str) -> dict | 
     tx = design.fire.target_x_m
     if -fp.length_m / 2 <= x <= fp.length_m / 2:
         colour, name = palette.GREY, "fuel load"
-    elif tx <= x <= tx + fp.width_m:
+    elif design.fire.has_target and tx <= x <= tx + fp.width_m:
         colour, name = palette.FAIL, "target"
     else:
         return None

@@ -121,6 +121,8 @@ def _flame(design: Design, geom: SectionGeometry, step: StepRecord,
 def _target(design: Design, geom: SectionGeometry, step: StepRecord) -> go.Mesh3d:
     """Annex 7 section 5.2.6 gives the target's width and height, not its length along
     the tunnel; like the 2D twin, its length is taken as its width."""
+    if not design.fire.has_target:     # Class B: keep the trace slot, draw nothing
+        return go.Mesh3d(x=[], y=[], z=[], name="target (none: Class A only)")
     fp = design.fire.footprint
     y = fire_lateral_m(design, geom)
     progress = twin_canvas.target_ignition_progress(step)
