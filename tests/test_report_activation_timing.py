@@ -156,3 +156,24 @@ def test_the_report_explains_why_the_two_tables_can_disagree_on_a_peak():
     out = activation_timing.render(LATE_S, designs, results)
     assert "reported worst case" in out
     assert "different case than the table above" in out
+
+
+def test_the_comparison_shows_the_in_zone_visibility_of_both_runs():
+    _, designs, results = _world()
+    out = activation_timing.render(LATE_S, designs, results)
+    a, b = results["as_designed"], results["late"]
+    key = "zone_min_visibility_m"
+    assert "Minimum visibility inside the spray zone" in out
+    assert activation_timing.labels.value(key, a.peaks[key]) in out
+    assert activation_timing.labels.value(key, b.peaks[key]) in out
+    assert f"{b.peaks[key] - a.peaks[key]:+.1f}" in out
+
+
+def test_the_in_zone_reading_is_stated_as_not_judged_and_stays_out_of_the_criteria():
+    _, designs, results = _world()
+    out = activation_timing.render(LATE_S, designs, results)
+    comparison = out.split("## Comparison")[1].split("## Criteria")[0]
+    criteria = out.split("## Criteria")[1].split("## What changes")[0]
+    assert "not an Annex 7 measurement position and is not judged" in comparison
+    assert "optimistic" in comparison
+    assert "inside the spray zone" not in criteria

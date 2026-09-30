@@ -16,6 +16,12 @@ LPM_TIMES_S_TO_M3 = 1.0 / 60.0 / 1000.0
 STATUS_TEXT = {"pass": "met", "fail": "not met", "unset": "limit not set"}
 STATUS_MARK = {"pass": "✓ met", "fail": "✗ not met", "unset": "limit not set"}
 NOT_REACHED = "not reached"
+ZONE_VISIBILITY_NOTE = (
+    "Visibility inside the spray zone is read at the zone's downstream edge. It is not an "
+    "Annex 7 measurement position and is not judged: no limit can be set against it, so it "
+    "is not in the criteria below. It includes the droplets' extinction but not the spray's "
+    "mixing of the smoke layer (mist de-stratification is not modelled), so it is likely "
+    "optimistic.")
 
 
 def strategies(design: Design, late_s: float) -> dict[str, Design]:
@@ -85,6 +91,10 @@ def _comparison(results: dict[str, Result]) -> list[str]:
     back_b = b.events["backlayering"]["max_length_m"]
     lines.append(f"| Longest backlayering (m) | {back_a:.1f} | {back_b:.1f} | "
                  f"{_delta(back_a, back_b, 'm')} |")
+    zone = "zone_min_visibility_m"
+    lines.append(f"| {labels.label(zone)} ({labels.unit(zone)}) | "
+                 f"{labels.value(zone, a.peaks[zone])} | {labels.value(zone, b.peaks[zone])} | "
+                 f"{_delta(a.peaks[zone], b.peaks[zone], labels.unit(zone))} |")
     vol_a, vol_b = water_volume_m3(a), water_volume_m3(b)
     lines.append(f"| Water discharged, worst case (m³) | {vol_a:.1f} | {vol_b:.1f} | "
                  f"{_delta(vol_a, vol_b, 'm³')} |")
@@ -124,6 +134,7 @@ def render(late_s: float, designs: dict[str, Design], results: dict[str, Result]
     lines += ["", "## Timetable", "", *_timetable(designs, results),
               "", "## Comparison", "",
               "Read from each run's reported worst case.", "", *_comparison(results),
+              "", ZONE_VISIBILITY_NOTE,
               "", "## Criteria", "",
               "Each criterion takes its worst value across the whole velocity envelope, so a "
               "value here can come from a different case than the table above.", "",
