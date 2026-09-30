@@ -153,6 +153,7 @@ def _timeseries(sampled: tuple[StepRecord, ...]) -> dict[str, list[float]]:
     return {
         "t_s": [s.t_s for s in sampled],
         "hrr_mw": [s.hrr_mw for s in sampled],
+        "hrr_free_burn_mw": [s.hrr_free_mw for s in sampled],
         "ceiling_temp_c": [s.ceiling_temp_c for s in sampled],
         # U45 and D45 replace the retired U35/D35: Annex 7 Table 5 has no station
         # at 35 m, and puts the O2/CO2/CO, humidity and visibility instruments
