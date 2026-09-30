@@ -334,7 +334,14 @@ def _cmd_report_virtual_test(args: argparse.Namespace) -> int:
     except (ArithmeticError, RuntimeError, ValueError, KeyError) as exc:
         return _fail(str(exc), "engine",
                      "the spec validated but a design could not be run", EXIT_ENGINE)
-    return _emit_html_report(virtual_test.render(loaded, results, traces=traces), args.out)
+    from solit2.reports import cfd_runs
+    try:
+        cfd = {cls: cfd_runs.lookup(d, args.runs_dir) for cls, d in loaded.tests.items()}
+    except OSError as exc:
+        return _fail(str(exc), "--runs-dir", "point at the directory the CFD step wrote to",
+                     EXIT_BAD_INPUT)
+    return _emit_html_report(virtual_test.render(loaded, results, traces=traces, cfd=cfd),
+                             args.out)
 
 
 def _emit_html_report(html_text: str, out: str | None) -> int:
@@ -722,6 +729,8 @@ def build_parser() -> argparse.ArgumentParser:
         "virtual-test", help="predicted outcome of the SOLIT2 tests a compliance spec names")
     rvt.add_argument("spec")
     rvt.add_argument("--out")
+    rvt.add_argument("--runs-dir", default="runs",
+                     help="where the CFD step wrote its run directories")
     rvt.set_defaults(func=_cmd_report_virtual_test)
 
     rc = report_sub.add_parser("correlation",

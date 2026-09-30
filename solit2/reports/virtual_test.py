@@ -17,6 +17,7 @@ from solit2.engines.reduced.criteria import STATIONS
 from solit2.engines.reduced.geometry import section_geometry
 from solit2.engines.reduced.state import RunTrace
 from solit2.reports import html, labels
+from solit2.reports.cfd_runs import CfdRun
 from solit2.schema.design import Design
 from solit2.schema.result import Criterion, Result
 
@@ -325,8 +326,66 @@ def _results(loaded: LoadedSpec, results: dict[str, Result],
            for cls, design in sorted(loaded.tests.items())])
 
 
+# The only series an FDS Result carries (fds/reader.py builds its timeseries from
+# these four), so the only ones that can be laid over a Tier 1 chart.
+CFD_SERIES = (("hrr_mw", "Heat release rate"), ("ceiling_temp_c", "Ceiling temperature"))
+CFD_PEAK_KEYS = ("hrr_mw", "ceiling_temp_c")
+
+
+def _cfd_status_line(run: CfdRun) -> str:
+    if run.state in ("not_run", "running", "pausing"):
+        return run.detail
+    return f"CFD {run.state}: {run.detail}"
+
+
+def _cfd_figures(cls: str, tier1: Result, cfd: Result) -> list[go.Figure]:
+    figures = []
+    for key, title in CFD_SERIES:
+        fig = go.Figure()
+        fig.add_trace(go.Scatter(x=tier1.timeseries["t_s"], y=tier1.timeseries[key],
+                                 mode="lines", name="Tier 1 (reduced)"))
+        fig.add_trace(go.Scatter(x=cfd.timeseries["t_s"], y=cfd.timeseries[key],
+                                 mode="lines", name="CFD (FDS)"))
+        fig.update_layout(title=f"Test {cls} — {title}", xaxis_title="test clock (s)",
+                          yaxis_title=labels.unit(key), height=350, margin=CHART_MARGIN)
+        figures.append(fig)
+    return figures
+
+
+def _cfd_peaks_table(tier1: Result, cfd: Result) -> str:
+    rows = []
+    for key in CFD_PEAK_KEYS:
+        a, b = float(tier1.peaks[key]), float(cfd.peaks[key])
+        rows.append([labels.label(key), labels.with_unit(key, a), labels.with_unit(key, b),
+                     f"{b - a:+.1f} {labels.unit(key)}"])
+    return html.table(["Peak", "Tier 1", "CFD", "CFD minus Tier 1"], rows)
+
+
+def _cfd_comparison(loaded: LoadedSpec, results: dict[str, Result],
+                    cfd: dict[str, CfdRun], figs: _Figures) -> str:
+    parts = [
+        "<p>Each finished FDS run of a test design (its CHID is the design's SHA) is laid "
+        "over that test's Tier 1 prediction. The CFD reader exports heat release rate and "
+        "ceiling temperature only, so the other four charts on each results page have no "
+        "CFD counterpart. Differences are reported, not judged: where the two tiers "
+        "disagree, the disagreement is the finding.</p>"]
+    for cls, design in sorted(loaded.tests.items()):
+        run = cfd[cls]
+        parts.append(f"<h3>Test {cls}: {html.escape(design.meta.name)}</h3>")
+        parts.append(f"<p>{html.escape(_cfd_status_line(run))}</p>")
+        if run.result is None:
+            continue
+        parts.append(_cfd_peaks_table(results[cls], run.result))
+        parts += [figs.embed(fig) for fig in _cfd_figures(cls, results[cls], run.result)]
+        if run.result.warnings:
+            parts.append("<h4>Warnings from the CFD run</h4><ul>"
+                         + "".join(f"<li>{html.escape(w)}</li>" for w in run.result.warnings)
+                         + "</ul>")
+    return "\n".join(parts)
+
+
 def render(loaded: LoadedSpec, results: dict[str, Result], *,
-           traces: dict[str, RunTrace]) -> str:
+           traces: dict[str, RunTrace], cfd: dict[str, CfdRun]) -> str:
     figs = _Figures()
     sections = [
         ("Introduction", _introduction()),
@@ -337,5 +396,6 @@ def render(loaded: LoadedSpec, results: dict[str, Result], *,
         ("Virtual instruments", _instruments()),
         ("Procedure", _procedure(loaded, results)),
         ("Results", _results(loaded, results, traces, figs)),
+        ("CFD comparison", _cfd_comparison(loaded, results, cfd, figs)),
     ]
     return html.document(f"Virtual fire test report — {loaded.spec.name}", sections)

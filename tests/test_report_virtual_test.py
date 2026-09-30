@@ -1,10 +1,9 @@
 # tests/test_report_virtual_test.py
 import functools
-from pathlib import Path
 
 from solit2.compliance.spec import load_spec
 from solit2.engines.reduced import envelope, sim
-from solit2.reports import labels
+from solit2.reports import cfd_runs, labels
 from solit2.reports import virtual_test
 
 SPEC = "examples/compliance/solit2-example.spec.json"
@@ -29,7 +28,8 @@ def _inputs():
 def _render(**overrides):
     """(loaded, results, html). Later tasks add their required keywords here."""
     loaded, results, traces = _inputs()
-    kwargs = {"traces": traces, **overrides}
+    kwargs = {"traces": traces, "cfd": {cls: cfd_runs.NOT_RUN for cls in loaded.tests},
+              **overrides}
     return loaded, results, virtual_test.render(loaded, results, **kwargs)
 
 
@@ -206,3 +206,52 @@ def test_a_design_name_with_markup_is_escaped_in_the_results_page():
                                      virtual_test._Figures())
     assert "<script>x</script>" not in out
     assert "&lt;script&gt;x&lt;/script&gt;" in out
+
+
+def _finished_run(result, scale=0.8):
+    """A stand-in for a finished FDS run: an FDS Result carries these four series."""
+    ts = result.timeseries
+    return cfd_runs.CfdRun("done", "", result.model_copy(update={
+        "timeseries": {"t_s": ts["t_s"],
+                       "hrr_mw": [v * scale for v in ts["hrr_mw"]],
+                       "hrr_free_mw": [v * scale for v in ts["hrr_free_burn_mw"]],
+                       "ceiling_temp_c": [v * scale for v in ts["ceiling_temp_c"]]},
+        "peaks": {**result.peaks, "hrr_mw": result.peaks["hrr_mw"] * scale,
+                  "ceiling_temp_c": result.peaks["ceiling_temp_c"] * scale},
+        "warnings": ["cfd: window ends before the HRR turnover"]}))
+
+
+def test_without_a_run_the_cfd_section_says_so_for_every_test():
+    loaded, _, out = _render()
+    assert "<h2>9. CFD comparison</h2>" in out
+    assert out.count("CFD not yet run") == len(loaded.tests)
+
+
+def test_a_running_run_is_reported_with_its_progress():
+    running = cfd_runs.CfdRun("running", "running, 300 of 600 s")
+    _, _, out = _render(cfd={"A": running, "B": cfd_runs.NOT_RUN})
+    assert "running, 300 of 600 s" in out
+    assert out.count("CFD not yet run") == 1
+
+
+def test_a_finished_run_is_overlaid_on_that_tests_charts():
+    _, results, _ = _inputs()
+    run = _finished_run(results["A"])
+    figures = virtual_test._cfd_figures("A", results["A"], run.result)
+    assert len(figures) == 2   # HRR and ceiling temperature: the series an FDS Result carries
+    for fig in figures:
+        names = [t.name for t in fig.data]
+        assert names == ["Tier 1 (reduced)", "CFD (FDS)"]
+    assert tuple(figures[0].data[1].y) == tuple(run.result.timeseries["hrr_mw"])
+    _, _, out = _render(cfd={"A": run, "B": cfd_runs.NOT_RUN})
+    assert "CFD (FDS)" in out
+    assert "cfd: window ends before the HRR turnover" in out   # the run's own warnings travel
+
+
+def test_the_cfd_peaks_table_reports_the_difference_without_judging_it():
+    _, results, _ = _inputs()
+    run = _finished_run(results["A"], scale=0.8)
+    table = virtual_test._cfd_peaks_table(results["A"], run.result)
+    tier1 = results["A"].peaks["hrr_mw"]
+    assert f"{tier1 * 0.8 - tier1:+.1f} MW" in table
+    assert "pass" not in table.lower() and "fail" not in table.lower()

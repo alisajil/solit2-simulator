@@ -1,6 +1,5 @@
 # tests/test_report_html.py
 import plotly.graph_objects as go
-import pytest
 
 from solit2.reports import html
 
