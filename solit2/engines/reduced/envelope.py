@@ -153,6 +153,7 @@ def _timeseries(sampled: tuple[StepRecord, ...]) -> dict[str, list[float]]:
     return {
         "t_s": [s.t_s for s in sampled],
         "hrr_mw": [s.hrr_mw for s in sampled],
+        "hrr_free_burn_mw": [s.hrr_free_mw for s in sampled],
         "ceiling_temp_c": [s.ceiling_temp_c for s in sampled],
         # U45 and D45 replace the retired U35/D35: Annex 7 Table 5 has no station
         # at 35 m, and puts the O2/CO2/CO, humidity and visibility instruments
@@ -171,7 +172,7 @@ def _timeseries(sampled: tuple[StepRecord, ...]) -> dict[str, list[float]]:
     }
 
 
-def _design_sha(design: Design) -> str:
+def design_sha(design: Design) -> str:
     payload = json.dumps(design.model_dump(mode="json"), sort_keys=True)
     return hashlib.sha256(payload.encode()).hexdigest()[:DESIGN_SHA_CHARS]
 
@@ -314,7 +315,7 @@ def run(design: Design, sections: tuple[str, ...] | None = None,
     final_mist = max(trace.steps, key=lambda s: s.mist.w_fuel_mm_min).mist
 
     return Result(
-        meta={"design_name": design.meta.name, "design_sha": _design_sha(design),
+        meta={"design_name": design.meta.name, "design_sha": design_sha(design),
               "engine": ENGINE, "engine_version": ENGINE_VERSION,
               "runtime_s": round(time.perf_counter() - started, 3),
               "timestamp": datetime.now(timezone.utc).isoformat(),

@@ -173,8 +173,8 @@ def _run_fds(design: Design, args: argparse.Namespace) -> Result:
     problems = fds_runner.preflight()
     if problems:
         raise RuntimeError("; ".join(problems))
-    from solit2.engines.reduced.envelope import _design_sha
-    out_dir = Path(args.history).parent / _design_sha(design)
+    from solit2.engines.reduced.envelope import design_sha
+    out_dir = Path(args.history).parent / design_sha(design)
     out_dir.mkdir(parents=True, exist_ok=True)
     deck_path = out_dir / "deck.fds"
     deck_path.write_text(fds_deck.generate(design))
@@ -315,6 +315,64 @@ def _cmd_report_test_plan(args: argparse.Namespace) -> int:
                      "the design validated but the engine could not finish the run",
                      EXIT_ENGINE)
     return _emit_report(test_plan.render(design, result), args.out)
+
+
+def _cmd_report_virtual_test(args: argparse.Namespace) -> int:
+    from solit2.compliance.spec import load_spec
+    from solit2.reports import virtual_test
+    try:
+        loaded = load_spec(args.spec)
+    except (ValidationError, ValueError, FileNotFoundError, KeyError) as exc:
+        return _fail(str(exc), getattr(exc, "field", "spec"),
+                     "correct the compliance spec and try again", EXIT_BAD_INPUT)
+    try:
+        from solit2.engines.reduced import sim
+        results = {cls: envelope.run(d) for cls, d in loaded.tests.items()}
+        traces = {cls: sim.run_once(d, results[cls].worst_case["section"],
+                                    results[cls].worst_case["velocity_ms"])
+                  for cls, d in loaded.tests.items()}
+    except (ArithmeticError, RuntimeError, ValueError, KeyError) as exc:
+        return _fail(str(exc), "engine",
+                     "the spec validated but a design could not be run", EXIT_ENGINE)
+    from solit2.reports import cfd_runs
+    try:
+        cfd = {cls: cfd_runs.lookup(d, args.runs_dir) for cls, d in loaded.tests.items()}
+    except OSError as exc:
+        return _fail(str(exc), "--runs-dir", "point at the directory the CFD step wrote to",
+                     EXIT_BAD_INPUT)
+    from solit2.compliance import check as compliance_check
+    try:
+        # ponytail: check.run re-runs the envelope for every test design, so the engine
+        # runs twice per report. Give check.run a results= parameter if runtime matters.
+        compliance = compliance_check.run(args.spec)
+    except (ValidationError, ValueError, FileNotFoundError, KeyError) as exc:
+        return _fail(str(exc), "spec", "correct the compliance spec and try again",
+                     EXIT_BAD_INPUT)
+    except (ArithmeticError, RuntimeError) as exc:
+        return _fail(str(exc), "engine",
+                     "the spec validated but a design or rule could not be evaluated",
+                     EXIT_ENGINE)
+    # ponytail: reuses archive's private commit helper; make it public when a third
+    # caller appears.
+    commit = archive_mod._git_commit()
+    return _emit_html_report(
+        virtual_test.render(loaded, results, traces=traces, cfd=cfd,
+                            compliance=compliance, commit=commit),
+        args.out)
+
+
+def _emit_html_report(html_text: str, out: str | None) -> int:
+    if not out:
+        return _fail("an HTML report needs --out", "--out",
+                     "pass --out <path.html>; an HTML document is not printed to the terminal",
+                     EXIT_BAD_INPUT)
+    try:
+        Path(out).parent.mkdir(parents=True, exist_ok=True)
+        Path(out).write_text(html_text)
+    except OSError as exc:
+        return _fail(str(exc), "--out", "choose a writable output path", EXIT_BAD_INPUT)
+    print(f"wrote {out}")
+    return EXIT_OK
 
 
 def _cmd_report_compliance(args: argparse.Namespace) -> int:
@@ -683,6 +741,14 @@ def build_parser() -> argparse.ArgumentParser:
     rcomp.add_argument("spec")
     rcomp.add_argument("--out")
     rcomp.set_defaults(func=_cmd_report_compliance)
+
+    rvt = report_sub.add_parser(
+        "virtual-test", help="predicted outcome of the SOLIT2 tests a compliance spec names")
+    rvt.add_argument("spec")
+    rvt.add_argument("--out")
+    rvt.add_argument("--runs-dir", default="runs",
+                     help="where the CFD step wrote its run directories")
+    rvt.set_defaults(func=_cmd_report_virtual_test)
 
     rc = report_sub.add_parser("correlation",
                                help="one design's criteria across two runs, side by side")

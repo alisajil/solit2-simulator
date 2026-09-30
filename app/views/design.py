@@ -19,6 +19,7 @@ import streamlit as st
 
 from app import plot_theme, state
 from app.components import overview
+from app.components import save_design
 from app.components.design_files import design_files
 from solit2.engines.reduced.geometry import section_geometry
 from solit2.engines.reduced.hydraulics import size_system
@@ -63,10 +64,12 @@ def render() -> None:
     ahj = _render_ahj_inputs(raw_source)
     raw = _assemble(tunnel_preset, fire_preset, hydraulics_preset, nozzles,
                     section_length_m, int(sections_simultaneous), velocity_lo, velocity_hi,
-                    ahj, raw_source, pump_ramp_s=pump_ramp_s)
+                    ahj, raw_source, pump_ramp_s=pump_ramp_s,
+                    keep_meta=save_design.seeded() is not None)
     _render_summary(raw)
     if missing:
         st.warning("Nozzle data still needed: " + ", ".join(missing))
+    save_design.render(raw, missing)
     if st.button("Build & continue →", key="build_design", type="primary",
                  disabled=bool(missing)):
         try:
@@ -352,26 +355,52 @@ def _apply_to_widgets(raw: dict) -> None:
         value = declared.get(field)
         # A limit this file does not declare is cleared, not carried over from the last.
         st.session_state[key] = float(value) if value is not None else None
+    # The save panel's name follows the source, like every other field.
+    st.session_state[save_design.NAME_KEY] = (raw.get("meta") or {}).get("name", "")
 
 
 def _render_source_picker() -> dict:
-    """Start the whole form from a design file the user already keeps."""
+    """Start the whole form from a saved design or a design file the user keeps."""
+    saved = save_design.saved_options()
     names = _design_files()
-    if not names:
+    pending = save_design.pop_pending()
+    just_saved = None if pending is None else next(
+        (text for text, row in saved.items() if row.id == pending[0]), None)
+    if just_saved is not None:
+        # A save just made this version: point the picker at it before the widgets draw.
+        # The form already holds exactly its values, so it is marked applied, not re-seeded.
+        design_id, version = pending
+        st.session_state["design_source"] = just_saved
+        st.session_state[save_design.version_key(design_id)] = version
+        st.session_state[_APPLIED_SOURCE] = f"saved:{design_id}:v{version}"
+    if not saved and not names:
+        save_design.set_seeded(None, None)
         return {}
-    chosen = st.selectbox("Start from a design file", [NO_SOURCE, *names], key="design_source",
-                          help="Seeds every field below from that file. Edit anything "
-                               "afterwards; nothing is written back to the file.")
+    chosen = st.selectbox("Start from a saved design or file", [NO_SOURCE, *saved, *names],
+                          key="design_source",
+                          help="Seeds every field below from it. Edit anything afterwards; "
+                               "nothing is written back unless you save.")
     if chosen == NO_SOURCE:
         st.session_state[_APPLIED_SOURCE] = None
+        save_design.set_seeded(None, None)
         return {}
-    raw = _read_design(chosen)
+    if chosen in saved:
+        loaded = save_design.render_version_picker(saved[chosen])
+        if loaded is None:
+            save_design.set_seeded(None, None)
+            return {}
+        raw, applied = loaded.payload, f"saved:{loaded.design_id}:v{loaded.version}"
+        shown = f"#{loaded.design_id} v{loaded.version} ({loaded.name})"
+        save_design.set_seeded(saved[chosen], loaded.version)
+    else:
+        raw, applied, shown = _read_design(chosen), chosen, chosen
+        save_design.set_seeded(None, None)
     # Re-seed on a change of source: Streamlit honours `value=`/`index=` only on a
-    # key's first render, so without this the widgets keep the previous file's values.
-    if st.session_state.get(_APPLIED_SOURCE) != chosen:
+    # key's first render, so without this the widgets keep the previous source's values.
+    if st.session_state.get(_APPLIED_SOURCE) != applied:
         _apply_to_widgets(raw)
-        st.session_state[_APPLIED_SOURCE] = chosen
-    st.caption(f"Every field below starts from **{chosen}**. Edit anything for this run.")
+        st.session_state[_APPLIED_SOURCE] = applied
+    st.caption(f"Every field below starts from **{shown}**. Edit anything for this run.")
     return raw
 
 
@@ -453,7 +482,8 @@ def _deep_merge(base: dict, over: dict) -> dict:
 
 def _overlay(scratch: dict, raw_source: dict, nozzles: dict | None,
              section_length_m: float, sections_simultaneous: int,
-             velocity_lo: float, velocity_hi: float, ahj: dict) -> dict:
+             velocity_lo: float, velocity_hi: float, ahj: dict,
+             keep_meta: bool = False) -> dict:
     """Three layers, in order: the form's own defaults, then the source FILE, then
     the fields the form actually edits.
 
@@ -466,6 +496,11 @@ def _overlay(scratch: dict, raw_source: dict, nozzles: dict | None,
     the tester has seen and completed them, and what the form holds is the
     nozzle, whole: merging the file's block (or a preset it names) underneath
     would bring back values the tester never saw.
+
+    `keep_meta` is set when `raw_source` is a saved design: `design_identity`
+    appends a "Seeded from" note on every call, which would change a saved
+    design's SHA on every load and make an unedited re-save never read as
+    unchanged. A saved design's meta is instead kept exactly as it was saved.
     """
     raw = _deep_merge(scratch, raw_source)
     # An OVERRIDE the file did not ask for must not arrive from the defaults.
@@ -477,7 +512,7 @@ def _overlay(scratch: dict, raw_source: dict, nozzles: dict | None,
     # detector and a manual start.
     if "zones" in raw_source and "manual_activation_s" not in raw_source["zones"]:
         raw["zones"].pop("manual_activation_s", None)
-    raw["meta"] = design_identity(raw_source)
+    raw["meta"] = dict(raw_source["meta"]) if keep_meta else design_identity(raw_source)
     raw["nozzles"] = scratch["nozzles"]
     zones = raw.setdefault("zones", {})
     zones["section_length_m"] = section_length_m
@@ -491,7 +526,7 @@ def _assemble(tunnel_preset: str, fire_preset: str, hydraulics_preset: str,
               nozzles: dict | None, section_length_m: float,
               sections_simultaneous: int, velocity_lo: float, velocity_hi: float,
               ahj: dict, raw_source: dict | None = None, *,
-              pump_ramp_s: float | None = None) -> dict:
+              pump_ramp_s: float | None = None, keep_meta: bool = False) -> dict:
     """Every override lands inside its own block, on top of the chosen preset.
 
     With a source file, the FILE is the base and the form's fields are edits on
@@ -504,9 +539,12 @@ def _assemble(tunnel_preset: str, fire_preset: str, hydraulics_preset: str,
     caption still said every field started from that file. A design file
     carrying a real nozzle's measured spray came back as the placeholder
     preset's, and the user had no way to see it.
+
+    `keep_meta` carries a saved design's own `meta` through unchanged (see `_overlay`).
     """
     scratch = {
-        "meta": design_identity(raw_source or {}),
+        "meta": (dict(raw_source["meta"]) if keep_meta and raw_source
+                 else design_identity(raw_source or {})),
         "tunnel": {"preset": tunnel_preset},
         "fire": {"preset": fire_preset},
         "nozzles": nozzles if nozzles is not None else {"preset": TESTER_INPUT},
@@ -527,7 +565,7 @@ def _assemble(tunnel_preset: str, fire_preset: str, hydraulics_preset: str,
     }
     raw = scratch if not raw_source else _overlay(
         scratch, raw_source, nozzles, section_length_m, sections_simultaneous,
-        velocity_lo, velocity_hi, ahj)
+        velocity_lo, velocity_hi, ahj, keep_meta=keep_meta)
     if pump_ramp_s is None:
         raw["zones"].pop("pump_ramp_s", None)
     else:

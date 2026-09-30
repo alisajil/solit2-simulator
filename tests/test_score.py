@@ -160,3 +160,46 @@ def test_unset_criteria_do_not_dilute_the_margin_component():
                                    peak_lining_c=690.0)
     assert unassessed.components["margin"] > 0.0
     assert assessed.components["margin"] > 0.0
+
+
+# --- the backlayering penalty is measured in real seconds, not steps ---------
+
+class _Step:
+    def __init__(self, t_s, u_eff_ms, u_critical_ms):
+        self.t_s = t_s
+        self.u_eff_ms = u_eff_ms
+        self.u_critical_ms = u_critical_ms
+
+
+def _backlayered_trace(step_interval_s: float, persistent_steps: int):
+    """A trace whose steps are `step_interval_s` apart, activated at t=0, with
+    `persistent_steps` consecutive steps below the critical velocity."""
+    steps = tuple(_Step(i * step_interval_s, 1.0, 2.0) for i in range(persistent_steps))
+    return type("T", (), {"events": {"t_full_pressure_s": 0.0}, "steps": steps})()
+
+
+def _backlayering_penalties(score):
+    return [p for p in score.penalties if "critical velocity" in p]
+
+
+def test_the_backlayering_penalty_is_measured_in_real_seconds_not_step_count():
+    """240 steps at 0.5 s apart is 120 real seconds -- exactly the tolerance, not
+    past it. Reading step COUNT against a SECONDS threshold (the bug) would
+    treat 240 as past 120 and penalise a design that never actually spent more
+    than the tolerance below critical velocity."""
+    at_tolerance = score_mod.compute(_criteria(), _Hyd(), _Cost(),
+                                     _backlayered_trace(0.5, 240), peak_lining_c=690.0)
+    assert _backlayering_penalties(at_tolerance) == []
+
+    past_tolerance = score_mod.compute(_criteria(), _Hyd(), _Cost(),
+                                       _backlayered_trace(0.5, 242), peak_lining_c=690.0)
+    assert _backlayering_penalties(past_tolerance)
+
+
+def test_the_backlayering_penalty_message_reports_real_seconds():
+    """5 s apart, 30 persistent steps is 150 real seconds, not 30."""
+    s = score_mod.compute(_criteria(), _Hyd(), _Cost(),
+                          _backlayered_trace(5.0, 30), peak_lining_c=690.0)
+    message = _backlayering_penalties(s)[0]
+    assert "150 s" in message
+    assert "30 s" not in message

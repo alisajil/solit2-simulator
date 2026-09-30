@@ -174,7 +174,8 @@ it: the water over the fuel cools the plume (`chi_cool`), and heads downstream o
 the gas after it has left the fire (`state.CoolingProfile`). That exposed what the old single
 fraction had hidden. No mechanism in the engine lets the spray hold back the backlayer, so the
 fit starves the fire to keep the smoke from reaching U15. The spray's effect on the backlayer is
-a structural limit to fix, not to tune around (`docs/accuracy-roadmap.md`). Every nozzle — the project's and the reference — is tester input:
+a structural limit to fix, not to tune around (`docs/accuracy-roadmap.md`).
+Every nozzle — the project's and the reference — is tester input:
 K-factor, pressure, D32,
 Dv50/Dv90, cone, discharge velocity and mounting, none assumed. The Fire test step runs the
 Annex 7 test proper, and asks for the conditions Annex 7 leaves to the AHJ (activation time,
