@@ -390,6 +390,10 @@ def run_once(design: Design, section: str, velocity_ms: float) -> RunTrace:
         water_ratio = _mist_water_ratio(mist, q_conv, scene.air_kgs)
         samples = _sample_stations(scene, field, mist, vent, species, water_ratio,
                                    fed_tox, fed_heat)
+        # The downstream edge of the zone always sees the fire's smoke (the backlayer
+        # only ever reaches upstream) and always sees the droplets, so it reads the
+        # same soot and the same extinction as any instrument placed inside the zone.
+        zone_visibility = tenability.visibility_m(species.soot_gm3, mist.kappa_visible_per_m)
 
         ceiling = field.ceiling_temp_c(0.0)
         pipe_temp = _pipe_temp_c(pipe_temp, ceiling, flow_fraction)
@@ -407,7 +411,7 @@ def run_once(design: Design, section: str, velocity_ms: float) -> RunTrace:
             pools_remaining=state.pools_remaining, mist=mist, stations=samples,
             target_exposure_s=exposure_s,
             structure_exposure_length_m=_structure_exposure_length_m(scene, field),
-            strat_factor=field.strat_factor))
+            strat_factor=field.strat_factor, zone_visibility_m=zone_visibility))
 
     _require_detection(design, events)
     return RunTrace(tuple(steps), events, section, velocity_ms)
