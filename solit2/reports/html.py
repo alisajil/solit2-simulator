@@ -66,6 +66,11 @@ def external_references(document_html: str) -> list[str]:
     return [m.group(0) for rx in _EXTERNAL for m in rx.finditer(outside)]
 
 
+def without_scripts(document_html: str) -> str:
+    """The page with every <script>...</script> removed, for scanning what a reader sees."""
+    return _SCRIPT_BODY.sub("", document_html)
+
+
 def document(title: str, sections: list[tuple[str, str]]) -> str:
     """`sections` is (heading, inner_html) pairs, in the order they appear.
     Every section repeats the band; the header is fixed so it repeats on

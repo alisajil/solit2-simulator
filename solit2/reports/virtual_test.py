@@ -454,22 +454,35 @@ def _limitations(results: dict[str, Result], report: ComplianceReport, commit: s
          if warnings else "<p>The engine raised no warnings.</p>")])
 
 
+SECTION_TITLES = (
+    "Introduction", "Requested tests", "Test facility", "Water mist system",
+    "Fire load and target", "Virtual instruments", "Procedure", "Results",
+    "CFD comparison", "Compliance summary", "Conclusion", "Limitations and provenance",
+)
+
+
 def render(loaded: LoadedSpec, results: dict[str, Result], *,
            traces: dict[str, RunTrace], cfd: dict[str, CfdRun],
            compliance: ComplianceReport, commit: str) -> str:
     figs = _Figures()
-    sections = [
-        ("Introduction", _introduction()),
-        ("Requested tests", _requested_tests(loaded)),
-        ("Test facility", _facility(loaded)),
-        ("Water mist system", _water_mist_system(loaded)),
-        ("Fire load and target", _fire_load(loaded)),
-        ("Virtual instruments", _instruments()),
-        ("Procedure", _procedure(loaded, results)),
-        ("Results", _results(loaded, results, traces, figs)),
-        ("CFD comparison", _cfd_comparison(loaded, results, cfd, figs)),
-        ("Compliance summary", _compliance_summary(compliance)),
-        ("Conclusion", _conclusion(loaded, results, compliance)),
-        ("Limitations and provenance", _limitations(results, compliance, commit)),
-    ]
-    return html.document(f"Virtual fire test report — {loaded.spec.name}", sections)
+    bodies = (
+        _introduction(),
+        _requested_tests(loaded),
+        _facility(loaded),
+        _water_mist_system(loaded),
+        _fire_load(loaded),
+        _instruments(),
+        _procedure(loaded, results),
+        _results(loaded, results, traces, figs),
+        _cfd_comparison(loaded, results, cfd, figs),
+        _compliance_summary(compliance),
+        _conclusion(loaded, results, compliance),
+        _limitations(results, compliance, commit),
+    )
+    assert len(bodies) == len(SECTION_TITLES)   # a builder added without a title is a bug
+    out = html.document(f"Virtual fire test report — {loaded.spec.name}",
+                        list(zip(SECTION_TITLES, bodies)))
+    refs = html.external_references(out)
+    if refs:
+        raise ValueError(f"the report would fetch something when opened: {refs[:3]}")
+    return out

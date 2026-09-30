@@ -51,3 +51,8 @@ def test_a_real_plotly_bundle_is_not_an_external_reference():
 
 def test_escape_neutralises_markup():
     assert html.escape("<b>&") == "&lt;b&gt;&amp;"
+
+
+def test_without_scripts_drops_script_bodies_but_keeps_the_page():
+    doc = "<p>hello</p><script>var logo = 1;</script><p>world</p>"
+    assert html.without_scripts(doc) == "<p>hello</p><p>world</p>"
