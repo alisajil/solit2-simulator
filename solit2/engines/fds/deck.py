@@ -1009,10 +1009,17 @@ def _target_thermocouples(name: str, count: int, target: Box, dx_m: float) -> li
             for i in range(count)]
 
 
+# Annex 7 5.3.6: a Class B test measures the ventilation velocity 20 m upstream of
+# the fuel (5.2.7 says 45 m for Class A, which Table 5's U45 already covers). The
+# instrument is Table 5's own for a velocity station -- five bidirectional probes
+# over the cross-section (6.4.4) -- and nothing else is measured there.
+CLASS_B_VELOCITY_X_M = -20.0
+
+
 def _stations(design: Design, geom: SectionGeometry, dx_m: float) -> list[str]:
     """Annex 7 Table 5, device by device, plus the ceiling line a simulation needs."""
     from solit2.engines.reduced.criteria import (BREATHING_HEIGHT_M, HEAT_FLUX_HEIGHT_M,
-                                                 INSTRUMENTS, STATIONS,
+                                                 INSTRUMENTS, STATIONS, Instruments,
                                                  VISIBILITY_HEIGHT_M,
                                                  thermocouple_heights_m)
     lines = []
@@ -1060,6 +1067,12 @@ def _stations(design: Design, geom: SectionGeometry, dx_m: float) -> list[str]:
                 f"QUANTITY='U-VELOCITY' /")
         lines += _table_5_profiles(name, kit, x_m, geom, dx_m, load_y_m, solids)
         lines += _figure_16_positions(name, kit, x_m, geom, dx_m, fuel, solids)
+    if design.fire.fire_class == "B":
+        x_m = CLASS_B_VELOCITY_X_M
+        lines.append(f"&DEVC ID='U20_U', XYZ={x_m:.2f},0.0,{BREATHING_HEIGHT_M:.2f}, "
+                     f"QUANTITY='U-VELOCITY' /")
+        lines += _table_5_profiles("U20", Instruments(thermocouples=0, bidirectional=5),
+                                   x_m, geom, dx_m, load_y_m, solids)
     # Ceiling line over the core for the lining temperature and the exposed
     # length: OVER THE FUEL LOAD, at the ceiling that exists there, not at the
     # crown centre 2-3 m to the side of an eccentric plume.

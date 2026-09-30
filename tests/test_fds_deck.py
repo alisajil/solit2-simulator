@@ -1085,3 +1085,19 @@ def test_a_class_b_deck_has_no_fire_target_and_a_pool_no_higher_than_annex_7_all
     # the criteria read that station, and there is nothing to put them on
     assert len(_dev_xyz(text, "Target_TC")) == 3
     assert deck.fuel_box(design, geom).z1 <= 0.5 + 1e-9
+
+
+def test_a_class_b_deck_measures_the_ventilation_velocity_20_m_upstream():
+    # Annex 7 5.3.6: Class B measures the air velocity 20 m upstream of the fuel;
+    # 5.2.7 (Class A) says 45 m. Table 5's U45 stays for the gas measurements.
+    text = deck.generate(Design.load(CLASS_B))
+    (mean_probe,) = _dev_xyz(text, "U20_U'")
+    assert mean_probe[:2] == (-20.0, 0.0)
+    ubi = _dev_xyz(text, "U20_UBI_")
+    assert len(ubi) == 5 and {x for x, _, _ in ubi} == {-20.0}
+    assert len({z for _, _, z in ubi}) == 5
+    assert "&DEVC ID='U45_U'" in text
+
+
+def test_a_class_a_deck_has_no_u20_station():
+    assert "U20_" not in deck.generate(Design.load(TEST_RIG))
