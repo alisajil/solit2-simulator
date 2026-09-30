@@ -302,3 +302,12 @@ def test_no_head_count_warning_when_the_design_lets_the_layout_decide():
     free = design.model_copy(deep=True)
     object.__setattr__(free.zones, "heads_per_zone", None)
     assert envelope._head_count_warnings(free) == []
+
+
+def test_timeseries_includes_the_free_burn_hrr():
+    result = envelope.run(Design.load(BASELINE))
+    assert "hrr_free_burn_mw" in result.timeseries
+    assert len(result.timeseries["hrr_free_burn_mw"]) == len(result.timeseries["t_s"])
+    # Free-burn HRR is never below the suppressed HRR it is measured alongside.
+    assert all(free >= actual for free, actual in
+               zip(result.timeseries["hrr_free_burn_mw"], result.timeseries["hrr_mw"]))
