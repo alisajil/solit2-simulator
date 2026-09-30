@@ -755,12 +755,21 @@ def _detection(design: Design, geom: SectionGeometry, dx_m: float) -> list[str]:
             f"&DEVC ID='LHD{i}', XYZ={x:.2f},0.0,{z:.2f}, "
             f"QUANTITY='THERMOCOUPLE', SETPOINT={design.detection.threshold_c:.1f} /"
         )
-    lines += [
-        f"&CTRL ID='DETECT', FUNCTION_TYPE='ANY', "
-        f"INPUT_ID={','.join(repr(f'LHD{i}') for i in range(n))} /",
-        f"&CTRL ID='ACT', FUNCTION_TYPE='TIME_DELAY', INPUT_ID='DETECT', "
-        f"DELAY={design.zones.activation_delay_s:.1f} /",
-    ]
+    lines.append(f"&CTRL ID='DETECT', FUNCTION_TYPE='ANY', "
+                 f"INPUT_ID={','.join(repr(f'LHD{i}') for i in range(n))} /")
+    manual = design.zones.manual_activation_s
+    if manual is None:
+        lines.append(f"&CTRL ID='ACT', FUNCTION_TYPE='TIME_DELAY', INPUT_ID='DETECT', "
+                     f"DELAY={design.zones.activation_delay_s:.1f} /")
+    else:
+        # Started by hand at a clock time, as Tier 1 does (sim._detect): the
+        # detector still trips and is still logged, but it does not open the
+        # heads. A TIME device needs a point in the gas; the first detector's is one.
+        lines += [
+            f"&DEVC ID='MANUAL', QUANTITY='TIME', XYZ={xs[0]:.2f},0.0,{z:.2f}, "
+            f"SETPOINT={manual:.1f} /",
+            "&CTRL ID='ACT', FUNCTION_TYPE='ANY', INPUT_ID='MANUAL' /",
+        ]
     return lines + [""]
 
 

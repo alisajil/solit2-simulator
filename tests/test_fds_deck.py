@@ -306,6 +306,23 @@ def test_detection_drives_activation_through_a_time_delay_control():
     assert "&CTRL ID='ACT'" in text
 
 
+def test_a_manual_activation_opens_the_heads_at_that_clock_time_not_on_detection():
+    # A test operator who started the FFFS by hand (the anchors, the virtual
+    # test report's fire test) sets zones.manual_activation_s, and Tier 1 opens
+    # the heads at that time whatever the detector does. The deck must do the
+    # same, or a CFD run of the anchor is a run of a different test.
+    design = Design.load(BASELINE)
+    manual = design.model_copy(update={"zones": design.zones.model_copy(
+        update={"manual_activation_s": 420.0})})
+    text = deck.generate(manual)
+    assert "&DEVC ID='MANUAL', QUANTITY='TIME'" in text
+    assert "SETPOINT=420.0" in text
+    assert "&CTRL ID='ACT', FUNCTION_TYPE='ANY', INPUT_ID='MANUAL' /" in text
+    assert "INPUT_ID='DETECT'" not in text
+    # detection is still recorded -- the reader reports when it tripped
+    assert "&CTRL ID='DETECT'" in text
+
+
 
 def test_the_fire_releases_exactly_the_design_hrr_on_the_area_it_actually_emits():
     # FDS snaps OBST bounds to cell faces and burns HRRPUA x the SNAPPED area. A
